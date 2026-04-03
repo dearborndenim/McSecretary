@@ -22,12 +22,6 @@ export const config = {
     email1: required('OUTLOOK_USER_EMAIL_1'),
     email2: required('OUTLOOK_USER_EMAIL_2'),
   },
-  gmail: {
-    clientId: required('GMAIL_CLIENT_ID'),
-    clientSecret: required('GMAIL_CLIENT_SECRET'),
-    refreshToken: required('GMAIL_REFRESH_TOKEN'),
-    userEmail: required('GMAIL_USER_EMAIL'),
-  },
   anthropic: {
     apiKey: required('ANTHROPIC_API_KEY'),
   },

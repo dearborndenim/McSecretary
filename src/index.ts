@@ -21,7 +21,6 @@ import {
   getWeeklySchedule,
 } from './db/calendar-queries.js';
 import { fetchUnreadOutlookEmails } from './email/outlook.js';
-import { fetchUnreadGmailEmails } from './email/gmail.js';
 import { classifyEmail } from './email/classifier.js';
 import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutlookEmail } from './email/actions.js';
 import { generateBriefing } from './briefing/generator.js';
@@ -93,17 +92,13 @@ async function main() {
     const calStartDate = now.toISOString();
     const calEndDate = tomorrow.toISOString();
 
-    const [outlook1, outlook2, gmail, calEvents1, calEvents2] = await Promise.all([
+    const [outlook1, outlook2, calEvents1, calEvents2] = await Promise.all([
       fetchUnreadOutlookEmails(config.outlook.email1, lastRun).catch((err) => {
         errors.push(`Outlook1 fetch failed: ${err.message}`);
         return [] as RawEmail[];
       }),
       fetchUnreadOutlookEmails(config.outlook.email2, lastRun).catch((err) => {
         errors.push(`Outlook2 fetch failed: ${err.message}`);
-        return [] as RawEmail[];
-      }),
-      fetchUnreadGmailEmails(lastRun).catch((err) => {
-        errors.push(`Gmail fetch failed: ${err.message}`);
         return [] as RawEmail[];
       }),
       fetchOutlookCalendarEvents(config.outlook.email1, calStartDate, calEndDate).catch((err) => {
@@ -116,8 +111,8 @@ async function main() {
       }),
     ]);
 
-    const allEmails = [...outlook1, ...outlook2, ...gmail];
-    console.log(`Fetched ${allEmails.length} unread emails (${outlook1.length} OL1, ${outlook2.length} OL2, ${gmail.length} Gmail)`);
+    const allEmails = [...outlook1, ...outlook2];
+    console.log(`Fetched ${allEmails.length} unread emails (${outlook1.length} OL1, ${outlook2.length} OL2)`);
 
     // Process calendar
     console.log('Processing calendar...');
@@ -197,10 +192,10 @@ async function main() {
 
         const action = determineAction(classified);
 
-        if (action.type === 'archive' && classified.account !== config.gmail.userEmail) {
+        if (action.type === 'archive') {
           await archiveOutlookEmail(classified.account, classified.id);
           totalArchived++;
-        } else if (action.type === 'mark_read' && classified.account !== config.gmail.userEmail) {
+        } else if (action.type === 'mark_read') {
           await markOutlookAsRead(classified.account, classified.id);
         }
 
@@ -208,9 +203,7 @@ async function main() {
           totalFlagged++;
         }
 
-        if (classified.account !== config.gmail.userEmail) {
-          await categorizeOutlookEmail(classified.account, classified.id, classified.category).catch(() => {});
-        }
+        await categorizeOutlookEmail(classified.account, classified.id, classified.category).catch(() => {});
 
         insertProcessedEmail(db, {
           id: classified.id,

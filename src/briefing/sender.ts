@@ -1,16 +1,10 @@
-import { google } from 'googleapis';
+const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+const BRIEFING_RECIPIENT = 'robert@mcmillan-manufacturing.com';
 
 export async function sendBriefingEmail(briefingMarkdown: string): Promise<void> {
+  const { getGraphToken } = await import('../auth/graph.js');
   const { config } = await import('../config.js');
-
-  const oauth2Client = new google.auth.OAuth2(
-    config.gmail.clientId,
-    config.gmail.clientSecret,
-  );
-  oauth2Client.setCredentials({
-    refresh_token: config.gmail.refreshToken,
-  });
-  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  const token = await getGraphToken();
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -22,24 +16,30 @@ export async function sendBriefingEmail(briefingMarkdown: string): Promise<void>
 
   const subject = `Morning Briefing — ${today}`;
 
-  const messageParts = [
-    `To: ${config.gmail.userEmail}`,
-    `From: ${config.gmail.userEmail}`,
-    `Subject: ${subject}`,
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    briefingMarkdown,
-  ];
-
-  const rawMessage = messageParts.join('\n');
-  const encodedMessage = Buffer.from(rawMessage).toString('base64url');
-
-  await gmail.users.messages.send({
-    userId: 'me',
-    requestBody: {
-      raw: encodedMessage,
+  const response = await fetch(`${GRAPH_BASE}/users/${config.outlook.email2}/sendMail`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({
+      message: {
+        subject,
+        body: {
+          contentType: 'text',
+          content: briefingMarkdown,
+        },
+        toRecipients: [
+          { emailAddress: { address: BRIEFING_RECIPIENT } },
+        ],
+      },
+    }),
   });
 
-  console.log(`Briefing email sent: "${subject}"`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to send briefing email: ${response.status} ${text}`);
+  }
+
+  console.log(`Briefing email sent via Outlook: "${subject}"`);
 }
