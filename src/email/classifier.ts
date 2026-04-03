@@ -1,5 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { config } from '../config.js';
 import type { RawEmail, ClassifiedEmail } from './types.js';
 
 const SYSTEM_PROMPT = `You are an email triage assistant for Robert McMillan, who owns:
@@ -82,15 +81,12 @@ export function parseClassificationResponse(raw: string): Classification {
 
 let anthropicClient: Anthropic | null = null;
 
-function getAnthropicClient(): Anthropic {
+export async function classifyEmail(email: RawEmail): Promise<ClassifiedEmail> {
   if (!anthropicClient) {
+    const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
-  return anthropicClient;
-}
-
-export async function classifyEmail(email: RawEmail): Promise<ClassifiedEmail> {
-  const client = getAnthropicClient();
+  const client = anthropicClient;
   const prompt = buildClassificationPrompt(email);
 
   const response = await client.messages.create({
