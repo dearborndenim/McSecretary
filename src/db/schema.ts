@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { initializeCalendarSchema } from './calendar-schema.js';
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
@@ -56,4 +57,6 @@ export function initializeSchema(db: Database.Database): void {
       was_reversed INTEGER DEFAULT 0
     );
   `);
+
+  initializeCalendarSchema(db);
 }
