@@ -97,11 +97,39 @@ async function handleIncomingMessage(text: string): Promise<string> {
     return `Logged for ${hour - 1}:00: ${text.trim()}`;
   }
 
-  // For everything else, use Claude to generate a contextual response
+  // Detect intent — does this request need email/calendar data?
+  const emailKeywords = ['email', 'mail', 'inbox', 'message', 'customer', 'unread', 'check', 'new emails', 'manufacturing', 'dearborn'];
+  const calendarKeywords = ['calendar', 'schedule', 'meeting', 'events', 'free time', 'today', 'tomorrow', 'appointment'];
+  const needsData = [...emailKeywords, ...calendarKeywords].some((kw) => lowerText.includes(kw));
+
+  if (needsData) {
+    // Run full triage to get real data, then have AI summarize with context
+    try {
+      const briefing = await runTriage(db);
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1000,
+        system: `You are McSecretary, Rob McMillan's AI secretary. You have access to his email and calendar data. Below is the latest briefing data. Use it to answer Rob's question directly and concisely. No emoji. Use Central Time (Chicago).`,
+        messages: [
+          { role: 'user', content: `Here is my current briefing data:\n\n${briefing}\n\nMy question: ${text}` },
+        ],
+      });
+
+      return response.content
+        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Failed to fetch data: ${msg}`;
+    }
+  }
+
+  // General conversation — no data needed
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 500,
-    system: `You are McSecretary, Rob McMillan's AI secretary. Rob owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com). Be concise, direct, and helpful. No emoji. Use Central Time.`,
+    system: `You are McSecretary, Rob McMillan's AI secretary. Rob owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com). You have access to his email, calendar, and tasks but the user hasn't asked about those. Be concise, direct, and helpful. No emoji. Use Central Time.`,
     messages: [{ role: 'user', content: text }],
   });
 

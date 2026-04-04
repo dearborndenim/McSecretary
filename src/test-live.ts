@@ -107,8 +107,8 @@ async function testAnthropicAPI(): Promise<void> {
     });
 
     const text = response.content
-      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-      .map((b) => b.text)
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as any).text)
       .join('');
 
     pass('Anthropic Haiku', text.slice(0, 100));
@@ -121,8 +121,8 @@ async function testAnthropicAPI(): Promise<void> {
     });
 
     const text2 = response2.content
-      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-      .map((b) => b.text)
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as any).text)
       .join('');
 
     pass('Anthropic Sonnet', text2.slice(0, 100));
