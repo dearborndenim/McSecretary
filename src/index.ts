@@ -69,9 +69,14 @@ async function handleIncomingMessage(text: string): Promise<string> {
   const lowerText = text.toLowerCase().trim();
 
   // Direct commands
-  if (lowerText === '/briefing' || lowerText === 'briefing') {
-    const briefing = await runTriage(db);
-    return briefing;
+  if (lowerText === '/briefing' || lowerText === 'briefing' || lowerText.includes('briefing')) {
+    try {
+      const briefing = await runTriage(db);
+      return briefing;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Briefing failed: ${msg}`;
+    }
   }
 
   if (lowerText === '/status' || lowerText === 'status') {
