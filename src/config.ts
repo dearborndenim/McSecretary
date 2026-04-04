@@ -25,6 +25,10 @@ export const config = {
   anthropic: {
     apiKey: required('ANTHROPIC_API_KEY'),
   },
+  telegram: {
+    botToken: required('TELEGRAM_BOT_TOKEN'),
+    chatId: required('TELEGRAM_CHAT_ID'),
+  },
   db: {
     path: optional('DB_PATH', path.join(process.cwd(), 'data', 'secretary.db')),
   },
