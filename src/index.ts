@@ -4,13 +4,24 @@ import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { config } from './config.js';
 import { initializeSchema } from './db/schema.js';
-// db/queries used by triage.ts directly
 import { insertTimeLog, getTimeLogsForDate } from './db/time-queries.js';
+import {
+  insertConversationMessage,
+  getRecentConversation,
+  getConversationCount,
+} from './db/conversation-queries.js';
 import { runTriage } from './triage.js';
 import { initBot, sendBriefing, sendCheckIn, sendMessage, sendEveningSummary } from './telegram/bot.js';
 import { startScheduler, type ScheduledTask } from './scheduler.js';
 import { TIMEZONE } from './calendar/types.js';
 import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
+import {
+  readMasterLearnings,
+  readMasterPatterns,
+  readSecretaryFile,
+  getYesterdayDate,
+  ensureJournalDirs,
+} from './journal/files.js';
 import Anthropic from '@anthropic-ai/sdk';
 
 let db: Database.Database;
@@ -25,11 +36,72 @@ function getChicagoHour(): number {
   return parseInt(new Date().toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone: TIMEZONE }));
 }
 
+function buildDailyContext(): string {
+  const masterLearnings = readMasterLearnings();
+  const masterPatterns = readMasterPatterns();
+  const yesterday = getYesterdayDate(TIMEZONE);
+  const yesterdayImprovements = readSecretaryFile(yesterday, 'improvements');
+  const yesterdayReflection = readSecretaryFile(yesterday, 'reflection');
+
+  let context = '';
+
+  if (masterLearnings) {
+    context += `\n\n=== WHAT I KNOW ABOUT ROB AND THE BUSINESSES ===\n${masterLearnings}`;
+  }
+
+  if (masterPatterns) {
+    context += `\n\n=== HOW TO WORK WITH ROB ===\n${masterPatterns}`;
+  }
+
+  if (yesterdayImprovements) {
+    context += `\n\n=== WHAT I WILL IMPROVE TODAY (from yesterday's reflection) ===\n${yesterdayImprovements}`;
+  }
+
+  if (yesterdayReflection) {
+    context += `\n\n=== WHAT HAPPENED YESTERDAY ===\n${yesterdayReflection}`;
+  }
+
+  return context;
+}
+
+function buildConversationHistory(today: string): { role: 'user' | 'assistant'; content: string }[] {
+  const count = getConversationCount(db, today);
+  // If over 50 messages, only load last 30
+  const messages = count > 50
+    ? getRecentConversation(db, today, 30)
+    : getRecentConversation(db, today, 50);
+
+  return messages.map((m) => ({
+    role: m.role === 'rob' ? 'user' as const : 'assistant' as const,
+    content: m.message,
+  }));
+}
+
+const SYSTEM_PROMPT_BASE = `You are McSecretary, Rob McMillan's AI chief of staff. You run 24/7 and manage his communications, schedule, and projects.
+
+Rob owns two businesses:
+- Dearborn Denim (rob@dearborndenim.com) — denim/jeans company, retail + wholesale
+- McMillan Manufacturing (robert@mcmillan-manufacturing.com) — contract manufacturing
+
+You have DIRECT ACCESS to Rob's email via Microsoft Graph API. You can read his inbox, calendar, and contacts. Never say "I don't have access" — you do.
+
+Rules:
+- Be direct, specific, and concise. No emoji.
+- Use Central Time (Chicago) for all times.
+- Reference actual data (email subjects, sender names) when answering.
+- Remember everything from today's conversation.
+- When Rob corrects you, acknowledge and learn from it.
+- When Rob asks about email, ALWAYS check the actual email data provided below.
+- "New customer emails" = responses to Apollo cold outreach campaigns.`;
+
 async function handleMorningBriefing(): Promise<void> {
   console.log('Running morning briefing...');
   try {
     const briefing = await runTriage(db);
     await sendBriefing(briefing);
+    // Log the briefing as a secretary message
+    const today = getChicagoDate();
+    insertConversationMessage(db, today, 'secretary', `[Morning Briefing]\n${briefing}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Morning briefing failed:', msg);
@@ -39,129 +111,166 @@ async function handleMorningBriefing(): Promise<void> {
 
 async function handleHourlyCheckIn(): Promise<void> {
   awaitingCheckInResponse = true;
+  const checkInMsg = `Quick check — what did you work on this past hour?`;
   await sendCheckIn();
+  const today = getChicagoDate();
+  insertConversationMessage(db, today, 'secretary', checkInMsg);
 }
 
 async function handleEveningSummary(): Promise<void> {
   const today = getChicagoDate();
   const logs = getTimeLogsForDate(db, today);
 
+  let summary: string;
   if (logs.length === 0) {
-    await sendEveningSummary('No time entries logged today.');
-    return;
+    summary = 'No time entries logged today.';
+  } else {
+    const logList = logs
+      .map((l) => `${l.hour}:00 — ${l.activity}${l.category !== 'untracked' ? ` (${l.category})` : ''}`)
+      .join('\n');
+    summary = `Time Log:\n${logList}\n\nTotal tracked hours: ${logs.length}`;
   }
 
-  const logList = logs
-    .map((l) => `${l.hour}:00 — ${l.activity}${l.category !== 'untracked' ? ` (${l.category})` : ''}`)
-    .join('\n');
-
-  const summary = `*Time Log*\n${logList}\n\nTotal tracked hours: ${logs.length}`;
-  await sendEveningSummary(summary);
+  const fullMsg = `End of Day Summary\n\n${summary}\n\nHow was your day? Anything you want to reflect on?`;
+  await sendMessage(fullMsg, false);
+  insertConversationMessage(db, today, 'secretary', fullMsg);
 }
 
 async function handleIncomingMessage(text: string): Promise<string> {
-  // Check if this is a time check-in response
   const hour = getChicagoHour();
   const today = getChicagoDate();
-
-  // Simple heuristic: if the last message we sent was a check-in and this is a short response, log it as time
   const lowerText = text.toLowerCase().trim();
 
+  // Store Rob's message
+  insertConversationMessage(db, today, 'rob', text);
+
   // Direct commands
-  if (lowerText === '/briefing' || lowerText === 'briefing' || lowerText.includes('briefing')) {
+  if (lowerText === '/briefing' || lowerText === 'briefing') {
     try {
       const briefing = await runTriage(db);
+      insertConversationMessage(db, today, 'secretary', `[Briefing]\n${briefing}`);
       return briefing;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return `Briefing failed: ${msg}`;
+      const errorMsg = `Briefing failed: ${msg}`;
+      insertConversationMessage(db, today, 'secretary', errorMsg);
+      return errorMsg;
     }
   }
 
   if (lowerText === '/status' || lowerText === 'status') {
     const logs = getTimeLogsForDate(db, today);
-    if (logs.length === 0) return 'No time entries logged today.';
-    return logs.map((l) => `${l.hour}:00 — ${l.activity}`).join('\n');
+    const response = logs.length === 0
+      ? 'No time entries logged today.'
+      : logs.map((l) => `${l.hour}:00 — ${l.activity}`).join('\n');
+    insertConversationMessage(db, today, 'secretary', response);
+    return response;
   }
 
-  // Manual time log: "/log did accounting work"
   if (lowerText.startsWith('/log ')) {
     const activity = text.slice(5).trim();
     insertTimeLog(db, { date: today, hour: hour - 1, activity });
-    return `Logged for ${hour - 1}:00: ${activity}`;
+    const response = `Logged for ${hour - 1}:00: ${activity}`;
+    insertConversationMessage(db, today, 'secretary', response);
+    return response;
   }
 
-  // If we sent a check-in and this is the response, log it as time
+  // Check-in response
   if (awaitingCheckInResponse && text.length < 300 && !text.includes('?')) {
     awaitingCheckInResponse = false;
     insertTimeLog(db, { date: today, hour: hour - 1, activity: text.trim() });
-    return `Logged for ${hour - 1}:00: ${text.trim()}`;
+    const response = `Logged for ${hour - 1}:00: ${text.trim()}`;
+    insertConversationMessage(db, today, 'secretary', response);
+    return response;
   }
 
-  // For ALL messages: fetch recent emails as context so the secretary
-  // actually knows what's in Rob's inbox. This is read-only — doesn't
-  // modify, archive, or classify anything.
+  // Full AI response with conversation memory + email context
   try {
-    console.log('Fetching recent emails for context...');
+    console.log('Fetching email context and building conversation...');
+
     const [emails1, emails2] = await Promise.all([
       fetchRecentEmails(config.outlook.email1, 48, 25).catch(() => []),
       fetchRecentEmails(config.outlook.email2, 48, 25).catch(() => []),
     ]);
 
-    const allEmails = [...emails1, ...emails2];
-    const emailContext = formatEmailsForContext(allEmails);
+    const emailContext = formatEmailsForContext([...emails1, ...emails2]);
+    const dailyContext = buildDailyContext();
+    const conversationHistory = buildConversationHistory(today);
+
+    const systemPrompt = `${SYSTEM_PROMPT_BASE}
+${dailyContext}
+
+RECENT EMAILS (last 48 hours):
+${emailContext}`;
+
+    // Build messages array: conversation history + current message
+    // The current message is already the last item from Rob, but we need
+    // to exclude it from history since we'll add it as the final message
+    const historyWithoutLast = conversationHistory.slice(0, -1);
+
+    const messages: { role: 'user' | 'assistant'; content: string }[] = [
+      ...historyWithoutLast,
+      { role: 'user', content: text },
+    ];
+
+    // Ensure messages alternate correctly (required by Claude API)
+    // If two consecutive messages have the same role, merge them
+    const cleaned: { role: 'user' | 'assistant'; content: string }[] = [];
+    for (const msg of messages) {
+      if (cleaned.length > 0 && cleaned[cleaned.length - 1]!.role === msg.role) {
+        cleaned[cleaned.length - 1]!.content += '\n\n' + msg.content;
+      } else {
+        cleaned.push({ ...msg });
+      }
+    }
+
+    // Ensure first message is from user
+    if (cleaned.length > 0 && cleaned[0]!.role !== 'user') {
+      cleaned.shift();
+    }
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: `You are McSecretary, Rob McMillan's AI chief of staff.
-
-Rob owns two businesses:
-- Dearborn Denim (rob@dearborndenim.com) — denim/jeans company
-- McMillan Manufacturing (robert@mcmillan-manufacturing.com) — contract manufacturing
-
-You have direct access to Rob's email. Below are his recent emails from the last 48 hours across both accounts. Use this data to answer his questions accurately and specifically.
-
-When Rob asks about "new customer emails" or "prospecting responses", he means people responding to his Apollo cold outreach campaign — look for replies from people he doesn't regularly correspond with, especially responses expressing interest like "let's connect", "I'd like to know more", "can you send information", "let's set up a time".
-
-Be direct, specific, and reference actual emails by sender name and subject. No emoji. Use Central Time (Chicago).
-
-RECENT EMAILS (last 48 hours):
-${emailContext}`,
-      messages: [{ role: 'user', content: text }],
+      system: systemPrompt,
+      messages: cleaned,
     });
 
-    return response.content
+    const responseText = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
       .map((block) => block.text)
       .join('');
+
+    // Store secretary's response
+    insertConversationMessage(db, today, 'secretary', responseText);
+
+    return responseText;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return `Failed to process request: ${msg}`;
+    const errorMsg = `Failed to process request: ${msg}`;
+    insertConversationMessage(db, today, 'secretary', errorMsg);
+    return errorMsg;
   }
 }
 
 async function main() {
   console.log('McSECREtary starting up...');
 
-  // Ensure data directory exists
   const dbDir = path.dirname(config.db.path);
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
   }
 
-  // Initialize database
   db = new Database(config.db.path);
   db.pragma('journal_mode = WAL');
   initializeSchema(db);
 
-  // Initialize Anthropic client
+  ensureJournalDirs();
+
   anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
 
-  // Initialize Telegram bot
   const bot = await initBot();
 
-  // Handle incoming messages
   bot.on('message:text', async (ctx) => {
     const chatId = ctx.chat.id.toString();
     if (chatId !== config.telegram.chatId) {
@@ -178,7 +287,6 @@ async function main() {
         await ctx.reply('No response generated. Try again or use "briefing" for a full briefing.');
         return;
       }
-      // Use plain text to avoid Telegram Markdown parse errors
       await ctx.reply(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -187,28 +295,26 @@ async function main() {
     }
   });
 
-  // Set up scheduled tasks (all times in America/Chicago)
   const tasks: ScheduledTask[] = [
     {
       name: 'Morning Briefing',
-      schedule: '0 4 * * 1-5',  // 4 AM weekdays
+      schedule: '0 4 * * 1-5',
       handler: handleMorningBriefing,
     },
     {
       name: 'Hourly Check-In',
-      schedule: '0 7-15 * * 1-5',  // Every hour 7 AM - 3 PM weekdays
+      schedule: '0 7-15 * * 1-5',
       handler: handleHourlyCheckIn,
     },
     {
       name: 'Evening Summary',
-      schedule: '0 16 * * 1-5',  // 4 PM weekdays
+      schedule: '0 16 * * 1-5',
       handler: handleEveningSummary,
     },
   ];
 
   startScheduler(tasks);
 
-  // Start bot (long-polling)
   console.log('Starting Telegram bot...');
   bot.start({
     onStart: () => {
@@ -217,7 +323,6 @@ async function main() {
     },
   });
 
-  // Handle graceful shutdown
   const shutdown = () => {
     console.log('Shutting down...');
     bot.stop();
