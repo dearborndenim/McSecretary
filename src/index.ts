@@ -24,6 +24,7 @@ import {
 } from './journal/files.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { generateEndOfDayReflection } from './journal/reflection.js';
+import { runWeeklySynthesis } from './journal/synthesis.js';
 
 let db: Database.Database;
 let anthropic: Anthropic;
@@ -116,6 +117,17 @@ async function handleHourlyCheckIn(): Promise<void> {
   await sendCheckIn();
   const today = getChicagoDate();
   insertConversationMessage(db, today, 'secretary', checkInMsg);
+}
+
+async function handleWeeklySynthesis(): Promise<void> {
+  console.log('Running weekly synthesis...');
+  try {
+    await runWeeklySynthesis(anthropic);
+    await sendMessage('Weekly synthesis complete. Master knowledge files updated.', false);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Weekly synthesis failed:', msg);
+  }
 }
 
 async function handleEveningSummary(): Promise<void> {
@@ -320,6 +332,11 @@ async function main() {
       name: 'Evening Summary',
       schedule: '0 16 * * 1-5',
       handler: handleEveningSummary,
+    },
+    {
+      name: 'Weekly Synthesis',
+      schedule: '0 19 * * 0',  // Sunday 7 PM
+      handler: handleWeeklySynthesis,
     },
   ];
 
