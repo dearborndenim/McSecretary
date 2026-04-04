@@ -2,7 +2,6 @@
   "build": { "builder": "NIXPACKS" },
   "deploy": {
     "startCommand": "npx tsx src/index.ts",
-    "cronSchedule": "0 5 * * *",
-    "restartPolicyType": "NEVER"
+    "restartPolicyType": "ON_FAILURE"
   }
 }
