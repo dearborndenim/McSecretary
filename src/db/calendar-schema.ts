@@ -39,5 +39,16 @@ export function initializeCalendarSchema(db: Database.Database): void {
       status TEXT DEFAULT 'pending',
       expires_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS time_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      hour INTEGER NOT NULL,
+      activity TEXT NOT NULL,
+      category TEXT DEFAULT 'untracked',
+      project_id TEXT,
+      logged_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(date, hour)
+    );
   `);
 }
