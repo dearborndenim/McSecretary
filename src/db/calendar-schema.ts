@@ -50,5 +50,13 @@ export function initializeCalendarSchema(db: Database.Database): void {
       logged_at TEXT DEFAULT (datetime('now')),
       UNIQUE(date, hour)
     );
+
+    CREATE TABLE IF NOT EXISTS conversation_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      timestamp TEXT DEFAULT (datetime('now')),
+      role TEXT NOT NULL,
+      message TEXT NOT NULL
+    );
   `);
 }
