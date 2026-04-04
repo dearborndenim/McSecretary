@@ -23,6 +23,7 @@ import {
   ensureJournalDirs,
 } from './journal/files.js';
 import Anthropic from '@anthropic-ai/sdk';
+import { generateEndOfDayReflection } from './journal/reflection.js';
 
 let db: Database.Database;
 let anthropic: Anthropic;
@@ -134,6 +135,15 @@ async function handleEveningSummary(): Promise<void> {
   const fullMsg = `End of Day Summary\n\n${summary}\n\nHow was your day? Anything you want to reflect on?`;
   await sendMessage(fullMsg, false);
   insertConversationMessage(db, today, 'secretary', fullMsg);
+
+  // Generate secretary's own reflection (runs after prompting Rob)
+  try {
+    await generateEndOfDayReflection(db, anthropic, today);
+    console.log('End-of-day reflection complete.');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Reflection generation failed:', msg);
+  }
 }
 
 async function handleIncomingMessage(text: string): Promise<string> {
