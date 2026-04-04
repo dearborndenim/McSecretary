@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import { config } from './config.js';
 import {
   insertProcessedEmail,
   getOrCreateSenderProfile,
@@ -57,6 +56,8 @@ function getMondayOfWeek(date: Date): string {
 export async function runTriage(db: Database.Database): Promise<string> {
   console.log('McSECREtary — triage starting...');
   const startTime = Date.now();
+
+  const { config } = await import('./config.js');
 
   const runId = insertAgentRun(db, 'overnight');
   const lastRun = getLastRunTimestamp(db, 'overnight');
@@ -248,6 +249,14 @@ export async function runTriage(db: Database.Database): Promise<string> {
   }
 
   console.log(`Triage complete in ${elapsed}s — ${totalProcessed} emails processed, ${totalArchived} archived, ${totalFlagged} flagged`);
+
+  // Never return empty — if briefing generation failed, return error summary
+  if (!briefing || briefing.trim().length === 0) {
+    const errorSummary = errors.length > 0
+      ? `Briefing generation failed.\n\nErrors:\n${errors.map((e) => `- ${e}`).join('\n')}`
+      : `Briefing generation returned empty. ${totalProcessed} emails processed.`;
+    return errorSummary;
+  }
 
   return briefing;
 }

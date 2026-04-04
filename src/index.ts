@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { config } from './config.js';
 import { initializeSchema } from './db/schema.js';
-import { insertAgentRun, completeAgentRun } from './db/queries.js';
+// db/queries used by triage.ts directly
 import { insertTimeLog, getTimeLogsForDate } from './db/time-queries.js';
 import { runTriage } from './triage.js';
 import { initBot, sendBriefing, sendCheckIn, sendMessage, sendEveningSummary } from './telegram/bot.js';
@@ -26,15 +26,13 @@ function getChicagoHour(): number {
 
 async function handleMorningBriefing(): Promise<void> {
   console.log('Running morning briefing...');
-  const runId = insertAgentRun(db, 'overnight');
   try {
     const briefing = await runTriage(db);
     await sendBriefing(briefing);
-    completeAgentRun(db, runId, { emails_processed: 0, actions_taken: 0, tokens_used: 0, cost_estimate: 0 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Morning briefing failed:', msg);
-    await sendMessage(`Morning briefing failed: ${msg}`).catch(() => {});
+    await sendMessage(`Morning briefing failed: ${msg}`, false).catch(() => {});
   }
 }
 
@@ -146,7 +144,12 @@ async function main() {
 
     try {
       const response = await handleIncomingMessage(text);
-      await ctx.reply(response, { parse_mode: 'Markdown' });
+      if (!response || response.trim().length === 0) {
+        await ctx.reply('No response generated. Try again or use "briefing" for a full briefing.');
+        return;
+      }
+      // Use plain text to avoid Telegram Markdown parse errors
+      await ctx.reply(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('Error handling message:', msg);

@@ -22,18 +22,25 @@ export function getChatId(): string {
   return chatId;
 }
 
-export async function sendMessage(text: string): Promise<void> {
+export async function sendMessage(text: string, markdown: boolean = true): Promise<void> {
   const b = getBot();
   const id = getChatId();
 
+  if (!text || text.trim().length === 0) {
+    console.warn('sendMessage called with empty text, skipping');
+    return;
+  }
+
+  const parseMode = markdown ? 'Markdown' : undefined;
+
   // Telegram has a 4096 character limit per message
   if (text.length <= 4096) {
-    await b.api.sendMessage(id, text, { parse_mode: 'Markdown' });
+    await b.api.sendMessage(id, text, { parse_mode: parseMode });
   } else {
     // Split into chunks at newline boundaries
     const chunks = splitMessage(text, 4096);
     for (const chunk of chunks) {
-      await b.api.sendMessage(id, chunk, { parse_mode: 'Markdown' });
+      await b.api.sendMessage(id, chunk, { parse_mode: parseMode });
     }
   }
 }
