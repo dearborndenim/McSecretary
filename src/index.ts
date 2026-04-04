@@ -10,6 +10,7 @@ import { runTriage } from './triage.js';
 import { initBot, sendBriefing, sendCheckIn, sendMessage, sendEveningSummary } from './telegram/bot.js';
 import { startScheduler, type ScheduledTask } from './scheduler.js';
 import { TIMEZONE } from './calendar/types.js';
+import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
 import Anthropic from '@anthropic-ai/sdk';
 
 let db: Database.Database;
@@ -97,46 +98,47 @@ async function handleIncomingMessage(text: string): Promise<string> {
     return `Logged for ${hour - 1}:00: ${text.trim()}`;
   }
 
-  // Detect intent — does this request need email/calendar data?
-  const emailKeywords = ['email', 'mail', 'inbox', 'message', 'customer', 'unread', 'check', 'new emails', 'manufacturing', 'dearborn'];
-  const calendarKeywords = ['calendar', 'schedule', 'meeting', 'events', 'free time', 'today', 'tomorrow', 'appointment'];
-  const needsData = [...emailKeywords, ...calendarKeywords].some((kw) => lowerText.includes(kw));
+  // For ALL messages: fetch recent emails as context so the secretary
+  // actually knows what's in Rob's inbox. This is read-only — doesn't
+  // modify, archive, or classify anything.
+  try {
+    console.log('Fetching recent emails for context...');
+    const [emails1, emails2] = await Promise.all([
+      fetchRecentEmails(config.outlook.email1, 48, 25).catch(() => []),
+      fetchRecentEmails(config.outlook.email2, 48, 25).catch(() => []),
+    ]);
 
-  if (needsData) {
-    // Run full triage to get real data, then have AI summarize with context
-    try {
-      const briefing = await runTriage(db);
-      const response = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1000,
-        system: `You are McSecretary, Rob McMillan's AI secretary. You have access to his email and calendar data. Below is the latest briefing data. Use it to answer Rob's question directly and concisely. No emoji. Use Central Time (Chicago).`,
-        messages: [
-          { role: 'user', content: `Here is my current briefing data:\n\n${briefing}\n\nMy question: ${text}` },
-        ],
-      });
+    const allEmails = [...emails1, ...emails2];
+    const emailContext = formatEmailsForContext(allEmails);
 
-      return response.content
-        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-        .map((block) => block.text)
-        .join('');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return `Failed to fetch data: ${msg}`;
-    }
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: `You are McSecretary, Rob McMillan's AI chief of staff.
+
+Rob owns two businesses:
+- Dearborn Denim (rob@dearborndenim.com) — denim/jeans company
+- McMillan Manufacturing (robert@mcmillan-manufacturing.com) — contract manufacturing
+
+You have direct access to Rob's email. Below are his recent emails from the last 48 hours across both accounts. Use this data to answer his questions accurately and specifically.
+
+When Rob asks about "new customer emails" or "prospecting responses", he means people responding to his Apollo cold outreach campaign — look for replies from people he doesn't regularly correspond with, especially responses expressing interest like "let's connect", "I'd like to know more", "can you send information", "let's set up a time".
+
+Be direct, specific, and reference actual emails by sender name and subject. No emoji. Use Central Time (Chicago).
+
+RECENT EMAILS (last 48 hours):
+${emailContext}`,
+      messages: [{ role: 'user', content: text }],
+    });
+
+    return response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Failed to process request: ${msg}`;
   }
-
-  // General conversation — no data needed
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 500,
-    system: `You are McSecretary, Rob McMillan's AI secretary. Rob owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com). You have access to his email, calendar, and tasks but the user hasn't asked about those. Be concise, direct, and helpful. No emoji. Use Central Time.`,
-    messages: [{ role: 'user', content: text }],
-  });
-
-  return response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('');
 }
 
 async function main() {
