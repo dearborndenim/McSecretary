@@ -14,6 +14,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 let db: Database.Database;
 let anthropic: Anthropic;
+let awaitingCheckInResponse = false;
 
 function getChicagoDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
@@ -38,6 +39,7 @@ async function handleMorningBriefing(): Promise<void> {
 }
 
 async function handleHourlyCheckIn(): Promise<void> {
+  awaitingCheckInResponse = true;
   await sendCheckIn();
 }
 
@@ -78,8 +80,16 @@ async function handleIncomingMessage(text: string): Promise<string> {
     return logs.map((l) => `${l.hour}:00 — ${l.activity}`).join('\n');
   }
 
-  // If it looks like a time log response (short, no question mark, during work hours)
-  if (text.length < 200 && !text.includes('?') && hour >= 6 && hour <= 16) {
+  // Manual time log: "/log did accounting work"
+  if (lowerText.startsWith('/log ')) {
+    const activity = text.slice(5).trim();
+    insertTimeLog(db, { date: today, hour: hour - 1, activity });
+    return `Logged for ${hour - 1}:00: ${activity}`;
+  }
+
+  // If we sent a check-in and this is the response, log it as time
+  if (awaitingCheckInResponse && text.length < 300 && !text.includes('?')) {
+    awaitingCheckInResponse = false;
     insertTimeLog(db, { date: today, hour: hour - 1, activity: text.trim() });
     return `Logged for ${hour - 1}:00: ${text.trim()}`;
   }
