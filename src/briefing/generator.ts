@@ -116,7 +116,7 @@ export async function generateBriefing(
   const prompt = buildBriefingPrompt(emails, stats, calendar);
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 2000,
     system: BRIEFING_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: prompt }],
