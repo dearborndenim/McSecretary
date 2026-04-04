@@ -22,6 +22,9 @@ import {
   getYesterdayDate,
   ensureJournalDirs,
 } from './journal/files.js';
+import { classifyEmail } from './email/classifier.js';
+import { archiveOutlookEmail } from './email/actions.js';
+import type { EmailSummary } from './email/reader.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { generateEndOfDayReflection } from './journal/reflection.js';
 import { runWeeklySynthesis } from './journal/synthesis.js';
@@ -29,6 +32,9 @@ import { runWeeklySynthesis } from './journal/synthesis.js';
 let db: Database.Database;
 let anthropic: Anthropic;
 let awaitingCheckInResponse = false;
+
+// Pending archive batch — emails waiting for Rob's approval to archive
+let pendingArchiveBatch: EmailSummary[] = [];
 
 function getChicagoDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
@@ -158,6 +164,109 @@ async function handleEveningSummary(): Promise<void> {
   }
 }
 
+async function handleEmailCleanup(): Promise<string> {
+  console.log('Running email cleanup scan...');
+
+  const [emails1, emails2] = await Promise.all([
+    fetchRecentEmails(config.outlook.email1, 72, 50).catch(() => []),
+    fetchRecentEmails(config.outlook.email2, 72, 50).catch(() => []),
+  ]);
+
+  const allEmails = [...emails1, ...emails2];
+  if (allEmails.length === 0) {
+    return 'No recent emails found to clean up.';
+  }
+
+  // Use AI to identify junk/newsletter/promotional emails
+  const emailList = allEmails
+    .map((e, i) => `${i + 1}. From: ${e.fromName} <${e.from}> | Subject: ${e.subject} | Preview: ${e.bodyPreview.slice(0, 80)}`)
+    .join('\n');
+
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1000,
+    system: `You are an email triage assistant. Identify emails that are junk, newsletters, promotional, or transactional (not needing attention). Return ONLY a JSON array of the email numbers that should be archived. Example: [1, 3, 5, 8]. If none should be archived, return [].`,
+    messages: [{
+      role: 'user',
+      content: `Which of these emails are junk, newsletters, promotional, or transactional that can be safely archived?\n\n${emailList}`,
+    }],
+  });
+
+  const responseText = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('');
+
+  // Parse the numbers
+  const match = responseText.match(/\[[\d,\s]*\]/);
+  if (!match) {
+    return 'Could not identify emails to archive. Try asking me about specific emails.';
+  }
+
+  const indices: number[] = JSON.parse(match[0]);
+  if (indices.length === 0) {
+    return 'All your recent emails look important. Nothing to archive.';
+  }
+
+  // Build the pending batch
+  pendingArchiveBatch = indices
+    .map((i) => allEmails[i - 1])
+    .filter((e): e is EmailSummary => e !== undefined);
+
+  const archiveList = pendingArchiveBatch
+    .map((e, i) => `${i + 1}. ${e.fromName || e.from} — ${e.subject}`)
+    .join('\n');
+
+  return `Found ${pendingArchiveBatch.length} emails to archive:\n\n${archiveList}\n\nReply "archive" to clean these up, or "keep [numbers]" to exclude specific ones (e.g., "keep 3, 5").`;
+}
+
+async function executeArchive(text: string): Promise<string> {
+  if (pendingArchiveBatch.length === 0) {
+    return 'No pending archive batch. Say "clean up email" first.';
+  }
+
+  const lowerText = text.toLowerCase().trim();
+
+  // Check if Rob wants to keep some
+  if (lowerText.startsWith('keep ')) {
+    const keepNumbers = lowerText.replace('keep ', '').split(/[,\s]+/).map(Number).filter((n) => !isNaN(n));
+    const keepSet = new Set(keepNumbers.map((n) => n - 1)); // Convert to 0-indexed
+    pendingArchiveBatch = pendingArchiveBatch.filter((_, i) => !keepSet.has(i));
+
+    if (pendingArchiveBatch.length === 0) {
+      return 'All emails removed from archive list. Nothing to archive.';
+    }
+
+    const archiveList = pendingArchiveBatch
+      .map((e, i) => `${i + 1}. ${e.fromName || e.from} — ${e.subject}`)
+      .join('\n');
+
+    return `Updated list (${pendingArchiveBatch.length} emails):\n\n${archiveList}\n\nReply "archive" to confirm.`;
+  }
+
+  // Execute the archive
+  let archived = 0;
+  let failed = 0;
+
+  for (const email of pendingArchiveBatch) {
+    try {
+      await archiveOutlookEmail(email.account, email.id);
+      archived++;
+    } catch (err) {
+      console.error(`Failed to archive ${email.id}: ${err}`);
+      failed++;
+    }
+  }
+
+  pendingArchiveBatch = [];
+
+  let result = `Archived ${archived} emails.`;
+  if (failed > 0) {
+    result += ` ${failed} failed to archive.`;
+  }
+  return result;
+}
+
 async function handleIncomingMessage(text: string): Promise<string> {
   const hour = getChicagoHour();
   const today = getChicagoDate();
@@ -195,6 +304,34 @@ async function handleIncomingMessage(text: string): Promise<string> {
     const response = `Logged for ${hour - 1}:00: ${activity}`;
     insertConversationMessage(db, today, 'secretary', response);
     return response;
+  }
+
+  // Email cleanup commands
+  if (lowerText === 'clean up email' || lowerText === 'clean email' || lowerText === 'cleanup email' || lowerText.includes('clean up my email') || lowerText.includes('archive junk')) {
+    try {
+      const response = await handleEmailCleanup();
+      insertConversationMessage(db, today, 'secretary', response);
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errorMsg = `Email cleanup failed: ${msg}`;
+      insertConversationMessage(db, today, 'secretary', errorMsg);
+      return errorMsg;
+    }
+  }
+
+  // Archive approval
+  if ((lowerText === 'archive' || lowerText === 'yes' || lowerText.startsWith('keep ')) && pendingArchiveBatch.length > 0) {
+    try {
+      const response = await executeArchive(text);
+      insertConversationMessage(db, today, 'secretary', response);
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errorMsg = `Archive failed: ${msg}`;
+      insertConversationMessage(db, today, 'secretary', errorMsg);
+      return errorMsg;
+    }
   }
 
   // Check-in response
