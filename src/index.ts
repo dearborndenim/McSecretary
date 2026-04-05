@@ -380,11 +380,12 @@ async function handleIncomingMessage(text: string): Promise<string> {
     return response;
   }
 
-  // Full AI response with conversation memory + email + task context
+  // Full AI response with tools, conversation memory, email + task context
   try {
     console.log('Fetching email and task context...');
 
     const { getFormattedTaskLists } = await import('./tasks/todo.js');
+    const { TOOL_DEFINITIONS, executeTool } = await import('./tools.js');
 
     const [emails1, emails2, taskContext] = await Promise.all([
       fetchRecentEmails(config.outlook.email1, 48, 25).catch(() => []),
@@ -403,50 +404,92 @@ MICROSOFT TO DO TASKS:
 ${taskContext}
 
 RECENT EMAILS (last 48 hours):
-${emailContext}`;
+${emailContext}
 
-    // Build messages array: conversation history + current message
-    // The current message is already the last item from Rob, but we need
-    // to exclude it from history since we'll add it as the final message
+IMPORTANT: When Rob asks you to take an action (archive email, categorize email, create task, etc.), USE THE TOOLS provided. Do not just say you'll do it — actually call the tool. The email IDs are in the RECENT EMAILS data above.`;
+
     const historyWithoutLast = conversationHistory.slice(0, -1);
 
-    const messages: { role: 'user' | 'assistant'; content: string }[] = [
+    const messages: Anthropic.MessageParam[] = [
       ...historyWithoutLast,
       { role: 'user', content: text },
     ];
 
-    // Ensure messages alternate correctly (required by Claude API)
-    // If two consecutive messages have the same role, merge them
-    const cleaned: { role: 'user' | 'assistant'; content: string }[] = [];
+    // Ensure messages alternate correctly
+    const cleaned: Anthropic.MessageParam[] = [];
     for (const msg of messages) {
       if (cleaned.length > 0 && cleaned[cleaned.length - 1]!.role === msg.role) {
-        cleaned[cleaned.length - 1]!.content += '\n\n' + msg.content;
+        const last = cleaned[cleaned.length - 1]!;
+        if (typeof last.content === 'string' && typeof msg.content === 'string') {
+          last.content = last.content + '\n\n' + msg.content;
+        }
       } else {
         cleaned.push({ ...msg });
       }
     }
 
-    // Ensure first message is from user
     if (cleaned.length > 0 && cleaned[0]!.role !== 'user') {
       cleaned.shift();
     }
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      system: systemPrompt,
-      messages: cleaned,
-    });
+    // Call Claude with tools — loop to handle tool use
+    let currentMessages = [...cleaned];
+    let finalText = '';
+    let iterations = 0;
+    const MAX_ITERATIONS = 5;
 
-    const responseText = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('');
+    while (iterations < MAX_ITERATIONS) {
+      iterations++;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1500,
+        system: systemPrompt,
+        messages: currentMessages,
+        tools: TOOL_DEFINITIONS,
+      });
+
+      // Collect text from response
+      const textBlocks = response.content
+        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+        .map((block) => block.text);
+      finalText += textBlocks.join('');
+
+      // Check for tool use
+      const toolUseBlocks = response.content.filter(
+        (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+      );
+
+      if (toolUseBlocks.length === 0 || response.stop_reason !== 'tool_use') {
+        // No tool calls — we're done
+        break;
+      }
+
+      // Execute tools and build tool_result messages
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const toolUse of toolUseBlocks) {
+        console.log(`Executing tool: ${toolUse.name}(${JSON.stringify(toolUse.input)})`);
+        const result = await executeTool(toolUse.name, toolUse.input as Record<string, any>);
+        console.log(`Tool result: ${result}`);
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolUse.id,
+          content: result,
+        });
+      }
+
+      // Add assistant response + tool results to messages for next iteration
+      currentMessages = [
+        ...currentMessages,
+        { role: 'assistant', content: response.content },
+        { role: 'user', content: toolResults },
+      ];
+    }
 
     // Store secretary's response
-    insertConversationMessage(db, today, 'secretary', responseText);
+    insertConversationMessage(db, today, 'secretary', finalText);
 
-    return responseText;
+    return finalText;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const errorMsg = `Failed to process request: ${msg}`;
