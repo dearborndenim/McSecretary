@@ -113,6 +113,18 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'archive_emails_by_category',
+    description: 'Archive ALL emails with a specific category/tag. Use when Rob says "archive all spam" or "archive emails tagged X". This finds and archives all matching emails in one operation.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional, processes both if omitted)' },
+        category: { type: 'string', description: 'Category name to search for (e.g., "spam", "newsletter")' },
+      },
+      required: ['category'],
+    },
+  },
   // Email category tools
   {
     name: 'list_email_categories',
@@ -285,6 +297,51 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
           return tasks.map((t) => `- ${t.title}${t.importance === 'high' ? ' [HIGH]' : ''}`).join('\n');
         }
         return await getFormattedTaskLists();
+      }
+
+      case 'archive_emails_by_category': {
+        const { getGraphToken } = await import('./auth/graph.js');
+        const { config } = await import('./config.js');
+        const token = await getGraphToken();
+
+        const accounts = input.account
+          ? [input.account]
+          : [config.outlook.email1, config.outlook.email2];
+
+        let totalArchived = 0;
+        let totalFailed = 0;
+
+        for (const acct of accounts) {
+          // Find all emails with this category
+          const filterUrl = `https://graph.microsoft.com/v1.0/users/${acct}/messages?$filter=${encodeURIComponent(`categories/any(c:c eq '${input.category}')`)}&$top=100&$select=id,subject`;
+          const listRes = await fetch(filterUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (!listRes.ok) {
+            const text = await listRes.text();
+            return `Failed to search emails by category: ${listRes.status} ${text}`;
+          }
+
+          const data = (await listRes.json()) as { value: { id: string; subject: string }[] };
+
+          for (const msg of data.value) {
+            try {
+              await archiveOutlookEmail(acct, msg.id);
+              totalArchived++;
+            } catch {
+              totalFailed++;
+            }
+          }
+        }
+
+        if (totalArchived === 0 && totalFailed === 0) {
+          return `No emails found with category "${input.category}".`;
+        }
+
+        let result = `Archived ${totalArchived} email${totalArchived !== 1 ? 's' : ''} tagged "${input.category}".`;
+        if (totalFailed > 0) result += ` ${totalFailed} failed.`;
+        return result;
       }
 
       // Email category tools
