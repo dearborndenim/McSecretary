@@ -143,7 +143,7 @@ export async function createTask(
   if (options?.body) {
     taskBody.body = {
       content: options.body,
-      contentType: 'text',
+      contentType: 'html',
     };
   }
 
