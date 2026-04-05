@@ -48,7 +48,7 @@ export function buildBriefingPrompt(
     const eventList = calendar.events.length === 0
       ? 'No events scheduled.'
       : calendar.events
-          .map((e) => `- ${e.startTime} to ${e.endTime}: ${e.title} (${e.calendarEmail})${e.location ? ` — ${e.location}` : ''}`)
+          .map((e) => `- [ID:${e.id}] ${e.startTime} to ${e.endTime}: ${e.title} (${e.calendarEmail})${e.location ? ` — ${e.location}` : ''}`)
           .join('\n');
 
     const conflictList = calendar.conflicts.length === 0

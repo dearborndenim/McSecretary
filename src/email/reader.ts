@@ -55,6 +55,6 @@ export function formatEmailsForContext(emails: EmailSummary[]): string {
   if (emails.length === 0) return 'No emails found in this timeframe.';
 
   return emails.map((e, i) =>
-    `${i + 1}. From: ${e.fromName} <${e.from}> (${e.account})\n   Subject: ${e.subject}\n   Preview: ${e.bodyPreview.slice(0, 150)}\n   Received: ${e.receivedAt}\n   Read: ${e.isRead ? 'yes' : 'NO — UNREAD'}`
+    `${i + 1}. ID: ${e.id}\n   Account: ${e.account}\n   From: ${e.fromName} <${e.from}>\n   Subject: ${e.subject}\n   Preview: ${e.bodyPreview.slice(0, 150)}\n   Received: ${e.receivedAt}\n   Read: ${e.isRead ? 'yes' : 'NO — UNREAD'}`
   ).join('\n\n');
 }
