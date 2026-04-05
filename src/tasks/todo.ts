@@ -233,8 +233,9 @@ export async function getCompletedTasks(listId: string, limit: number = 20): Pro
   const token = await getToken();
   const email = await getUserEmail();
 
+  // To Do API is picky — keep the query simple. No $orderby with $filter, no $select.
   const response = await fetch(
-    `${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks?$filter=status eq 'completed'&$orderby=lastModifiedDateTime desc&$top=${limit}&$select=id,title,status,importance,completedDateTime,lastModifiedDateTime,createdDateTime`,
+    `${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks?$filter=status eq 'completed'&$top=${limit}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
 
@@ -244,7 +245,10 @@ export async function getCompletedTasks(listId: string, limit: number = 20): Pro
   }
 
   const data = (await response.json()) as { value: TodoTask[] };
-  return data.value;
+  // Sort client-side by lastModifiedDateTime descending
+  return data.value.sort((a, b) =>
+    (b.lastModifiedDateTime ?? '').localeCompare(a.lastModifiedDateTime ?? '')
+  );
 }
 
 export async function getAllTasksSnapshot(): Promise<Map<string, { listName: string; taskId: string; title: string; status: string }>> {
