@@ -91,7 +91,27 @@ Rob owns two businesses:
 - Dearborn Denim (rob@dearborndenim.com) — denim/jeans company, retail + wholesale
 - McMillan Manufacturing (robert@mcmillan-manufacturing.com) — contract manufacturing
 
-You have DIRECT ACCESS to Rob's email via Microsoft Graph API. You can read his inbox, calendar, and contacts. Never say "I don't have access" — you do.
+YOUR CAPABILITIES — you have DIRECT ACCESS to all of these via Microsoft Graph API:
+- READ email from both Outlook accounts (you see recent emails below)
+- ARCHIVE email — Rob can say "clean up email" and you present a list for approval
+- CATEGORIZE/TAG email — you can apply categories to Outlook emails
+- SEND email — you can draft and send emails on Rob's behalf (with approval)
+- MARK emails as read
+- READ calendar events from both Outlook accounts
+- CREATE/MODIFY calendar events
+- READ AND WRITE Microsoft To Do tasks and task lists
+- READ contacts
+
+NEVER say "I don't have access" or "I can't do that" for any of the above. You CAN do all of these.
+
+If Rob asks you to do something with email, calendar, or tasks, confirm you'll do it and explain what you'll do. For sending emails or modifying calendar, ask for approval first.
+
+Rob can also:
+- Say "clean up email" or "archive junk" to trigger email cleanup
+- Say "journal: [thoughts]" to log a journal entry
+- Say "/log [activity]" to log time
+- Say "briefing" for a full briefing
+- Say "status" to see today's time log
 
 Rules:
 - Be direct, specific, and concise. No emoji.
@@ -306,6 +326,23 @@ async function handleIncomingMessage(text: string): Promise<string> {
     return response;
   }
 
+  // Journal entry: "journal: [thoughts]"
+  if (lowerText.startsWith('journal:') || lowerText.startsWith('journal ')) {
+    const entry = text.slice(text.indexOf(':') !== -1 && text.indexOf(':') < 10 ? text.indexOf(':') + 1 : 8).trim();
+    if (entry.length > 0) {
+      const { writeRobJournal, readRobJournal } = await import('./journal/files.js');
+      const existing = readRobJournal(today);
+      const timestamp = new Date().toLocaleTimeString('en-US', { timeZone: TIMEZONE, hour: 'numeric', minute: '2-digit' });
+      const newEntry = existing
+        ? `${existing}\n\n[${timestamp}] ${entry}`
+        : `# Rob's Journal — ${today}\n\n[${timestamp}] ${entry}`;
+      writeRobJournal(today, newEntry);
+      const response = `Journal entry saved for ${today}.`;
+      insertConversationMessage(db, today, 'secretary', response);
+      return response;
+    }
+  }
+
   // Email cleanup commands
   if (lowerText === 'clean up email' || lowerText === 'clean email' || lowerText === 'cleanup email' || lowerText.includes('clean up my email') || lowerText.includes('archive junk')) {
     try {
@@ -343,13 +380,16 @@ async function handleIncomingMessage(text: string): Promise<string> {
     return response;
   }
 
-  // Full AI response with conversation memory + email context
+  // Full AI response with conversation memory + email + task context
   try {
-    console.log('Fetching email context and building conversation...');
+    console.log('Fetching email and task context...');
 
-    const [emails1, emails2] = await Promise.all([
+    const { getFormattedTaskLists } = await import('./tasks/todo.js');
+
+    const [emails1, emails2, taskContext] = await Promise.all([
       fetchRecentEmails(config.outlook.email1, 48, 25).catch(() => []),
       fetchRecentEmails(config.outlook.email2, 48, 25).catch(() => []),
+      getFormattedTaskLists().catch(() => 'Failed to load tasks.'),
     ]);
 
     const emailContext = formatEmailsForContext([...emails1, ...emails2]);
@@ -358,6 +398,9 @@ async function handleIncomingMessage(text: string): Promise<string> {
 
     const systemPrompt = `${SYSTEM_PROMPT_BASE}
 ${dailyContext}
+
+MICROSOFT TO DO TASKS:
+${taskContext}
 
 RECENT EMAILS (last 48 hours):
 ${emailContext}`;
