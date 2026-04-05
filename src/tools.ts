@@ -142,6 +142,18 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'get_completed_tasks',
+    description: 'List recently completed tasks from Microsoft To Do. Use when Rob asks what he got done, or to check completed work.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        list_name: { type: 'string', description: 'Task list name (optional — checks all if omitted)' },
+        limit: { type: 'number', description: 'Max results (default 10)' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'archive_emails_by_category',
     description: 'Archive ALL emails with a specific category/tag. Use when Rob says "archive all spam" or "archive emails tagged X". This finds and archives all matching emails in one operation.',
     input_schema: {
@@ -428,6 +440,35 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
           return tasks.map((t) => `- ${t.title}${t.importance === 'high' ? ' [HIGH]' : ''}`).join('\n');
         }
         return await getFormattedTaskLists();
+      }
+
+      case 'get_completed_tasks': {
+        const { getCompletedTasks, getTaskLists } = await import('./tasks/todo.js');
+        const limit = input.limit ?? 10;
+
+        if (input.list_name) {
+          const list = await findOrCreateTaskList(input.list_name);
+          const tasks = await getCompletedTasks(list.id, limit);
+          if (tasks.length === 0) return `No completed tasks in "${input.list_name}".`;
+          return tasks.map((t) => {
+            const completed = t.completedDateTime ? ` (completed: ${t.completedDateTime.dateTime})` : '';
+            return `- [DONE] ${t.title}${completed}`;
+          }).join('\n');
+        }
+
+        const lists = await getTaskLists();
+        const results: string[] = [];
+        for (const list of lists) {
+          const tasks = await getCompletedTasks(list.id, limit);
+          if (tasks.length > 0) {
+            const taskList = tasks.map((t) => {
+              const completed = t.completedDateTime ? ` (completed: ${t.completedDateTime.dateTime})` : '';
+              return `  - [DONE] ${t.title}${completed}`;
+            }).join('\n');
+            results.push(`${list.displayName}:\n${taskList}`);
+          }
+        }
+        return results.length > 0 ? results.join('\n\n') : 'No completed tasks found.';
       }
 
       case 'archive_emails_by_category': {

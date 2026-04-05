@@ -18,6 +18,8 @@ export interface TodoTask {
   dueDateTime?: { dateTime: string; timeZone: string };
   body?: { content: string; contentType: string };
   createdDateTime: string;
+  completedDateTime?: { dateTime: string; timeZone: string };
+  lastModifiedDateTime?: string;
 }
 
 async function getToken(): Promise<string> {
@@ -223,4 +225,62 @@ export async function getFormattedTaskLists(): Promise<string> {
   }
 
   return results.join('\n\n');
+}
+
+// === Recently completed tasks ===
+
+export async function getCompletedTasks(listId: string, limit: number = 20): Promise<TodoTask[]> {
+  const token = await getToken();
+  const email = await getUserEmail();
+
+  const response = await fetch(
+    `${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks?$filter=status eq 'completed'&$orderby=lastModifiedDateTime desc&$top=${limit}&$select=id,title,status,importance,completedDateTime,lastModifiedDateTime,createdDateTime`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to get completed tasks: ${response.status} ${text}`);
+  }
+
+  const data = (await response.json()) as { value: TodoTask[] };
+  return data.value;
+}
+
+export async function getAllTasksSnapshot(): Promise<Map<string, { listName: string; taskId: string; title: string; status: string }>> {
+  const lists = await getTaskLists();
+  const snapshot = new Map<string, { listName: string; taskId: string; title: string; status: string }>();
+
+  for (const list of lists) {
+    const tasks = await getTasks(list.id);
+    for (const task of tasks) {
+      snapshot.set(task.id, {
+        listName: list.displayName,
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+      });
+    }
+  }
+
+  return snapshot;
+}
+
+export function diffTaskSnapshots(
+  previous: Map<string, { listName: string; taskId: string; title: string; status: string }>,
+  current: Map<string, { listName: string; taskId: string; title: string; status: string }>,
+): { completed: { listName: string; title: string }[]; created: { listName: string; title: string }[] } {
+  const completed: { listName: string; title: string }[] = [];
+  const created: { listName: string; title: string }[] = [];
+
+  for (const [id, curr] of current) {
+    const prev = previous.get(id);
+    if (!prev && curr.status !== 'completed') {
+      created.push({ listName: curr.listName, title: curr.title });
+    } else if (prev && prev.status !== 'completed' && curr.status === 'completed') {
+      completed.push({ listName: curr.listName, title: curr.title });
+    }
+  }
+
+  return { completed, created };
 }

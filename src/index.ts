@@ -36,6 +36,9 @@ let awaitingCheckInResponse = false;
 // Pending archive batch — emails waiting for Rob's approval to archive
 let pendingArchiveBatch: EmailSummary[] = [];
 
+// Task polling — last known state for change detection
+let lastTaskSnapshot: Map<string, { listName: string; taskId: string; title: string; status: string }> = new Map();
+
 function getChicagoDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
@@ -113,6 +116,7 @@ TASK TOOLS (Microsoft To Do):
 - create_todo_task — create a task in a list
 - complete_todo_task — mark a task as done
 - list_todo_tasks — list incomplete tasks
+- get_completed_tasks — list recently completed tasks (what Rob got done)
 
 SCHEDULE TOOLS (your own recurring tasks — you control these):
 - view_schedule — show all scheduled tasks with times and status
@@ -127,6 +131,7 @@ You run these automatically. You can change times or disable them when Rob asks.
 - Hourly Check-In: 7 AM-3 PM weekdays — asks Rob what he worked on, logs time
 - Evening Summary: 4 PM weekdays — shows day's time log, asks Rob to reflect, then generates your own reflection + improvement plan + learnings
 - Weekly Synthesis: Sunday 7 PM — reads all week's daily learnings, updates master knowledge files
+- Task Polling: every 15 min during work hours — detects when Rob completes tasks in To Do, logs them as time entries, notifies via Telegram
 
 === YOUR MEMORY SYSTEMS ===
 
@@ -203,6 +208,47 @@ async function handleWeeklySynthesis(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Weekly synthesis failed:', msg);
+  }
+}
+
+async function handleTaskPolling(): Promise<void> {
+  try {
+    const { getAllTasksSnapshot, diffTaskSnapshots } = await import('./tasks/todo.js');
+    const currentSnapshot = await getAllTasksSnapshot();
+
+    if (lastTaskSnapshot.size > 0) {
+      const diff = diffTaskSnapshots(lastTaskSnapshot, currentSnapshot);
+
+      if (diff.completed.length > 0) {
+        const today = getChicagoDate();
+        const hour = getChicagoHour();
+
+        for (const task of diff.completed) {
+          // Log completed task as time entry
+          insertTimeLog(db, {
+            date: today,
+            hour: hour,
+            activity: `Completed: ${task.title} (${task.listName})`,
+            category: 'task_completed',
+          });
+        }
+
+        const completedList = diff.completed.map((t) => `- ${t.title} (${t.listName})`).join('\n');
+        const msg = `Tasks completed:\n${completedList}`;
+        console.log(msg);
+        await sendMessage(msg, false);
+        insertConversationMessage(db, today, 'secretary', `[Task Update] ${msg}`);
+      }
+
+      if (diff.created.length > 0) {
+        console.log(`New tasks detected: ${diff.created.map((t) => t.title).join(', ')}`);
+      }
+    }
+
+    lastTaskSnapshot = currentSnapshot;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Task polling failed:', msg);
   }
 }
 
@@ -600,6 +646,7 @@ async function main() {
     { name: 'Hourly Check-In', schedule: '0 7-15 * * 1-5', handler: handleHourlyCheckIn, description: '7 AM-3 PM weekdays — time tracking prompt' },
     { name: 'Evening Summary', schedule: '0 16 * * 1-5', handler: handleEveningSummary, description: '4 PM weekdays — day summary + reflection' },
     { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
+    { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
   ]);
   startSchedulerFromDb(db);
 
