@@ -12,7 +12,7 @@ import {
 } from './db/conversation-queries.js';
 import { runTriage } from './triage.js';
 import { initBot, sendBriefing, sendCheckIn, sendMessage, sendEveningSummary } from './telegram/bot.js';
-import { startScheduler, type ScheduledTask } from './scheduler.js';
+import { initializeDefaultSchedule, startSchedulerFromDb, registerHandler } from './scheduler.js';
 import { TIMEZONE } from './calendar/types.js';
 import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
 import {
@@ -514,6 +514,10 @@ async function main() {
 
   anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
 
+  // Initialize tools with DB reference
+  const { setToolsDb } = await import('./tools.js');
+  setToolsDb(db);
+
   const bot = await initBot();
 
   bot.on('message:text', async (ctx) => {
@@ -540,30 +544,14 @@ async function main() {
     }
   });
 
-  const tasks: ScheduledTask[] = [
-    {
-      name: 'Morning Briefing',
-      schedule: '0 4 * * 1-5',
-      handler: handleMorningBriefing,
-    },
-    {
-      name: 'Hourly Check-In',
-      schedule: '0 7-15 * * 1-5',
-      handler: handleHourlyCheckIn,
-    },
-    {
-      name: 'Evening Summary',
-      schedule: '0 16 * * 1-5',
-      handler: handleEveningSummary,
-    },
-    {
-      name: 'Weekly Synthesis',
-      schedule: '0 19 * * 0',  // Sunday 7 PM
-      handler: handleWeeklySynthesis,
-    },
-  ];
-
-  startScheduler(tasks);
+  // Initialize scheduler from DB (with defaults for first run)
+  initializeDefaultSchedule(db, [
+    { name: 'Morning Briefing', schedule: '0 4 * * 1-5', handler: handleMorningBriefing, description: '4 AM weekdays — full email/calendar briefing' },
+    { name: 'Hourly Check-In', schedule: '0 7-15 * * 1-5', handler: handleHourlyCheckIn, description: '7 AM-3 PM weekdays — time tracking prompt' },
+    { name: 'Evening Summary', schedule: '0 16 * * 1-5', handler: handleEveningSummary, description: '4 PM weekdays — day summary + reflection' },
+    { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
+  ]);
+  startSchedulerFromDb(db);
 
   console.log('Starting Telegram bot...');
   bot.start({

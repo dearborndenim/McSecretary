@@ -4,6 +4,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
+import type Database from 'better-sqlite3';
 import { archiveOutlookEmail, markOutlookAsRead, categorizeOutlookEmail } from './email/actions.js';
 import {
   getFormattedTaskLists,
@@ -12,6 +13,28 @@ import {
   completeTask,
   getIncompleteTasks,
 } from './tasks/todo.js';
+import {
+  createCalendarEvent,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+} from './calendar/calendar-actions.js';
+import {
+  updateScheduleAndRestart,
+  toggleScheduledTask,
+  getScheduleStatus,
+} from './scheduler.js';
+
+// DB reference — set during init
+let _db: Database.Database | null = null;
+
+export function setToolsDb(db: Database.Database): void {
+  _db = db;
+}
+
+function getDb(): Database.Database {
+  if (!_db) throw new Error('Tools DB not initialized. Call setToolsDb() first.');
+  return _db;
+}
 
 // Tool definitions for Claude API
 export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
@@ -90,6 +113,88 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  // Calendar tools
+  {
+    name: 'create_calendar_event',
+    description: 'Create a new calendar event in Outlook. Use when Rob asks to schedule a meeting, block time, or add an event.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional, defaults to rob@dearborndenim.com)' },
+        subject: { type: 'string', description: 'Event title/subject' },
+        start: { type: 'string', description: 'Start time in YYYY-MM-DDTHH:MM:SS format (Chicago time)' },
+        end: { type: 'string', description: 'End time in YYYY-MM-DDTHH:MM:SS format (Chicago time)' },
+        location: { type: 'string', description: 'Location (optional)' },
+        body: { type: 'string', description: 'Event description/notes (optional)' },
+        attendees: { type: 'array', items: { type: 'string' }, description: 'Email addresses of attendees (optional)' },
+        is_online: { type: 'boolean', description: 'Create as Teams meeting (optional)' },
+      },
+      required: ['subject', 'start', 'end'],
+    },
+  },
+  {
+    name: 'update_calendar_event',
+    description: 'Update an existing calendar event. Use when Rob asks to reschedule, rename, or modify an event.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional)' },
+        event_id: { type: 'string', description: 'The event ID to update' },
+        subject: { type: 'string', description: 'New title (optional)' },
+        start: { type: 'string', description: 'New start time YYYY-MM-DDTHH:MM:SS (optional)' },
+        end: { type: 'string', description: 'New end time YYYY-MM-DDTHH:MM:SS (optional)' },
+        location: { type: 'string', description: 'New location (optional)' },
+      },
+      required: ['event_id'],
+    },
+  },
+  {
+    name: 'delete_calendar_event',
+    description: 'Delete/cancel a calendar event. Use when Rob asks to cancel or remove a meeting.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional)' },
+        event_id: { type: 'string', description: 'The event ID to delete' },
+      },
+      required: ['event_id'],
+    },
+  },
+  // Schedule management tools
+  {
+    name: 'update_schedule',
+    description: 'Change the schedule of a recurring task (e.g., move briefing to 5 AM, change check-in frequency). Use cron syntax.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        task_name: { type: 'string', description: 'Task name: "Morning Briefing", "Hourly Check-In", "Evening Summary", or "Weekly Synthesis"' },
+        cron_expression: { type: 'string', description: 'New cron expression (e.g., "0 5 * * 1-5" for 5 AM weekdays)' },
+        description: { type: 'string', description: 'Updated description (optional)' },
+      },
+      required: ['task_name', 'cron_expression'],
+    },
+  },
+  {
+    name: 'toggle_schedule',
+    description: 'Enable or disable a scheduled task. Use when Rob wants to pause or resume a recurring task.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        task_name: { type: 'string', description: 'Task name' },
+        enabled: { type: 'boolean', description: 'true to enable, false to disable' },
+      },
+      required: ['task_name', 'enabled'],
+    },
+  },
+  {
+    name: 'view_schedule',
+    description: 'Show the current schedule of all recurring tasks with their cron expressions and status.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // Tool execution
@@ -142,6 +247,53 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
           return tasks.map((t) => `- ${t.title}${t.importance === 'high' ? ' [HIGH]' : ''}`).join('\n');
         }
         return await getFormattedTaskLists();
+      }
+
+      // Calendar tools
+      case 'create_calendar_event': {
+        const result = await createCalendarEvent(
+          input.account,
+          input.subject,
+          input.start,
+          input.end,
+          {
+            location: input.location,
+            body: input.body,
+            attendees: input.attendees,
+            isOnline: input.is_online,
+          },
+        );
+        return `Event created: "${result.subject}" (ID: ${result.id})`;
+      }
+
+      case 'update_calendar_event': {
+        await updateCalendarEvent(input.account, input.event_id, {
+          subject: input.subject,
+          startDateTime: input.start,
+          endDateTime: input.end,
+          location: input.location,
+        });
+        return `Event updated successfully.`;
+      }
+
+      case 'delete_calendar_event': {
+        await deleteCalendarEvent(input.account, input.event_id);
+        return `Event deleted/cancelled.`;
+      }
+
+      // Schedule tools
+      case 'update_schedule': {
+        const result = updateScheduleAndRestart(getDb(), input.task_name, input.cron_expression, input.description);
+        return result;
+      }
+
+      case 'toggle_schedule': {
+        const result = toggleScheduledTask(getDb(), input.task_name, input.enabled);
+        return result;
+      }
+
+      case 'view_schedule': {
+        return getScheduleStatus(getDb());
       }
 
       default:

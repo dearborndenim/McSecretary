@@ -58,5 +58,13 @@ export function initializeCalendarSchema(db: Database.Database): void {
       role TEXT NOT NULL,
       message TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      name TEXT PRIMARY KEY,
+      cron_expression TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      description TEXT DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 }
