@@ -115,6 +115,19 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   // Calendar tools
   {
+    name: 'list_calendar_events',
+    description: 'Fetch calendar events for a date range. Use this FIRST when Rob asks about his schedule or before modifying/deleting events — you need the event IDs.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional, fetches from both if omitted)' },
+        start_date: { type: 'string', description: 'Start date YYYY-MM-DD (defaults to today)' },
+        end_date: { type: 'string', description: 'End date YYYY-MM-DD (defaults to tomorrow)' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'create_calendar_event',
     description: 'Create a new calendar event in Outlook. Use when Rob asks to schedule a meeting, block time, or add an event.',
     input_schema: {
@@ -250,6 +263,36 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       }
 
       // Calendar tools
+      case 'list_calendar_events': {
+        const { fetchOutlookCalendarEvents } = await import('./calendar/outlook-calendar.js');
+        const { config } = await import('./config.js');
+
+        const today = new Date();
+        const startDate = input.start_date
+          ? new Date(`${input.start_date}T00:00:00`).toISOString()
+          : today.toISOString();
+        const endDate = input.end_date
+          ? new Date(`${input.end_date}T23:59:59`).toISOString()
+          : new Date(today.getTime() + 86400000).toISOString();
+
+        const accounts = input.account
+          ? [input.account]
+          : [config.outlook.email1, config.outlook.email2];
+
+        const allEvents = [];
+        for (const acct of accounts) {
+          const events = await fetchOutlookCalendarEvents(acct, startDate, endDate);
+          allEvents.push(...events);
+        }
+
+        if (allEvents.length === 0) return 'No events found in that date range.';
+
+        return allEvents
+          .sort((a, b) => a.startTime.localeCompare(b.startTime))
+          .map((e) => `ID: ${e.id}\nAccount: ${e.calendarEmail}\nTitle: ${e.title}\nStart: ${e.startTime}\nEnd: ${e.endTime}\nLocation: ${e.location || '(none)'}\nAttendees: ${e.attendees.length > 0 ? e.attendees.join(', ') : '(none)'}`)
+          .join('\n---\n');
+      }
+
       case 'create_calendar_event': {
         const result = await createCalendarEvent(
           input.account,
