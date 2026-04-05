@@ -76,6 +76,34 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'send_email',
+    description: 'Send an email from one of Rob\'s Outlook accounts. ALWAYS ask Rob for approval before sending. Use when Rob asks you to draft and send an email or reply.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Send from this account (rob@dearborndenim.com or robert@mcmillan-manufacturing.com)' },
+        to: { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses' },
+        subject: { type: 'string', description: 'Email subject line' },
+        body: { type: 'string', description: 'Email body text' },
+        reply_to_id: { type: 'string', description: 'If replying to an email, the original message ID (optional)' },
+      },
+      required: ['account', 'to', 'subject', 'body'],
+    },
+  },
+  {
+    name: 'read_contacts',
+    description: 'Search or list contacts from Outlook. Use when Rob asks about a contact, needs an email address, or wants to look someone up.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional, defaults to rob@dearborndenim.com)' },
+        search: { type: 'string', description: 'Search term — name, email, or company (optional, lists all if omitted)' },
+        limit: { type: 'number', description: 'Max results (default 20)' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'create_todo_task',
     description: 'Create a new task in Microsoft To Do. Use when Rob asks to add a task, reminder, or todo item.',
     input_schema: {
@@ -264,6 +292,109 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       case 'mark_email_read': {
         await markOutlookAsRead(input.account, input.email_id);
         return `Email marked as read.`;
+      }
+
+      case 'send_email': {
+        const { getGraphToken } = await import('./auth/graph.js');
+        const token = await getGraphToken();
+
+        if (input.reply_to_id) {
+          // Reply to existing message
+          const res = await fetch(`https://graph.microsoft.com/v1.0/users/${input.account}/messages/${input.reply_to_id}/reply`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              comment: input.body,
+            }),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            return `Failed to send reply: ${res.status} ${text}`;
+          }
+          return `Reply sent from ${input.account}.`;
+        }
+
+        // New email
+        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${input.account}/sendMail`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: {
+              subject: input.subject,
+              body: { contentType: 'text', content: input.body },
+              toRecipients: input.to.map((email: string) => ({
+                emailAddress: { address: email },
+              })),
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          return `Failed to send email: ${res.status} ${text}`;
+        }
+        return `Email sent from ${input.account} to ${input.to.join(', ')}. Subject: "${input.subject}"`;
+      }
+
+      case 'read_contacts': {
+        const { getGraphToken } = await import('./auth/graph.js');
+        const { config } = await import('./config.js');
+        const token = await getGraphToken();
+        const email = input.account ?? config.outlook.email1;
+        const limit = input.limit ?? 20;
+
+        let url: string;
+        if (input.search) {
+          const q = encodeURIComponent(input.search);
+          url = `https://graph.microsoft.com/v1.0/users/${email}/contacts?$filter=contains(displayName,'${q}') or contains(emailAddresses/any(e:e/address),'${q}')&$top=${limit}&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
+        } else {
+          url = `https://graph.microsoft.com/v1.0/users/${email}/contacts?$top=${limit}&$orderby=displayName&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
+        }
+
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!res.ok) {
+          // Filter on contacts can be tricky — try simpler approach
+          if (input.search) {
+            const simpleUrl = `https://graph.microsoft.com/v1.0/users/${email}/contacts?$search="${encodeURIComponent(input.search)}"&$top=${limit}&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
+            const res2 = await fetch(simpleUrl, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                ConsistencyLevel: 'eventual',
+              },
+            });
+            if (!res2.ok) {
+              const text = await res2.text();
+              return `Failed to search contacts: ${res2.status} ${text}`;
+            }
+            const data2 = (await res2.json()) as { value: any[] };
+            if (data2.value.length === 0) return `No contacts found matching "${input.search}".`;
+            return data2.value.map((c: any) => {
+              const emails = (c.emailAddresses ?? []).map((e: any) => e.address).join(', ');
+              const phone = c.mobilePhone || (c.businessPhones ?? [])[0] || '';
+              return `- ${c.displayName}${c.companyName ? ` (${c.companyName})` : ''}${c.jobTitle ? ` — ${c.jobTitle}` : ''}\n  Email: ${emails || '(none)'}\n  Phone: ${phone || '(none)'}`;
+            }).join('\n');
+          }
+          const text = await res.text();
+          return `Failed to list contacts: ${res.status} ${text}`;
+        }
+
+        const data = (await res.json()) as { value: any[] };
+        if (data.value.length === 0) return input.search ? `No contacts found matching "${input.search}".` : 'No contacts found.';
+
+        return data.value.map((c: any) => {
+          const emails = (c.emailAddresses ?? []).map((e: any) => e.address).join(', ');
+          const phone = c.mobilePhone || (c.businessPhones ?? [])[0] || '';
+          return `- ${c.displayName}${c.companyName ? ` (${c.companyName})` : ''}${c.jobTitle ? ` — ${c.jobTitle}` : ''}\n  Email: ${emails || '(none)'}\n  Phone: ${phone || '(none)'}`;
+        }).join('\n');
       }
 
       case 'create_todo_task': {
