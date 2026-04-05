@@ -113,6 +113,31 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  // Email category tools
+  {
+    name: 'list_email_categories',
+    description: 'List all available email categories/labels defined in Outlook. Use to see what categories exist before tagging.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional, defaults to rob@dearborndenim.com)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'create_email_category',
+    description: 'Create a new email category/label in Outlook. Use when Rob wants a new tag that does not exist yet.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account (optional)' },
+        name: { type: 'string', description: 'Category display name (e.g., "Apollo Response", "Follow Up", "VIP Customer")' },
+        color: { type: 'string', description: 'Color preset (preset0-preset24, or "none"). Optional.' },
+      },
+      required: ['name'],
+    },
+  },
   // Calendar tools
   {
     name: 'list_calendar_events',
@@ -260,6 +285,50 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
           return tasks.map((t) => `- ${t.title}${t.importance === 'high' ? ' [HIGH]' : ''}`).join('\n');
         }
         return await getFormattedTaskLists();
+      }
+
+      // Email category tools
+      case 'list_email_categories': {
+        const { getGraphToken } = await import('./auth/graph.js');
+        const { config } = await import('./config.js');
+        const token = await getGraphToken();
+        const email = input.account ?? config.outlook.email1;
+
+        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${email}/outlook/masterCategories`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          return `Failed to list categories: ${res.status} ${text}`;
+        }
+        const data = (await res.json()) as { value: { displayName: string; color: string }[] };
+        if (data.value.length === 0) return 'No categories defined.';
+        return data.value.map((c) => `- ${c.displayName} (${c.color})`).join('\n');
+      }
+
+      case 'create_email_category': {
+        const { getGraphToken } = await import('./auth/graph.js');
+        const { config } = await import('./config.js');
+        const token = await getGraphToken();
+        const email = input.account ?? config.outlook.email1;
+
+        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${email}/outlook/masterCategories`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            displayName: input.name,
+            color: input.color ?? 'none',
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          return `Failed to create category: ${res.status} ${text}`;
+        }
+        const created = await res.json();
+        return `Category created: "${created.displayName}" (${created.color})`;
       }
 
       // Calendar tools

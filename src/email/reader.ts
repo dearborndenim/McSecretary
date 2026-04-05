@@ -15,6 +15,7 @@ export interface EmailSummary {
   bodyPreview: string;
   receivedAt: string;
   isRead: boolean;
+  categories: string[];
 }
 
 export async function fetchRecentEmails(
@@ -26,7 +27,7 @@ export async function fetchRecentEmails(
   const token = await getGraphToken();
 
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-  const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=id,from,subject,bodyPreview,receivedDateTime,isRead`;
+  const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=id,from,subject,bodyPreview,receivedDateTime,isRead,categories`;
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -48,6 +49,7 @@ export async function fetchRecentEmails(
     bodyPreview: msg.bodyPreview ?? '',
     receivedAt: msg.receivedDateTime,
     isRead: msg.isRead,
+    categories: msg.categories ?? [],
   }));
 }
 
@@ -55,6 +57,6 @@ export function formatEmailsForContext(emails: EmailSummary[]): string {
   if (emails.length === 0) return 'No emails found in this timeframe.';
 
   return emails.map((e, i) =>
-    `${i + 1}. ID: ${e.id}\n   Account: ${e.account}\n   From: ${e.fromName} <${e.from}>\n   Subject: ${e.subject}\n   Preview: ${e.bodyPreview.slice(0, 150)}\n   Received: ${e.receivedAt}\n   Read: ${e.isRead ? 'yes' : 'NO — UNREAD'}`
+    `${i + 1}. ID: ${e.id}\n   Account: ${e.account}\n   From: ${e.fromName} <${e.from}>\n   Subject: ${e.subject}\n   Preview: ${e.bodyPreview.slice(0, 150)}\n   Received: ${e.receivedAt}\n   Read: ${e.isRead ? 'yes' : 'NO — UNREAD'}\n   Categories: ${e.categories.length > 0 ? e.categories.join(', ') : '(none)'}`
   ).join('\n\n');
 }
