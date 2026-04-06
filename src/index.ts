@@ -97,8 +97,9 @@ Rob owns two businesses:
 === YOUR TOOLS (use these to take real action — don't just describe what you'd do) ===
 
 EMAIL TOOLS:
-- archive_email — archive an email by ID
-- categorize_email — apply a category/tag to an email by ID
+- archive_email — archive a single email by ID
+- categorize_email — apply a category/tag to a single email by ID
+- bulk_categorize_emails — tag MULTIPLE emails at once in one API call (PREFER THIS for bulk operations — pass array of IDs)
 - mark_email_read — mark an email as read by ID
 - send_email — send a new email or reply (ALWAYS ask Rob for approval first)
 - archive_emails_by_category — bulk archive all emails with a specific tag (e.g., "archive all spam")
@@ -504,7 +505,7 @@ ${emailContext}
 
 CRITICAL INSTRUCTIONS FOR TOOL USE:
 - When Rob asks you to take ANY action (tag, archive, categorize, create task, send email, etc.), you MUST call the tools. Do NOT just describe what you would do.
-- For bulk operations (tag 20 emails as spam), call categorize_email for EACH email. You can make multiple tool calls in a single response.
+- For bulk operations (tag 20 emails as spam), use bulk_categorize_emails with an array of IDs — ONE tool call, not 20 separate ones.
 - The email IDs are in the RECENT EMAILS data above — use them directly.
 - If Rob says "tag these as spam" or "categorize as X", call categorize_email immediately for each email. Do NOT ask for confirmation for tagging/categorizing — just do it.
 - For sending emails: ask for approval first. For everything else: act immediately.`;

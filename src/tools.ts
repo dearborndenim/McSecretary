@@ -154,6 +154,19 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'bulk_categorize_emails',
+    description: 'Tag/categorize multiple emails at once in a single batch operation. Use this instead of calling categorize_email repeatedly — it is faster and cheaper. Pass an array of email IDs.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        account: { type: 'string', description: 'Email account' },
+        email_ids: { type: 'array', items: { type: 'string' }, description: 'Array of email message IDs to categorize' },
+        category: { type: 'string', description: 'Category name to apply to all (e.g., "spam", "customer", "follow-up")' },
+      },
+      required: ['account', 'email_ids', 'category'],
+    },
+  },
+  {
     name: 'archive_emails_by_category',
     description: 'Archive ALL emails with a specific category/tag. Use when Rob says "archive all spam" or "archive emails tagged X". This finds and archives all matching emails in one operation.',
     input_schema: {
@@ -469,6 +482,60 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
           }
         }
         return results.length > 0 ? results.join('\n\n') : 'No completed tasks found.';
+      }
+
+      case 'bulk_categorize_emails': {
+        const { getGraphToken } = await import('./auth/graph.js');
+        const token = await getGraphToken();
+        const ids: string[] = input.email_ids;
+
+        if (ids.length === 0) return 'No email IDs provided.';
+
+        // Graph batch API supports up to 20 requests per batch
+        const batches: string[][] = [];
+        for (let i = 0; i < ids.length; i += 20) {
+          batches.push(ids.slice(i, i + 20));
+        }
+
+        let succeeded = 0;
+        let failed = 0;
+
+        for (const batch of batches) {
+          const requests = batch.map((id, i) => ({
+            id: String(i + 1),
+            method: 'PATCH',
+            url: `/users/${input.account}/messages/${id}`,
+            headers: { 'Content-Type': 'application/json' },
+            body: { categories: [input.category] },
+          }));
+
+          const res = await fetch('https://graph.microsoft.com/v1.0/$batch', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ requests }),
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            return `Batch request failed: ${res.status} ${text}`;
+          }
+
+          const data = (await res.json()) as { responses: { id: string; status: number }[] };
+          for (const r of data.responses) {
+            if (r.status >= 200 && r.status < 300) {
+              succeeded++;
+            } else {
+              failed++;
+            }
+          }
+        }
+
+        let result = `Tagged ${succeeded} email${succeeded !== 1 ? 's' : ''} as "${input.category}".`;
+        if (failed > 0) result += ` ${failed} failed.`;
+        return result;
       }
 
       case 'archive_emails_by_category': {
