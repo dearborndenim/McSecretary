@@ -288,26 +288,28 @@ async function handleEmailScan(): Promise<void> {
       max_tokens: 2000,
       system: `You are an email triage assistant for Rob McMillan, owner of Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com).
 
-Classify each email. Return ONLY a JSON array where each item has:
+For each email, decide: is it spam or not? Return ONLY a JSON array where each item has:
 - "index": the email number (1-based)
-- "category": one of: "spam", "customer", "supplier", "team", "financial", "personal", "important"
+- "spam": true or false
 
-Tag as "spam" if the email is:
-- Marketing/promotional (newsletters, product announcements, sales)
-- Automated notifications that don't need attention (social media, service alerts)
-- Actual spam/junk
-- Subscriptions Rob didn't explicitly sign up for
+Mark as spam (true) if the email is:
+- Marketing, promotional, newsletters, product announcements, sales pitches
+- Automated notifications that don't need attention (social media alerts, service notifications)
+- Actual spam or junk
+- Subscriptions or mailing lists
 - Mass-sent emails not personally addressed to Rob
+- Anything Rob doesn't need to see or act on
 
-Tag as "important" if the email is:
+Mark as NOT spam (false) if the email is:
 - From a real person who expects a response
-- A customer inquiry or order-related
+- A customer inquiry, order, or business communication
 - From a supplier about deliveries, pricing, or production
 - Financial (bank, invoices, payments)
 - Personal (family, friends)
-- Team internal (employees, contractors)
+- From an employee or contractor
+- A reply to something Rob sent
 
-For important emails, use the more specific category (customer, supplier, team, financial, personal) instead of "important".
+When in doubt, mark as NOT spam. Better to let a real email through than miss it.
 
 Respond with ONLY the JSON array. No explanation.`,
       messages: [{
@@ -321,45 +323,46 @@ Respond with ONLY the JSON array. No explanation.`,
       .map((block) => block.text)
       .join('');
 
-    // Parse JSON response
     const match = responseText.match(/\[[\s\S]*\]/);
     if (!match) {
       console.error('Email scan: failed to parse classification response');
       return;
     }
 
-    const classifications: { index: number; category: string }[] = JSON.parse(match[0]);
+    const classifications: { index: number; spam: boolean }[] = JSON.parse(match[0]);
 
-    // Group by account + category for bulk operations
-    const bulkOps = new Map<string, { account: string; ids: string[]; category: string }>();
+    // Collect spam email IDs grouped by account
+    const spamByAccount = new Map<string, string[]>();
+    const notSpam: typeof untagged = [];
 
     for (const cls of classifications) {
       const email = untagged[cls.index - 1];
       if (!email) continue;
 
-      const key = `${email.account}|${cls.category}`;
-      if (!bulkOps.has(key)) {
-        bulkOps.set(key, { account: email.account, ids: [], category: cls.category });
+      if (cls.spam) {
+        if (!spamByAccount.has(email.account)) {
+          spamByAccount.set(email.account, []);
+        }
+        spamByAccount.get(email.account)!.push(email.id);
+      } else {
+        notSpam.push(email);
       }
-      bulkOps.get(key)!.ids.push(email.id);
     }
 
-    // Execute bulk categorizations
+    // Bulk-tag spam emails
     const { getGraphToken } = await import('./auth/graph.js');
     const token = await getGraphToken();
-    let totalTagged = 0;
     let spamCount = 0;
 
-    for (const [, op] of bulkOps) {
-      // Batch in groups of 20
-      for (let i = 0; i < op.ids.length; i += 20) {
-        const batch = op.ids.slice(i, i + 20);
+    for (const [account, ids] of spamByAccount) {
+      for (let i = 0; i < ids.length; i += 20) {
+        const batch = ids.slice(i, i + 20);
         const requests = batch.map((id, idx) => ({
           id: String(idx + 1),
           method: 'PATCH',
-          url: `/users/${op.account}/messages/${id}`,
+          url: `/users/${account}/messages/${id}`,
           headers: { 'Content-Type': 'application/json' },
-          body: { categories: [op.category] },
+          body: { categories: ['spam'] },
         }));
 
         const res = await fetch('https://graph.microsoft.com/v1.0/$batch', {
@@ -373,30 +376,25 @@ Respond with ONLY the JSON array. No explanation.`,
 
         if (res.ok) {
           const data = (await res.json()) as { responses: { status: number }[] };
-          const succeeded = data.responses.filter((r) => r.status >= 200 && r.status < 300).length;
-          totalTagged += succeeded;
-          if (op.category === 'spam') spamCount += succeeded;
+          spamCount += data.responses.filter((r) => r.status >= 200 && r.status < 300).length;
         }
       }
     }
 
-    console.log(`Email scan complete: ${totalTagged} emails tagged (${spamCount} as spam).`);
+    console.log(`Email scan complete: ${spamCount} tagged as spam, ${notSpam.length} not spam.`);
 
-    // Notify Rob if important emails came in
-    const importantEmails = classifications.filter((c) => c.category !== 'spam');
-    if (importantEmails.length > 0) {
-      const importantList = importantEmails.map((c) => {
-        const email = untagged[c.index - 1];
-        if (!email) return '';
-        return `- [${c.category}] ${email.fromName || email.from}: ${email.subject}`;
-      }).filter(Boolean).join('\n');
+    // Notify Rob of non-spam emails
+    if (notSpam.length > 0) {
+      const importantList = notSpam.map((e) =>
+        `- ${e.fromName || e.from}: ${e.subject}`
+      ).join('\n');
 
-      if (importantList) {
-        const today = getChicagoDate();
-        const msg = `New emails:\n${importantList}`;
-        await sendMessage(msg, false);
-        insertConversationMessage(db, today, 'secretary', `[Email Scan] ${msg}`);
-      }
+      const today = getChicagoDate();
+      const msg = `New emails:\n${importantList}${spamCount > 0 ? `\n\n(${spamCount} spam emails tagged)` : ''}`;
+      await sendMessage(msg, false);
+      insertConversationMessage(db, today, 'secretary', `[Email Scan] ${msg}`);
+    } else if (spamCount > 0) {
+      console.log(`Only spam found (${spamCount} tagged). No notification sent.`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
