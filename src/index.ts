@@ -382,20 +382,6 @@ Respond with ONLY the JSON array. No explanation.`,
     }
 
     console.log(`Email scan complete: ${spamCount} tagged as spam, ${notSpam.length} not spam.`);
-
-    // Notify Rob of non-spam emails
-    if (notSpam.length > 0) {
-      const importantList = notSpam.map((e) =>
-        `- ${e.fromName || e.from}: ${e.subject}`
-      ).join('\n');
-
-      const today = getChicagoDate();
-      const msg = `New emails:\n${importantList}${spamCount > 0 ? `\n\n(${spamCount} spam emails tagged)` : ''}`;
-      await sendMessage(msg, false);
-      insertConversationMessage(db, today, 'secretary', `[Email Scan] ${msg}`);
-    } else if (spamCount > 0) {
-      console.log(`Only spam found (${spamCount} tagged). No notification sent.`);
-    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Email scan failed:', msg);
