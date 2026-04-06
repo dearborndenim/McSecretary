@@ -502,7 +502,12 @@ ${taskContext}
 RECENT EMAILS (last 48 hours):
 ${emailContext}
 
-IMPORTANT: When Rob asks you to take an action (archive email, categorize email, create task, etc.), USE THE TOOLS provided. Do not just say you'll do it — actually call the tool. The email IDs are in the RECENT EMAILS data above.`;
+CRITICAL INSTRUCTIONS FOR TOOL USE:
+- When Rob asks you to take ANY action (tag, archive, categorize, create task, send email, etc.), you MUST call the tools. Do NOT just describe what you would do.
+- For bulk operations (tag 20 emails as spam), call categorize_email for EACH email. You can make multiple tool calls in a single response.
+- The email IDs are in the RECENT EMAILS data above — use them directly.
+- If Rob says "tag these as spam" or "categorize as X", call categorize_email immediately for each email. Do NOT ask for confirmation for tagging/categorizing — just do it.
+- For sending emails: ask for approval first. For everything else: act immediately.`;
 
     const historyWithoutLast = conversationHistory.slice(0, -1);
 
@@ -532,14 +537,14 @@ IMPORTANT: When Rob asks you to take an action (archive email, categorize email,
     let currentMessages = [...cleaned];
     let finalText = '';
     let iterations = 0;
-    const MAX_ITERATIONS = 5;
+    const MAX_ITERATIONS = 15;
 
     while (iterations < MAX_ITERATIONS) {
       iterations++;
 
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1500,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: currentMessages,
         tools: TOOL_DEFINITIONS,
