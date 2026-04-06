@@ -139,6 +139,7 @@ You run these automatically. You can change times or disable them when Rob asks.
 - Evening Summary: 4 PM weekdays — shows day's time log, asks Rob to reflect, then generates your own reflection + improvement plan + learnings
 - Weekly Synthesis: Sunday 7 PM — reads all week's daily learnings, updates master knowledge files
 - Task Polling: every 15 min during work hours — detects when Rob completes tasks in To Do, logs them as time entries, notifies via Telegram
+- Email Scan: every 30 min during work hours — auto-classifies new untagged emails (spam, customer, supplier, etc.), notifies Rob of important ones
 
 === YOUR MEMORY SYSTEMS ===
 
@@ -256,6 +257,150 @@ async function handleTaskPolling(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Task polling failed:', msg);
+  }
+}
+
+async function handleEmailScan(): Promise<void> {
+  try {
+    console.log('Scanning emails for auto-tagging...');
+
+    const [emails1, emails2] = await Promise.all([
+      fetchRecentEmails(config.outlook.email1, 4, 30).catch(() => []),
+      fetchRecentEmails(config.outlook.email2, 4, 30).catch(() => []),
+    ]);
+
+    // Only process untagged emails
+    const untagged = [...emails1, ...emails2].filter((e) => e.categories.length === 0);
+
+    if (untagged.length === 0) {
+      console.log('No untagged emails found.');
+      return;
+    }
+
+    console.log(`Found ${untagged.length} untagged emails to classify.`);
+
+    const emailList = untagged.map((e, i) =>
+      `${i + 1}. ID: ${e.id} | Account: ${e.account} | From: ${e.fromName} <${e.from}> | Subject: ${e.subject} | Preview: ${e.bodyPreview.slice(0, 100)}`
+    ).join('\n');
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: `You are an email triage assistant for Rob McMillan, owner of Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com).
+
+Classify each email. Return ONLY a JSON array where each item has:
+- "index": the email number (1-based)
+- "category": one of: "spam", "customer", "supplier", "team", "financial", "personal", "important"
+
+Tag as "spam" if the email is:
+- Marketing/promotional (newsletters, product announcements, sales)
+- Automated notifications that don't need attention (social media, service alerts)
+- Actual spam/junk
+- Subscriptions Rob didn't explicitly sign up for
+- Mass-sent emails not personally addressed to Rob
+
+Tag as "important" if the email is:
+- From a real person who expects a response
+- A customer inquiry or order-related
+- From a supplier about deliveries, pricing, or production
+- Financial (bank, invoices, payments)
+- Personal (family, friends)
+- Team internal (employees, contractors)
+
+For important emails, use the more specific category (customer, supplier, team, financial, personal) instead of "important".
+
+Respond with ONLY the JSON array. No explanation.`,
+      messages: [{
+        role: 'user',
+        content: `Classify these emails:\n\n${emailList}`,
+      }],
+    });
+
+    const responseText = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
+
+    // Parse JSON response
+    const match = responseText.match(/\[[\s\S]*\]/);
+    if (!match) {
+      console.error('Email scan: failed to parse classification response');
+      return;
+    }
+
+    const classifications: { index: number; category: string }[] = JSON.parse(match[0]);
+
+    // Group by account + category for bulk operations
+    const bulkOps = new Map<string, { account: string; ids: string[]; category: string }>();
+
+    for (const cls of classifications) {
+      const email = untagged[cls.index - 1];
+      if (!email) continue;
+
+      const key = `${email.account}|${cls.category}`;
+      if (!bulkOps.has(key)) {
+        bulkOps.set(key, { account: email.account, ids: [], category: cls.category });
+      }
+      bulkOps.get(key)!.ids.push(email.id);
+    }
+
+    // Execute bulk categorizations
+    const { getGraphToken } = await import('./auth/graph.js');
+    const token = await getGraphToken();
+    let totalTagged = 0;
+    let spamCount = 0;
+
+    for (const [, op] of bulkOps) {
+      // Batch in groups of 20
+      for (let i = 0; i < op.ids.length; i += 20) {
+        const batch = op.ids.slice(i, i + 20);
+        const requests = batch.map((id, idx) => ({
+          id: String(idx + 1),
+          method: 'PATCH',
+          url: `/users/${op.account}/messages/${id}`,
+          headers: { 'Content-Type': 'application/json' },
+          body: { categories: [op.category] },
+        }));
+
+        const res = await fetch('https://graph.microsoft.com/v1.0/$batch', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ requests }),
+        });
+
+        if (res.ok) {
+          const data = (await res.json()) as { responses: { status: number }[] };
+          const succeeded = data.responses.filter((r) => r.status >= 200 && r.status < 300).length;
+          totalTagged += succeeded;
+          if (op.category === 'spam') spamCount += succeeded;
+        }
+      }
+    }
+
+    console.log(`Email scan complete: ${totalTagged} emails tagged (${spamCount} as spam).`);
+
+    // Notify Rob if important emails came in
+    const importantEmails = classifications.filter((c) => c.category !== 'spam');
+    if (importantEmails.length > 0) {
+      const importantList = importantEmails.map((c) => {
+        const email = untagged[c.index - 1];
+        if (!email) return '';
+        return `- [${c.category}] ${email.fromName || email.from}: ${email.subject}`;
+      }).filter(Boolean).join('\n');
+
+      if (importantList) {
+        const today = getChicagoDate();
+        const msg = `New emails:\n${importantList}`;
+        await sendMessage(msg, false);
+        insertConversationMessage(db, today, 'secretary', `[Email Scan] ${msg}`);
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Email scan failed:', msg);
   }
 }
 
@@ -659,6 +804,7 @@ async function main() {
     { name: 'Evening Summary', schedule: '0 16 * * 1-5', handler: handleEveningSummary, description: '4 PM weekdays — day summary + reflection' },
     { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
+    { name: 'Email Scan', schedule: '*/30 6-16 * * 1-5', handler: handleEmailScan, description: 'Every 30 min during work hours — auto-tag new emails, notify if important' },
   ]);
   startSchedulerFromDb(db);
 
