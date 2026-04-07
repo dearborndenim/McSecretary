@@ -139,7 +139,7 @@ You run these automatically. You can change times or disable them when Rob asks.
 - Evening Summary: 4 PM weekdays — shows day's time log, asks Rob to reflect, then generates your own reflection + improvement plan + learnings
 - Weekly Synthesis: Sunday 7 PM — reads all week's daily learnings, updates master knowledge files
 - Task Polling: every 15 min during work hours — detects when Rob completes tasks in To Do, logs them as time entries, notifies via Telegram
-- Email Scan: every 30 min during work hours — auto-classifies new untagged emails (spam, customer, supplier, etc.), notifies Rob of important ones
+- Email Scan: every 30 min, 24/7 — auto-tags new untagged emails as spam or not
 
 === YOUR MEMORY SYSTEMS ===
 
@@ -788,7 +788,7 @@ async function main() {
     { name: 'Evening Summary', schedule: '0 16 * * 1-5', handler: handleEveningSummary, description: '4 PM weekdays — day summary + reflection' },
     { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
-    { name: 'Email Scan', schedule: '*/30 6-16 * * 1-5', handler: handleEmailScan, description: 'Every 30 min during work hours — auto-tag new emails, notify if important' },
+    { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },
   ]);
   startSchedulerFromDb(db);
 
