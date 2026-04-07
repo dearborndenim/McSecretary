@@ -28,6 +28,7 @@ import type { EmailSummary } from './email/reader.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { generateEndOfDayReflection } from './journal/reflection.js';
 import { runWeeklySynthesis } from './journal/synthesis.js';
+import { initApi, startApiServer, getRecentSmsMessages } from './api.js';
 
 let db: Database.Database;
 let anthropic: Anthropic;
@@ -107,6 +108,12 @@ EMAIL TOOLS:
 - list_email_categories — list all defined categories/labels in Outlook
 - create_email_category — create a new category/label
 - read_contacts — search or list Outlook contacts
+
+SMS/TEXT MESSAGES:
+- You can see Rob's recent text messages (iMessage + SMS) synced from his Mac Mini
+- Text messages appear in the RECENT TEXT MESSAGES section below
+- You can reference who texted Rob and what they said
+- You CANNOT send texts — only read them for context
 
 BULK OPERATION RULES:
 - ALWAYS prefer bulk tools (bulk_archive_emails, bulk_categorize_emails) over calling single-email tools repeatedly.
@@ -626,6 +633,7 @@ async function handleIncomingMessage(text: string): Promise<string> {
     ]);
 
     const emailContext = formatEmailsForContext([...emails1, ...emails2]);
+    const smsContext = getRecentSmsMessages(db, 24, 30);
     const dailyContext = buildDailyContext();
     const conversationHistory = buildConversationHistory(today);
 
@@ -634,6 +642,9 @@ ${dailyContext}
 
 MICROSOFT TO DO TASKS:
 ${taskContext}
+
+RECENT TEXT MESSAGES (last 24 hours):
+${smsContext}
 
 RECENT EMAILS (last 48 hours):
 ${emailContext}
@@ -754,6 +765,10 @@ async function main() {
   // Initialize tools with DB reference
   const { setToolsDb } = await import('./tools.js');
   setToolsDb(db);
+
+  // Start API server for Mac Mini agent
+  initApi(db, config.api.secret);
+  startApiServer(config.api.port);
 
   const bot = await initBot();
 

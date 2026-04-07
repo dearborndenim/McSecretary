@@ -29,6 +29,10 @@ export const config = {
     botToken: required('TELEGRAM_BOT_TOKEN'),
     chatId: required('TELEGRAM_CHAT_ID'),
   },
+  api: {
+    secret: optional('API_SECRET', ''),
+    port: parseInt(optional('PORT', '3000')),
+  },
   db: {
     path: optional('DB_PATH', path.join(process.cwd(), 'data', 'secretary.db')),
   },
