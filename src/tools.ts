@@ -23,6 +23,11 @@ import {
   toggleScheduledTask,
   getScheduleStatus,
 } from './scheduler.js';
+import {
+  EMPIRE_TOOL_DEFINITIONS,
+  executeEmpireTool,
+  isEmpireTool,
+} from './empire/tools.js';
 
 // DB reference — set during init
 let _db: Database.Database | null = null;
@@ -36,8 +41,9 @@ function getDb(): Database.Database {
   return _db;
 }
 
-// Tool definitions for Claude API
+// Tool definitions for Claude API (core + empire)
 export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
+  ...EMPIRE_TOOL_DEFINITIONS,
   {
     name: 'archive_email',
     description: 'Archive an email in Outlook. Use when Rob asks to archive, clean up, or remove an email.',
@@ -769,8 +775,13 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
         return getScheduleStatus(getDb());
       }
 
-      default:
+      default: {
+        // Check empire tools
+        if (isEmpireTool(name)) {
+          return await executeEmpireTool(name, input);
+        }
         return `Unknown tool: ${name}`;
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
