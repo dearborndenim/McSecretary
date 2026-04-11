@@ -36,6 +36,12 @@ export const config = {
   db: {
     path: optional('DB_PATH', path.join(process.cwd(), 'data', 'secretary.db')),
   },
+  gmail: {
+    clientId: optional('GMAIL_CLIENT_ID', ''),
+    clientSecret: optional('GMAIL_CLIENT_SECRET', ''),
+    refreshToken: optional('GMAIL_REFRESH_TOKEN', ''),
+    email: optional('GMAIL_USER_EMAIL', 'mcmillanrken@gmail.com'),
+  },
   github: {
     token: optional('GITHUB_TOKEN', ''),
     org: optional('GITHUB_ORG', 'dearborndenim'),
