@@ -41,3 +41,7 @@ export const config = {
     org: optional('GITHUB_ORG', 'dearborndenim'),
   },
 } as const;
+
+if (!config.api.secret) {
+  console.warn('WARNING: API_SECRET is not set — all API requests will be rejected until configured');
+}

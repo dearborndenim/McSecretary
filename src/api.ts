@@ -71,10 +71,10 @@ export function getRecentSmsMessages(db: Database.Database, hours: number = 24, 
   const rows = db.prepare(`
     SELECT text, is_from_me, sender, group_name, message_date
     FROM sms_messages
-    WHERE message_date >= datetime('now', '-${hours} hours')
+    WHERE message_date >= datetime('now', '-' || ? || ' hours')
     ORDER BY rowid DESC
     LIMIT ?
-  `).all(limit) as {
+  `).all(hours, limit) as {
     text: string;
     is_from_me: number;
     sender: string;
@@ -102,9 +102,14 @@ export function startApiServer(port: number = 3000): http.Server {
 
     // SMS ingest endpoint
     if (req.method === 'POST' && req.url === '/api/sms') {
-      // Check auth
+      // Check auth — fail closed when no secret is configured
+      if (!_apiSecret) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'API authentication not configured' }));
+        return;
+      }
       const authHeader = req.headers.authorization;
-      if (_apiSecret && authHeader !== `Bearer ${_apiSecret}`) {
+      if (authHeader !== `Bearer ${_apiSecret}`) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;
@@ -136,10 +141,21 @@ export function startApiServer(port: number = 3000): http.Server {
   return server;
 }
 
+const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let totalSize = 0;
+    req.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error('Request body too large (max 1MB)'));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString()));
     req.on('error', reject);
   });
