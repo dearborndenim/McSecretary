@@ -19,6 +19,7 @@ import { fetchUnreadOutlookEmails } from './email/outlook.js';
 import { classifyEmail } from './email/classifier.js';
 import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutlookEmail } from './email/actions.js';
 import { generateBriefing } from './briefing/generator.js';
+import { readRepoFile } from './empire/github.js';
 import { fetchOutlookCalendarEvents } from './calendar/outlook-calendar.js';
 import { mergeEvents } from './calendar/merger.js';
 import { findFreeSlots } from './calendar/free-slots.js';
@@ -223,12 +224,29 @@ export async function runTriage(db: Database.Database): Promise<string> {
       }
     }
 
+    // Fetch overnight dev report from NIGHTLY_PLAN.md (graceful failure)
+    let overnightDevSummary: string | undefined;
+    try {
+      console.log('Fetching overnight dev report...');
+      const nightlyPlan = await readRepoFile('claude_code', 'NIGHTLY_PLAN.md');
+      if (nightlyPlan && nightlyPlan.trim().length > 0) {
+        // Truncate to keep prompt reasonable — full plan can be long
+        overnightDevSummary = nightlyPlan.length > 3000
+          ? nightlyPlan.slice(0, 3000) + '\n...(truncated)'
+          : nightlyPlan;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`Skipping overnight dev report: ${msg}`);
+      // Don't add to errors array — this is optional enrichment
+    }
+
     console.log('Generating morning briefing...');
     briefing = await generateBriefing(allClassified, {
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData);
+    }, calendarData, overnightDevSummary);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
