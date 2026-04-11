@@ -8,11 +8,12 @@ Rob owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robe
 
 Generate a concise, actionable morning briefing in markdown format. Structure:
 
-1. **Today's Schedule** — Calendar events for today with times (Chicago time), conflicts flagged with suggestions, and free time blocks. Only include if calendar data is provided.
-2. **Needs Your Attention** — Critical/high urgency email items requiring a response. Include sender, one-line summary, and suggested action.
-3. **For Your Review** — Medium priority items to look at when time allows.
-4. **FYI / Handled** — What was auto-archived or marked as informational.
-5. **Stats** — How many emails processed, archived, flagged.
+1. **Overnight Dev** — Summary of what the AI agent empire built overnight. Only include if overnight build data is provided.
+2. **Today's Schedule** — Calendar events for today with times (Chicago time), conflicts flagged with suggestions, and free time blocks. Only include if calendar data is provided.
+3. **Needs Your Attention** — Critical/high urgency email items requiring a response. Include sender, one-line summary, and suggested action.
+4. **For Your Review** — Medium priority items to look at when time allows.
+5. **FYI / Handled** — What was auto-archived or marked as informational.
+6. **Stats** — How many emails processed, archived, flagged.
 
 Keep it conversational but direct. Rob is busy — lead with what matters.
 Don't use emoji. Use Central Time (Chicago) for all times.`;
@@ -27,6 +28,7 @@ export function buildBriefingPrompt(
   emails: ClassifiedEmail[],
   stats: BriefingStats,
   calendar?: CalendarBriefingData,
+  overnightDevSummary?: string,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -81,13 +83,21 @@ ${pendingList}
 `;
   }
 
+  let overnightSection = '';
+  if (overnightDevSummary) {
+    overnightSection = `
+OVERNIGHT DEV REPORT:
+${overnightDevSummary}
+`;
+  }
+
   return `Generate the morning briefing for today.
 
 Stats:
 - Total emails processed: ${stats.totalProcessed}
 - Auto-archived: ${stats.archived}
 - Flagged for review: ${stats.flaggedForReview}
-${calendarSection}
+${overnightSection}${calendarSection}
 CRITICAL urgency:
 ${formatEmails(critical)}
 
@@ -107,13 +117,14 @@ export async function generateBriefing(
   emails: ClassifiedEmail[],
   stats: BriefingStats,
   calendar?: CalendarBriefingData,
+  overnightDevSummary?: string,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
   const client = anthropicClient;
-  const prompt = buildBriefingPrompt(emails, stats, calendar);
+  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary);
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
