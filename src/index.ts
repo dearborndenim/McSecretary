@@ -15,6 +15,8 @@ import { initBot, sendBriefing, sendCheckIn, sendMessage, sendEveningSummary } f
 import { initializeDefaultSchedule, startSchedulerFromDb, registerHandler } from './scheduler.js';
 import { TIMEZONE } from './calendar/types.js';
 import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
+import { fetchRecentGmailEmailSummaries } from './email/gmail.js';
+import { isGmailConfigured } from './auth/google.js';
 import {
   readMasterLearnings,
   readMasterPatterns,
@@ -286,7 +288,7 @@ async function handleEmailScan(): Promise<void> {
       fetchRecentEmails(config.outlook.email2, 4, 30).catch(() => []),
     ]);
 
-    // Only process untagged emails
+    // Only process untagged emails (Outlook categories — Gmail uses labels separately)
     const untagged = [...emails1, ...emails2].filter((e) => e.categories.length === 0);
 
     if (untagged.length === 0) {
@@ -436,12 +438,16 @@ async function handleEveningSummary(): Promise<void> {
 async function handleEmailCleanup(): Promise<string> {
   console.log('Running email cleanup scan...');
 
-  const [emails1, emails2] = await Promise.all([
+  const gmailActive = isGmailConfigured();
+  const [emails1, emails2, gmailEmails] = await Promise.all([
     fetchRecentEmails(config.outlook.email1, 72, 50).catch(() => []),
     fetchRecentEmails(config.outlook.email2, 72, 50).catch(() => []),
+    gmailActive
+      ? fetchRecentGmailEmailSummaries(config.gmail.email, 72, 50).catch(() => [])
+      : Promise.resolve([]),
   ]);
 
-  const allEmails = [...emails1, ...emails2];
+  const allEmails = [...emails1, ...emails2, ...gmailEmails];
   if (allEmails.length === 0) {
     return 'No recent emails found to clean up.';
   }
@@ -636,13 +642,17 @@ async function handleIncomingMessage(text: string): Promise<string> {
     const { getFormattedTaskLists } = await import('./tasks/todo.js');
     const { TOOL_DEFINITIONS, executeTool } = await import('./tools.js');
 
-    const [emails1, emails2, taskContext] = await Promise.all([
+    const gmailActive = isGmailConfigured();
+    const [emails1, emails2, gmailEmails, taskContext] = await Promise.all([
       fetchRecentEmails(config.outlook.email1, 48, 25).catch(() => []),
       fetchRecentEmails(config.outlook.email2, 48, 25).catch(() => []),
+      gmailActive
+        ? fetchRecentGmailEmailSummaries(config.gmail.email, 48, 25).catch(() => [])
+        : Promise.resolve([]),
       getFormattedTaskLists().catch(() => 'Failed to load tasks.'),
     ]);
 
-    const emailContext = formatEmailsForContext([...emails1, ...emails2]);
+    const emailContext = formatEmailsForContext([...emails1, ...emails2, ...gmailEmails]);
     const smsContext = getRecentSmsMessages(db, 24, 30);
     const dailyContext = buildDailyContext();
     const conversationHistory = buildConversationHistory(today);
