@@ -36,4 +36,8 @@ export const config = {
   db: {
     path: optional('DB_PATH', path.join(process.cwd(), 'data', 'secretary.db')),
   },
+  github: {
+    token: optional('GITHUB_TOKEN', ''),
+    org: optional('GITHUB_ORG', 'dearborndenim'),
+  },
 } as const;
