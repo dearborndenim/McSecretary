@@ -204,6 +204,24 @@ When you send an hourly check-in and Rob responds, his response is automatically
 
 async function handleMorningBriefing(): Promise<void> {
   console.log('Running morning briefing...');
+
+  // Generate yesterday's reflection FIRST — we now have a full day of conversation data
+  const yesterday = getYesterdayDate(TIMEZONE);
+  try {
+    const result = await generateEndOfDayReflection(db, anthropic, yesterday);
+    if (result === 'completed') {
+      console.log(`Yesterday's reflection (${yesterday}) complete.`);
+      await sendMessage('Daily reflection complete. 3 files written. Master knowledge will update Sunday.', false);
+    } else {
+      console.log(`No activity found for ${yesterday} — reflection skipped.`);
+      await sendMessage('No activity yesterday — reflection skipped.', false);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Reflection generation failed:', msg);
+    await sendMessage(`Reflection failed: ${msg}`, false).catch(() => {});
+  }
+
   try {
     const briefing = await runTriage(db);
     await sendBriefing(briefing);
@@ -233,6 +251,7 @@ async function handleWeeklySynthesis(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Weekly synthesis failed:', msg);
+    await sendMessage(`Weekly synthesis failed: ${msg}`, false).catch(() => {});
   }
 }
 
@@ -423,14 +442,7 @@ async function handleEveningSummary(): Promise<void> {
   await sendMessage(fullMsg, false);
   insertConversationMessage(db, today, 'secretary', fullMsg);
 
-  // Generate secretary's own reflection (runs after prompting Rob)
-  try {
-    await generateEndOfDayReflection(db, anthropic, today);
-    console.log('End-of-day reflection complete.');
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('Reflection generation failed:', msg);
-  }
+  // Reflection moved to morning handler — runs next day with full conversation data
 }
 
 async function handleEmailCleanup(): Promise<string> {

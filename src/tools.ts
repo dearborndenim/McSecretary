@@ -28,6 +28,7 @@ import {
   executeEmpireTool,
   isEmpireTool,
 } from './empire/tools.js';
+import { getJournalHealthReport } from './journal/files.js';
 
 // DB reference — set during init
 let _db: Database.Database | null = null;
@@ -310,6 +311,15 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'view_schedule',
     description: 'Show the current schedule of all recurring tasks with their cron expressions and status.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'check_journal_health',
+    description: 'Check the health of the self-improvement journal system. Shows last 7 days of reflection file status, master knowledge file info, and next synthesis date.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -773,6 +783,10 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
 
       case 'view_schedule': {
         return getScheduleStatus(getDb());
+      }
+
+      case 'check_journal_health': {
+        return getJournalHealthReport();
       }
 
       default: {

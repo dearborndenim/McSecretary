@@ -14,7 +14,7 @@ export async function generateEndOfDayReflection(
   db: Database.Database,
   anthropic: Anthropic,
   date: string,
-): Promise<void> {
+): Promise<'completed' | 'skipped'> {
   console.log(`Generating end-of-day reflection for ${date}...`);
 
   const conversation = getTodayConversation(db, date, 200);
@@ -23,13 +23,20 @@ export async function generateEndOfDayReflection(
   const masterPatterns = readMasterPatterns();
 
   if (conversation.length === 0) {
-    console.log('No conversation today, skipping reflection.');
-    return;
+    console.log('No activity at all for this day — service may have been down. Skipping reflection.');
+    return 'skipped';
   }
 
+  const hasRobMessages = conversation.some((m) => m.role === 'rob');
   const conversationText = conversation
     .map((m) => `[${m.timestamp}] ${m.role}: ${m.message}`)
     .join('\n\n');
+
+  // If only secretary messages exist (scheduled tasks ran but Rob didn't respond),
+  // generate a minimal reflection from the secretary's own activity
+  const reflectionContext = hasRobMessages
+    ? 'Full conversation with Rob available.'
+    : 'Rob did not respond today. Only secretary scheduled activity is available (briefings, check-ins, email scans). Generate a minimal reflection based on what the secretary did.';
 
   const timeLogText = timeLogs.length === 0
     ? 'No time entries logged.'
@@ -43,6 +50,8 @@ export async function generateEndOfDayReflection(
     messages: [{
       role: 'user',
       content: `Review today's conversation log and write a reflection.
+
+NOTE: ${reflectionContext}
 
 TODAY'S CONVERSATION LOG:
 ${conversationText}
@@ -153,4 +162,5 @@ If nothing new was learned today, say "No new learnings today."`,
 
   writeSecretaryLearnings(date, `# Learnings — ${date}\n\n${learnings}`);
   console.log(`Written learnings for ${date}`);
+  return 'completed';
 }

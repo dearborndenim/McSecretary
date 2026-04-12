@@ -78,3 +78,52 @@ export function getYesterdayDate(timezone: string): string {
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   return yesterday.toLocaleDateString('en-CA', { timeZone: timezone });
 }
+
+export function getJournalHealthReport(): string {
+  ensureJournalDirs();
+  const lines: string[] = [];
+
+  // Check last 7 days of reflection files
+  lines.push('Reflection files (last 7 days):');
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const reflectionPath = path.join(SECRETARY_DIR, `${dateStr}-reflection.md`);
+    const exists = fs.existsSync(reflectionPath);
+    lines.push(`  ${dateStr}: ${exists ? 'PRESENT' : 'MISSING'}`);
+  }
+
+  // Master learnings info
+  const masterLearningsPath = path.join(SECRETARY_DIR, 'master-learnings.md');
+  if (fs.existsSync(masterLearningsPath)) {
+    const stat = fs.statSync(masterLearningsPath);
+    const content = fs.readFileSync(masterLearningsPath, 'utf-8');
+    const firstLine = content.split('\n')[0] ?? '(empty)';
+    lines.push(`\nmaster-learnings.md: last modified ${stat.mtime.toISOString().split('T')[0]}`);
+    lines.push(`  First line: ${firstLine}`);
+  } else {
+    lines.push('\nmaster-learnings.md: NOT FOUND');
+  }
+
+  // Master patterns info
+  const masterPatternsPath = path.join(SECRETARY_DIR, 'master-patterns.md');
+  if (fs.existsSync(masterPatternsPath)) {
+    const stat = fs.statSync(masterPatternsPath);
+    const content = fs.readFileSync(masterPatternsPath, 'utf-8');
+    const firstLine = content.split('\n')[0] ?? '(empty)';
+    lines.push(`\nmaster-patterns.md: last modified ${stat.mtime.toISOString().split('T')[0]}`);
+    lines.push(`  First line: ${firstLine}`);
+  } else {
+    lines.push('\nmaster-patterns.md: NOT FOUND');
+  }
+
+  // Next synthesis: Sunday 7 PM CT
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sunday
+  const daysUntilSunday = dayOfWeek === 0 ? 7 : 7 - dayOfWeek;
+  const nextSunday = new Date(now.getTime() + daysUntilSunday * 24 * 60 * 60 * 1000);
+  const nextSynthesis = nextSunday.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+  lines.push(`\nNext scheduled synthesis: ${nextSynthesis} (Sunday 7 PM CT)`);
+
+  return lines.join('\n');
+}

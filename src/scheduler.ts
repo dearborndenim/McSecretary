@@ -9,6 +9,7 @@ import {
   disableScheduledTask as disableScheduledTaskDb,
   type ScheduledTaskRow,
 } from './db/schedule-queries.js';
+import { sendMessage } from './telegram/bot.js';
 
 export interface ScheduledTask {
   name: string;
@@ -61,6 +62,7 @@ export function startSchedulerFromDb(db: Database.Database): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`Failed: ${task.name} — ${msg}`);
+        await sendMessage(`Task failed: ${task.name}: ${msg}`, false).catch(() => {});
       }
     }, { timezone: TIMEZONE });
 
@@ -109,6 +111,7 @@ export function updateScheduleAndRestart(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Failed: ${name} — ${msg}`);
+      await sendMessage(`Task failed: ${name}: ${msg}`, false).catch(() => {});
     }
   }, { timezone: TIMEZONE });
 

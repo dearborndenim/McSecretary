@@ -11,6 +11,7 @@ import {
 export async function runWeeklySynthesis(anthropic: Anthropic): Promise<void> {
   console.log('Running weekly synthesis...');
 
+  const todayDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
   const currentLearnings = readMasterLearnings();
   const currentPatterns = readMasterPatterns();
 
@@ -43,7 +44,7 @@ ${currentLearnings || '(empty — this is the first synthesis)'}
 THIS WEEK'S DAILY LEARNINGS:
 ${dailyLearnings}
 
-Write the complete updated master learnings file. Keep the markdown structure with sections for Rob, Dearborn Denim, McMillan Manufacturing, and Key Contacts. Add a "Last updated: [today's date]" line at the top.`,
+Write the complete updated master learnings file. Keep the markdown structure with sections for Rob, Dearborn Denim, McMillan Manufacturing, and Key Contacts. Add a "Last updated: ${todayDate}" line at the top.`,
     }],
   });
 
