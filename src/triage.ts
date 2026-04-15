@@ -241,12 +241,36 @@ export async function runTriage(db: Database.Database): Promise<string> {
       // Don't add to errors array — this is optional enrichment
     }
 
+    // Fetch production data from piece-work-scanner (graceful failure)
+    let productionSection: string | undefined;
+    try {
+      if (config.pieceWorkScanner.url && config.pieceWorkScanner.apiKey) {
+        console.log('Fetching production data...');
+        const { fetchProductionSummary, formatProductionSection } = await import('./briefing/production.js');
+        const productionData = await fetchProductionSummary(
+          config.pieceWorkScanner.url,
+          config.pieceWorkScanner.apiKey,
+        );
+        if (productionData) {
+          productionSection = formatProductionSection(productionData);
+          console.log('Production data included in briefing');
+        } else {
+          console.log('Production API returned no data — skipping production section');
+        }
+      } else {
+        console.log('PIECE_WORK_SCANNER_URL or API_KEY not configured — skipping production section');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`Skipping production data: ${msg}`);
+    }
+
     console.log('Generating morning briefing...');
     briefing = await generateBriefing(allClassified, {
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary);
+    }, calendarData, overnightDevSummary, productionSection);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

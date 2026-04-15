@@ -40,6 +40,10 @@ export const config = {
     token: optional('GITHUB_TOKEN', ''),
     org: optional('GITHUB_ORG', 'dearborndenim'),
   },
+  pieceWorkScanner: {
+    url: optional('PIECE_WORK_SCANNER_URL', ''),
+    apiKey: optional('PIECE_WORK_SCANNER_API_KEY', ''),
+  },
 } as const;
 
 if (!config.api.secret) {
