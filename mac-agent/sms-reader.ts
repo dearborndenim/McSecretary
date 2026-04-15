@@ -11,14 +11,37 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 
+// Load .env from project root if available
+const PROJECT_ROOT = path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), '..');
+const ENV_FILE = path.join(PROJECT_ROOT, '.env');
+if (fs.existsSync(ENV_FILE)) {
+  const envContent = fs.readFileSync(ENV_FILE, 'utf-8');
+  for (const line of envContent.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+}
+
 const DB_PATH = path.join(os.homedir(), 'Library', 'Messages', 'chat.db');
 const STATE_FILE = path.join(os.homedir(), '.mcsecretary-sms-state.json');
+const LOG_FILE = path.join(PROJECT_ROOT, 'logs', 'sms-reader.log');
 
 // Railway endpoint — set via env or default
 const RAILWAY_URL = process.env.MCSECRETARY_URL ?? '';
 const API_SECRET = process.env.MCSECRETARY_API_SECRET ?? '';
 
-interface SmsMessage {
+// Retry config
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 5000;
+
+export interface SmsMessage {
   rowid: number;
   text: string | null;
   isFromMe: boolean;
@@ -28,7 +51,30 @@ interface SmsMessage {
   date: string;
 }
 
-function loadLastRowId(): number {
+function ensureLogDir(): void {
+  const logDir = path.dirname(LOG_FILE);
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+}
+
+export function logToFile(level: 'INFO' | 'ERROR' | 'WARN', message: string): void {
+  const timestamp = new Date().toISOString();
+  const entry = `[${timestamp}] [${level}] ${message}\n`;
+  try {
+    ensureLogDir();
+    fs.appendFileSync(LOG_FILE, entry, 'utf-8');
+  } catch {
+    process.stderr.write(`LOG_WRITE_FAILED: ${entry}`);
+  }
+  if (level === 'ERROR') {
+    console.error(message);
+  } else {
+    console.log(message);
+  }
+}
+
+export function loadLastRowId(): number {
   try {
     if (fs.existsSync(STATE_FILE)) {
       const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
@@ -38,11 +84,11 @@ function loadLastRowId(): number {
   return 0;
 }
 
-function saveLastRowId(rowId: number): void {
+export function saveLastRowId(rowId: number): void {
   fs.writeFileSync(STATE_FILE, JSON.stringify({ lastRowId: rowId, updatedAt: new Date().toISOString() }), 'utf-8');
 }
 
-function readNewMessages(): SmsMessage[] {
+export function readNewMessages(): SmsMessage[] {
   const lastRowId = loadLastRowId();
 
   const db = new Database(DB_PATH, { readonly: true });
@@ -90,10 +136,16 @@ function readNewMessages(): SmsMessage[] {
   }
 }
 
-async function sendToRailway(messages: SmsMessage[]): Promise<void> {
-  if (!RAILWAY_URL) {
-    // No Railway URL — just print locally
-    console.log(`${messages.length} new messages (no RAILWAY_URL set, printing locally):`);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function sendToRailway(messages: SmsMessage[], railwayUrl?: string, apiSecret?: string): Promise<void> {
+  const url = railwayUrl ?? RAILWAY_URL;
+  const secret = apiSecret ?? API_SECRET;
+
+  if (!url) {
+    logToFile('WARN', `${messages.length} new messages (no RAILWAY_URL set, printing locally)`);
     for (const m of messages) {
       const direction = m.isFromMe ? 'Rob →' : `${m.sender} →`;
       console.log(`  [${m.date}] ${direction} ${m.text?.slice(0, 100)}`);
@@ -101,45 +153,74 @@ async function sendToRailway(messages: SmsMessage[]): Promise<void> {
     return;
   }
 
-  const response = await fetch(`${RAILWAY_URL}/api/sms`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_SECRET}`,
-    },
-    body: JSON.stringify({ messages }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Railway API error (${response.status}): ${text}`);
+  if (!secret) {
+    logToFile('ERROR', 'MCSECRETARY_API_SECRET is not set — cannot authenticate with Railway. Set it in .env or plist.');
+    throw new Error('MCSECRETARY_API_SECRET is not set');
   }
 
-  console.log(`Sent ${messages.length} messages to Railway.`);
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${url}/api/sms`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${secret}`,
+        },
+        body: JSON.stringify({ messages }),
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Railway API error (${response.status}): ${text}`);
+      }
+
+      logToFile('INFO', `Sent ${messages.length} messages to Railway (attempt ${attempt}).`);
+      return;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      logToFile('WARN', `Attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}`);
+
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAY_MS * attempt;
+        logToFile('INFO', `Retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
+  }
+
+  logToFile('ERROR', `All ${MAX_RETRIES} attempts failed. Last error: ${lastError?.message}`);
+  throw lastError ?? new Error('All retry attempts failed');
 }
 
 async function main() {
-  console.log('McSecretary SMS Reader starting...');
+  logToFile('INFO', 'McSecretary SMS Reader starting...');
 
   try {
     const messages = readNewMessages();
 
     if (messages.length === 0) {
-      console.log('No new messages.');
+      logToFile('INFO', 'No new messages.');
       return;
     }
 
-    console.log(`Found ${messages.length} new messages.`);
+    logToFile('INFO', `Found ${messages.length} new messages.`);
     await sendToRailway(messages);
 
     // Update state with the highest rowid
     const maxRowId = Math.max(...messages.map((m) => m.rowid));
     saveLastRowId(maxRowId);
-    console.log(`State updated. Last ROWID: ${maxRowId}`);
+    logToFile('INFO', `State updated. Last ROWID: ${maxRowId}`);
   } catch (err) {
-    console.error('SMS Reader error:', err);
+    logToFile('ERROR', `SMS Reader error: ${err}`);
     process.exit(1);
   }
 }
 
-main();
+// Only run main() when executed directly (not when imported by tests)
+const isDirectRun = process.argv[1]?.endsWith('sms-reader.ts') || process.argv[1]?.endsWith('sms-reader.js');
+if (isDirectRun) {
+  main();
+}
