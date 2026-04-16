@@ -16,16 +16,18 @@ export const config = {
     clientId: required('AZURE_CLIENT_ID'),
     clientSecret: required('AZURE_CLIENT_SECRET'),
   },
+  // Legacy single-user config — used for seed only, not for runtime email fetching
   outlook: {
-    email1: required('OUTLOOK_USER_EMAIL_1'),
-    email2: required('OUTLOOK_USER_EMAIL_2'),
+    email1: optional('OUTLOOK_USER_EMAIL_1', ''),
+    email2: optional('OUTLOOK_USER_EMAIL_2', ''),
   },
   anthropic: {
     apiKey: required('ANTHROPIC_API_KEY'),
   },
   telegram: {
     botToken: required('TELEGRAM_BOT_TOKEN'),
-    chatId: required('TELEGRAM_CHAT_ID'),
+    // Legacy single-user chat ID — used for Robert's seed only
+    chatId: optional('TELEGRAM_CHAT_ID', ''),
   },
   api: {
     secret: optional('API_SECRET', ''),
