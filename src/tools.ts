@@ -29,6 +29,7 @@ import {
   isEmpireTool,
 } from './empire/tools.js';
 import { getJournalHealthReport } from './journal/files.js';
+import { getUserEmailAccounts, getUserById } from './db/user-queries.js';
 
 // DB reference — set during init
 let _db: Database.Database | null = null;
@@ -40,6 +41,39 @@ export function setToolsDb(db: Database.Database): void {
 function getDb(): Database.Database {
   if (!_db) throw new Error('Tools DB not initialized. Call setToolsDb() first.');
   return _db;
+}
+
+/**
+ * Get the email accounts for a user from the DB.
+ * Falls back to the account specified in tool input if provided.
+ */
+function getUserAccounts(userId?: string): string[] {
+  if (!userId) return [];
+  const db = getDb();
+  const accounts = getUserEmailAccounts(db, userId);
+  return accounts.map((a) => a.email_address);
+}
+
+/**
+ * Resolve which email account(s) to use for a tool call.
+ * If the tool input specifies an account, use that.
+ * Otherwise, use all of the user's email accounts from the DB.
+ */
+function resolveAccounts(inputAccount: string | undefined, userId?: string): string[] {
+  if (inputAccount) return [inputAccount];
+  const userAccounts = getUserAccounts(userId);
+  if (userAccounts.length > 0) return userAccounts;
+  // Fallback: if no user context, return empty (caller should handle)
+  return [];
+}
+
+/**
+ * Resolve a single default email account for a user.
+ */
+function resolveDefaultAccount(inputAccount: string | undefined, userId?: string): string | undefined {
+  if (inputAccount) return inputAccount;
+  const userAccounts = getUserAccounts(userId);
+  return userAccounts[0];
 }
 
 // Tool definitions for Claude API (core + empire)
@@ -328,8 +362,8 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
 ];
 
-// Tool execution
-export async function executeTool(name: string, input: Record<string, any>): Promise<string> {
+// Tool execution — userId scopes DB operations to the calling user
+export async function executeTool(name: string, input: Record<string, any>, userId?: string): Promise<string> {
   try {
     switch (name) {
       case 'archive_email': {
@@ -397,9 +431,9 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
 
       case 'read_contacts': {
         const { getGraphToken } = await import('./auth/graph.js');
-        const { config } = await import('./config.js');
         const token = await getGraphToken();
-        const email = input.account ?? config.outlook.email1;
+        const email = resolveDefaultAccount(input.account, userId);
+        if (!email) return 'No email account available. Specify an account or ensure user has email accounts configured.';
         const limit = input.limit ?? 20;
 
         let url: string;
@@ -621,12 +655,10 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
 
       case 'archive_emails_by_category': {
         const { getGraphToken } = await import('./auth/graph.js');
-        const { config } = await import('./config.js');
         const token = await getGraphToken();
 
-        const accounts = input.account
-          ? [input.account]
-          : [config.outlook.email1, config.outlook.email2];
+        const accounts = resolveAccounts(input.account, userId);
+        if (accounts.length === 0) return 'No email accounts available. Specify an account or ensure user has email accounts configured.';
 
         let totalArchived = 0;
         let totalFailed = 0;
@@ -667,9 +699,9 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       // Email category tools
       case 'list_email_categories': {
         const { getGraphToken } = await import('./auth/graph.js');
-        const { config } = await import('./config.js');
         const token = await getGraphToken();
-        const email = input.account ?? config.outlook.email1;
+        const email = resolveDefaultAccount(input.account, userId);
+        if (!email) return 'No email account available. Specify an account or ensure user has email accounts configured.';
 
         const res = await fetch(`https://graph.microsoft.com/v1.0/users/${email}/outlook/masterCategories`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -685,9 +717,9 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
 
       case 'create_email_category': {
         const { getGraphToken } = await import('./auth/graph.js');
-        const { config } = await import('./config.js');
         const token = await getGraphToken();
-        const email = input.account ?? config.outlook.email1;
+        const email = resolveDefaultAccount(input.account, userId);
+        if (!email) return 'No email account available. Specify an account or ensure user has email accounts configured.';
 
         const res = await fetch(`https://graph.microsoft.com/v1.0/users/${email}/outlook/masterCategories`, {
           method: 'POST',
@@ -711,7 +743,6 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       // Calendar tools
       case 'list_calendar_events': {
         const { fetchOutlookCalendarEvents } = await import('./calendar/outlook-calendar.js');
-        const { config } = await import('./config.js');
 
         const today = new Date();
         const startDate = input.start_date
@@ -721,9 +752,8 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
           ? new Date(`${input.end_date}T23:59:59`).toISOString()
           : new Date(today.getTime() + 86400000).toISOString();
 
-        const accounts = input.account
-          ? [input.account]
-          : [config.outlook.email1, config.outlook.email2];
+        const accounts = resolveAccounts(input.account, userId);
+        if (accounts.length === 0) return 'No email accounts available. Specify an account or ensure user has email accounts configured.';
 
         const allEvents = [];
         for (const acct of accounts) {
@@ -740,8 +770,9 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       }
 
       case 'create_calendar_event': {
+        const calAccount = resolveDefaultAccount(input.account, userId);
         const result = await createCalendarEvent(
-          input.account,
+          calAccount,
           input.subject,
           input.start,
           input.end,
@@ -756,7 +787,8 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       }
 
       case 'update_calendar_event': {
-        await updateCalendarEvent(input.account, input.event_id, {
+        const updCalAccount = resolveDefaultAccount(input.account, userId);
+        await updateCalendarEvent(updCalAccount, input.event_id, {
           subject: input.subject,
           startDateTime: input.start,
           endDateTime: input.end,
@@ -766,7 +798,8 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       }
 
       case 'delete_calendar_event': {
-        await deleteCalendarEvent(input.account, input.event_id);
+        const delCalAccount = resolveDefaultAccount(input.account, userId);
+        await deleteCalendarEvent(delCalAccount, input.event_id);
         return `Event deleted/cancelled.`;
       }
 
