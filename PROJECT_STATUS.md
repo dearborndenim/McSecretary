@@ -43,5 +43,11 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 6. Add proactive scheduling suggestions
 7. Test and harden all 20+ tools for reliability
 
-## Maturity: 75% → Full Secretary
-Strong foundation with email (Outlook-only), calendar, tasks, time tracking, journaling, empire coordination tools, and overnight dev reporting all working. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+## Maturity: 80% → Full Secretary
+Strong foundation with email (Outlook-only), calendar, tasks, time tracking, journaling, empire coordination tools, and overnight dev reporting all working. Persistent volume config merged (needs dashboard setup). 120 tests passing. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-15: Persistent Volume Configuration
+- Updated railway.json with volume mount at `/data`
+- Updated config.ts: DB_PATH default to `/data/secretary.db`
+- Updated journal/files.ts: journal path to `/data/journal`
+- **Still needs:** Create actual volume in Railway dashboard and attach to service
