@@ -104,10 +104,11 @@ const isMainModule = process.argv[1]?.endsWith('admin.ts') || process.argv[1]?.e
 if (isMainModule) {
   (async () => {
     const { default: DatabaseConstructor } = await import('better-sqlite3');
-    const { config } = await import('./config.js');
     const { initializeSchema } = await import('./db/schema.js');
 
-    const db = new DatabaseConstructor(config.db.path);
+    // Admin CLI uses DB_PATH directly — doesn't need Azure/Telegram env vars
+    const dbPath = process.env.DB_PATH || '/data/secretary.db';
+    const db = new DatabaseConstructor(dbPath);
     db.pragma('journal_mode = WAL');
     initializeSchema(db);
 
