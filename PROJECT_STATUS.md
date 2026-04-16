@@ -43,8 +43,22 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 6. Add proactive scheduling suggestions
 7. Test and harden all 20+ tools for reliability
 
-## Maturity: 80% → Full Secretary
-Strong foundation with email (Outlook-only), calendar, tasks, time tracking, journaling, empire coordination tools, and overnight dev reporting all working. Persistent volume config merged (needs dashboard setup). 120 tests passing. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+## Maturity: 90% → Full Secretary
+Multi-user system built and merged. 189 tests passing across 27 files. Email, calendar, briefings, dev request queue all user-scoped. Main gaps: business communication drafting, meeting prep, proactive scheduling, Railway persistent volume.
+
+### 2026-04-16: Multi-User System Implemented
+- Added `users`, `user_email_accounts`, `user_preferences`, `user_invites`, `dev_requests` tables
+- Added `user_id` to all 9 existing tables with backfill migration
+- Per-user Telegram routing (chat_id → user_id lookup)
+- Per-user email triage, briefing generation with dynamic system prompts
+- `/start <invite_code>` for account linking
+- `/request`, `/myrequests`, `/review`, `/approve`, `/reject` for dev request queue
+- Admin CLI (`src/admin.ts`) for user management
+- Seeded Robert (admin), Olivier (member), Merab (member)
+- Morning briefings, hourly check-ins, evening summaries loop over all active users
+- tools.ts passes userId through all tool executions
+- 189 tests passing (up from 120), 0 failures
+- **Still needs:** Create Railway persistent volume (mount `/data`), Olivier/Merab link Telegram accounts via `/start`
 
 ### 2026-04-15: Persistent Volume Configuration
 - Updated railway.json with volume mount at `/data`
