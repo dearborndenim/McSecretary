@@ -2,9 +2,19 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ClassifiedEmail } from '../email/types.js';
 import type { CalendarBriefingData } from '../calendar/types.js';
 
-const BRIEFING_SYSTEM_PROMPT = `You are Rob McMillan's AI secretary generating his morning briefing.
+export interface UserBriefingContext {
+  name: string;
+  business_context: string | null;
+}
 
-Rob owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com). Email is Outlook-only (2 accounts).
+function getBriefingSystemPrompt(userContext?: UserBriefingContext): string {
+  const userName = userContext?.name ?? 'Rob McMillan';
+  const businessCtx = userContext?.business_context
+    ?? "Rob owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com). Email is Outlook-only (2 accounts).";
+
+  return `You are McSecretary, an AI secretary generating ${userName}'s morning briefing.
+
+${businessCtx}
 
 Generate a concise, actionable morning briefing in markdown format. Structure:
 
@@ -15,9 +25,11 @@ Generate a concise, actionable morning briefing in markdown format. Structure:
 5. **For Your Review** — Medium priority items to look at when time allows.
 6. **FYI / Handled** — What was auto-archived or marked as informational.
 7. **Stats** — How many emails processed, archived, flagged.
+8. **Dev Requests** — Pending feature requests from team members awaiting your review. Only include if dev request data is provided. Show request ID, who submitted it, and the description.
 
-Keep it conversational but direct. Rob is busy — lead with what matters.
+Keep it conversational but direct. ${userName} is busy — lead with what matters.
 Don't use emoji. Use Central Time (Chicago) for all times.`;
+}
 
 export interface BriefingStats {
   totalProcessed: number;
@@ -31,6 +43,8 @@ export function buildBriefingPrompt(
   calendar?: CalendarBriefingData,
   overnightDevSummary?: string,
   productionSummary?: string,
+  userContext?: UserBriefingContext,
+  pendingDevRequests?: string,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -100,13 +114,21 @@ ${productionSummary}
 `;
   }
 
+  let devRequestsSection = '';
+  if (pendingDevRequests) {
+    devRequestsSection = `
+PENDING DEV REQUESTS (awaiting your review):
+${pendingDevRequests}
+`;
+  }
+
   return `Generate the morning briefing for today.
 
 Stats:
 - Total emails processed: ${stats.totalProcessed}
 - Auto-archived: ${stats.archived}
 - Flagged for review: ${stats.flaggedForReview}
-${overnightSection}${productionSection}${calendarSection}
+${overnightSection}${productionSection}${calendarSection}${devRequestsSection}
 CRITICAL urgency:
 ${formatEmails(critical)}
 
@@ -128,18 +150,21 @@ export async function generateBriefing(
   calendar?: CalendarBriefingData,
   overnightDevSummary?: string,
   productionSummary?: string,
+  userContext?: UserBriefingContext,
+  pendingDevRequests?: string,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
   const client = anthropicClient;
-  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary);
+  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests);
+  const systemPrompt = getBriefingSystemPrompt(userContext);
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2000,
-    system: BRIEFING_SYSTEM_PROMPT,
+    system: systemPrompt,
     messages: [{ role: 'user', content: prompt }],
   });
 
