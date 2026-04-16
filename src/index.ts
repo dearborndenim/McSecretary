@@ -11,7 +11,18 @@ import {
   getConversationCount,
 } from './db/conversation-queries.js';
 import { runTriage } from './triage.js';
-import { initBot, sendBriefing, sendCheckIn, sendMessage, sendEveningSummary } from './telegram/bot.js';
+import {
+  initBot,
+  setBotDb,
+  sendBriefing,
+  sendBriefingToUser,
+  sendCheckIn,
+  sendCheckInToUser,
+  sendMessage,
+  sendMessageToUser,
+  sendEveningSummary,
+  sendEveningSummaryToUser,
+} from './telegram/bot.js';
 import { initializeDefaultSchedule, startSchedulerFromDb, registerHandler } from './scheduler.js';
 import { TIMEZONE } from './calendar/types.js';
 import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
@@ -29,6 +40,24 @@ import Anthropic from '@anthropic-ai/sdk';
 import { generateEndOfDayReflection } from './journal/reflection.js';
 import { runWeeklySynthesis } from './journal/synthesis.js';
 import { initApi, startApiServer, getRecentSmsMessages } from './api.js';
+import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
+import {
+  getUserByTelegramChatId,
+  getUserById,
+  getActiveUsers,
+  consumeInvite,
+  linkTelegramChat,
+  getUserEmailAccounts,
+} from './db/user-queries.js';
+import type { User } from './db/user-queries.js';
+import {
+  insertDevRequest,
+  getDevRequestsByUser,
+  getPendingDevRequests,
+  getDevRequestById,
+  approveDevRequest,
+  rejectDevRequest,
+} from './db/request-queries.js';
 
 let db: Database.Database;
 let anthropic: Anthropic;
@@ -76,12 +105,12 @@ function buildDailyContext(): string {
   return context;
 }
 
-function buildConversationHistory(today: string): { role: 'user' | 'assistant'; content: string }[] {
-  const count = getConversationCount(db, today);
+function buildConversationHistory(userId: string, today: string): { role: 'user' | 'assistant'; content: string }[] {
+  const count = getConversationCount(db, userId, today);
   // If over 50 messages, only load last 30
   const messages = count > 50
-    ? getRecentConversation(db, today, 30)
-    : getRecentConversation(db, today, 50);
+    ? getRecentConversation(db, userId, today, 30)
+    : getRecentConversation(db, userId, today, 50);
 
   return messages.map((m) => ({
     role: m.role === 'rob' ? 'user' as const : 'assistant' as const,
@@ -203,44 +232,56 @@ When you send an hourly check-in and Rob responds, his response is automatically
 - For archiving, tagging, marking read: do it immediately, report what you did.`;
 
 async function handleMorningBriefing(): Promise<void> {
-  console.log('Running morning briefing...');
+  console.log('Running morning briefings for all users...');
 
-  // Generate yesterday's reflection FIRST — we now have a full day of conversation data
-  const yesterday = getYesterdayDate(TIMEZONE);
-  try {
-    const result = await generateEndOfDayReflection(db, anthropic, yesterday);
-    if (result === 'completed') {
-      console.log(`Yesterday's reflection (${yesterday}) complete.`);
-      await sendMessage('Daily reflection complete. 3 files written. Master knowledge will update Sunday.', false);
-    } else {
-      console.log(`No activity found for ${yesterday} — reflection skipped.`);
-      await sendMessage('No activity yesterday — reflection skipped.', false);
+  const users = getActiveUsers(db);
+
+  for (const user of users) {
+    try {
+      // Generate reflection for admin only (Robert)
+      if (user.role === 'admin') {
+        const yesterday = getYesterdayDate(TIMEZONE);
+        try {
+          const result = await generateEndOfDayReflection(db, anthropic, yesterday);
+          if (result === 'completed') {
+            console.log(`Yesterday's reflection (${yesterday}) complete.`);
+            await sendMessageToUser(user.id, 'Daily reflection complete. 3 files written. Master knowledge will update Sunday.', false);
+          } else {
+            console.log(`No activity found for ${yesterday} — reflection skipped.`);
+            await sendMessageToUser(user.id, 'No activity yesterday — reflection skipped.', false);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('Reflection generation failed:', msg);
+          await sendMessageToUser(user.id, `Reflection failed: ${msg}`, false).catch(() => {});
+        }
+      }
+
+      const briefing = await runTriage(db, user.id);
+      await sendBriefingToUser(user.id, briefing);
+      const today = getChicagoDate();
+      insertConversationMessage(db, user.id, today, 'secretary', `[Morning Briefing]\n${briefing}`);
+      console.log(`Briefing sent to ${user.name}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Morning briefing failed for ${user.name}: ${msg}`);
+      await sendMessageToUser(user.id, `Morning briefing failed: ${msg}`, false).catch(() => {});
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('Reflection generation failed:', msg);
-    await sendMessage(`Reflection failed: ${msg}`, false).catch(() => {});
-  }
-
-  try {
-    const briefing = await runTriage(db);
-    await sendBriefing(briefing);
-    // Log the briefing as a secretary message
-    const today = getChicagoDate();
-    insertConversationMessage(db, today, 'secretary', `[Morning Briefing]\n${briefing}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('Morning briefing failed:', msg);
-    await sendMessage(`Morning briefing failed: ${msg}`, false).catch(() => {});
   }
 }
 
 async function handleHourlyCheckIn(): Promise<void> {
+  const users = getActiveUsers(db);
+  for (const user of users) {
+    try {
+      await sendCheckInToUser(user.id);
+      const today = getChicagoDate();
+      insertConversationMessage(db, user.id, today, 'secretary', 'Quick check — what did you work on this past hour?');
+    } catch (err) {
+      console.error(`Check-in failed for ${user.name}: ${(err as Error).message}`);
+    }
+  }
   awaitingCheckInResponse = true;
-  const checkInMsg = `Quick check — what did you work on this past hour?`;
-  await sendCheckIn();
-  const today = getChicagoDate();
-  insertConversationMessage(db, today, 'secretary', checkInMsg);
 }
 
 async function handleWeeklySynthesis(): Promise<void> {
@@ -268,8 +309,8 @@ async function handleTaskPolling(): Promise<void> {
         const hour = getChicagoHour();
 
         for (const task of diff.completed) {
-          // Log completed task as time entry
-          insertTimeLog(db, {
+          // Log completed task as time entry — task polling is admin (Robert) only for now
+          insertTimeLog(db, ROBERT_ID, {
             date: today,
             hour: hour,
             activity: `Completed: ${task.title} (${task.listName})`,
@@ -281,7 +322,7 @@ async function handleTaskPolling(): Promise<void> {
         const msg = `Tasks completed:\n${completedList}`;
         console.log(msg);
         await sendMessage(msg, false);
-        insertConversationMessage(db, today, 'secretary', `[Task Update] ${msg}`);
+        insertConversationMessage(db, ROBERT_ID, today, 'secretary', `[Task Update] ${msg}`);
       }
 
       if (diff.created.length > 0) {
@@ -300,13 +341,18 @@ async function handleEmailScan(): Promise<void> {
   try {
     console.log('Scanning emails for auto-tagging...');
 
-    const [emails1, emails2] = await Promise.all([
-      fetchRecentEmails(config.outlook.email1, 4, 30).catch(() => []),
-      fetchRecentEmails(config.outlook.email2, 4, 30).catch(() => []),
-    ]);
+    // Fetch emails from all users' email accounts
+    const allUsers = getActiveUsers(db);
+    const allEmailAddresses = allUsers.flatMap((u) =>
+      getUserEmailAccounts(db, u.id).map((a) => a.email_address),
+    );
+
+    const emailResults = await Promise.all(
+      allEmailAddresses.map((email) => fetchRecentEmails(email, 4, 30).catch(() => [])),
+    );
 
     // Only process untagged emails (no Outlook categories yet)
-    const untagged = [...emails1, ...emails2].filter((e) => e.categories.length === 0);
+    const untagged = emailResults.flat().filter((e) => e.categories.length === 0);
 
     if (untagged.length === 0) {
       console.log('No untagged emails found.');
@@ -425,35 +471,43 @@ Respond with ONLY the JSON array. No explanation.`,
 }
 
 async function handleEveningSummary(): Promise<void> {
+  const users = getActiveUsers(db);
   const today = getChicagoDate();
-  const logs = getTimeLogsForDate(db, today);
 
-  let summary: string;
-  if (logs.length === 0) {
-    summary = 'No time entries logged today.';
-  } else {
-    const logList = logs
-      .map((l) => `${l.hour}:00 — ${l.activity}${l.category !== 'untracked' ? ` (${l.category})` : ''}`)
-      .join('\n');
-    summary = `Time Log:\n${logList}\n\nTotal tracked hours: ${logs.length}`;
+  for (const user of users) {
+    try {
+      const logs = getTimeLogsForDate(db, user.id, today);
+
+      let summary: string;
+      if (logs.length === 0) {
+        summary = 'No time entries logged today.';
+      } else {
+        const logList = logs
+          .map((l) => `${l.hour}:00 — ${l.activity}${l.category !== 'untracked' ? ` (${l.category})` : ''}`)
+          .join('\n');
+        summary = `Time Log:\n${logList}\n\nTotal tracked hours: ${logs.length}`;
+      }
+
+      const fullMsg = `End of Day Summary\n\n${summary}\n\nHow was your day? Anything you want to reflect on?`;
+      await sendMessageToUser(user.id, fullMsg, false);
+      insertConversationMessage(db, user.id, today, 'secretary', fullMsg);
+    } catch (err) {
+      console.error(`Evening summary failed for ${user.name}: ${(err as Error).message}`);
+    }
   }
-
-  const fullMsg = `End of Day Summary\n\n${summary}\n\nHow was your day? Anything you want to reflect on?`;
-  await sendMessage(fullMsg, false);
-  insertConversationMessage(db, today, 'secretary', fullMsg);
 
   // Reflection moved to morning handler — runs next day with full conversation data
 }
 
-async function handleEmailCleanup(): Promise<string> {
+async function handleEmailCleanup(userId: string): Promise<string> {
   console.log('Running email cleanup scan...');
 
-  const [emails1, emails2] = await Promise.all([
-    fetchRecentEmails(config.outlook.email1, 72, 50).catch(() => []),
-    fetchRecentEmails(config.outlook.email2, 72, 50).catch(() => []),
-  ]);
+  const accounts = getUserEmailAccounts(db, userId);
+  const emailResults = await Promise.all(
+    accounts.map((a) => fetchRecentEmails(a.email_address, 72, 50).catch(() => [])),
+  );
 
-  const allEmails = [...emails1, ...emails2];
+  const allEmails = emailResults.flat();
   if (allEmails.length === 0) {
     return 'No recent emails found to clean up.';
   }
@@ -548,47 +602,111 @@ async function executeArchive(text: string): Promise<string> {
   return result;
 }
 
-async function handleIncomingMessage(text: string): Promise<string> {
+async function handleIncomingMessage(user: User, text: string): Promise<string> {
   const hour = getChicagoHour();
   const today = getChicagoDate();
   const lowerText = text.toLowerCase().trim();
 
-  // Store Rob's message
-  insertConversationMessage(db, today, 'rob', text);
+  // Store user's message
+  insertConversationMessage(db, user.id, today, 'rob', text);
+
+  // Dev request commands — available to all users
+  if (lowerText.startsWith('/request ')) {
+    const description = text.slice(9).trim();
+    if (!description) {
+      return 'Usage: /request <description of what you need>';
+    }
+    // Try to extract project name if mentioned
+    const projectMatch = description.match(/^(\S+):\s*(.*)/);
+    const project = projectMatch ? projectMatch[1] : undefined;
+    const desc = projectMatch ? projectMatch[2]! : description;
+    const id = insertDevRequest(db, { user_id: user.id, project, description: desc });
+    insertConversationMessage(db, user.id, today, 'secretary', `Request #${id} submitted. Robert will review it.`);
+    // Notify Robert
+    await sendMessageToUser(ROBERT_ID, `New dev request #${id} from ${user.name}: ${desc}`).catch(() => {});
+    return `Request #${id} submitted. Robert will review it.`;
+  }
+
+  if (lowerText === '/myrequests') {
+    const reqs = getDevRequestsByUser(db, user.id);
+    if (reqs.length === 0) return 'No requests submitted yet.';
+    const list = reqs.slice(0, 10).map((r) =>
+      `#${r.id} [${r.status}] ${r.project ? `(${r.project}) ` : ''}${r.description.slice(0, 60)}`
+    ).join('\n');
+    return `Your requests:\n${list}`;
+  }
+
+  // Admin-only: /review, /approve, /reject
+  if (lowerText === '/review' && user.role === 'admin') {
+    const pending = getPendingDevRequests(db);
+    if (pending.length === 0) return 'No pending dev requests.';
+    const list = pending.map((r) => {
+      const submitter = getUserById(db, r.user_id);
+      return `#${r.id} from ${submitter?.name ?? r.user_id}${r.project ? ` (${r.project})` : ''}: ${r.description}`;
+    }).join('\n');
+    return `Pending requests:\n${list}\n\nUse /approve <id> [refined description] or /reject <id> <reason>`;
+  }
+
+  if (lowerText.startsWith('/approve ') && user.role === 'admin') {
+    const parts = text.slice(9).trim().split(/\s+/);
+    const id = parseInt(parts[0]!, 10);
+    if (isNaN(id)) return 'Usage: /approve <id> [refined description]';
+    const refined = parts.slice(1).join(' ') || undefined;
+    approveDevRequest(db, id, user.id, refined);
+    const req = getDevRequestById(db, id);
+    // Notify the requester
+    if (req) {
+      await sendMessageToUser(req.user_id, `Your request #${id} was approved!${refined ? ` Refined: ${refined}` : ''}`).catch(() => {});
+    }
+    return `Request #${id} approved.${refined ? ` Refined: ${refined}` : ''}`;
+  }
+
+  if (lowerText.startsWith('/reject ') && user.role === 'admin') {
+    const parts = text.slice(8).trim().split(/\s+/);
+    const id = parseInt(parts[0]!, 10);
+    if (isNaN(id)) return 'Usage: /reject <id> <reason>';
+    const reason = parts.slice(1).join(' ') || 'No reason given';
+    rejectDevRequest(db, id, user.id, reason);
+    const req = getDevRequestById(db, id);
+    if (req) {
+      await sendMessageToUser(req.user_id, `Your request #${id} was not approved: ${reason}`).catch(() => {});
+    }
+    return `Request #${id} rejected: ${reason}`;
+  }
 
   // Direct commands
   if (lowerText === '/briefing' || lowerText === 'briefing') {
     try {
-      const briefing = await runTriage(db);
-      insertConversationMessage(db, today, 'secretary', `[Briefing]\n${briefing}`);
+      const briefing = await runTriage(db, user.id);
+      insertConversationMessage(db, user.id, today, 'secretary', `[Briefing]\n${briefing}`);
       return briefing;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const errorMsg = `Briefing failed: ${msg}`;
-      insertConversationMessage(db, today, 'secretary', errorMsg);
+      insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
       return errorMsg;
     }
   }
 
   if (lowerText === '/status' || lowerText === 'status') {
-    const logs = getTimeLogsForDate(db, today);
+    const logs = getTimeLogsForDate(db, user.id, today);
     const response = logs.length === 0
       ? 'No time entries logged today.'
       : logs.map((l) => `${l.hour}:00 — ${l.activity}`).join('\n');
-    insertConversationMessage(db, today, 'secretary', response);
+    insertConversationMessage(db, user.id, today, 'secretary', response);
     return response;
   }
 
   if (lowerText.startsWith('/log ')) {
     const activity = text.slice(5).trim();
-    insertTimeLog(db, { date: today, hour: hour - 1, activity });
+    insertTimeLog(db, user.id, { date: today, hour: hour - 1, activity });
     const response = `Logged for ${hour - 1}:00: ${activity}`;
-    insertConversationMessage(db, today, 'secretary', response);
+    insertConversationMessage(db, user.id, today, 'secretary', response);
     return response;
   }
 
-  // Journal entry: "journal: [thoughts]"
-  if (lowerText.startsWith('journal:') || lowerText.startsWith('journal ')) {
+  // Journal entry: "journal: [thoughts]" — admin only for now
+  if ((lowerText.startsWith('journal:') || lowerText.startsWith('journal ')) && user.role === 'admin') {
     const entry = text.slice(text.indexOf(':') !== -1 && text.indexOf(':') < 10 ? text.indexOf(':') + 1 : 8).trim();
     if (entry.length > 0) {
       const { writeRobJournal, readRobJournal } = await import('./journal/files.js');
@@ -599,7 +717,7 @@ async function handleIncomingMessage(text: string): Promise<string> {
         : `# Rob's Journal — ${today}\n\n[${timestamp}] ${entry}`;
       writeRobJournal(today, newEntry);
       const response = `Journal entry saved for ${today}.`;
-      insertConversationMessage(db, today, 'secretary', response);
+      insertConversationMessage(db, user.id, today, 'secretary', response);
       return response;
     }
   }
@@ -607,13 +725,13 @@ async function handleIncomingMessage(text: string): Promise<string> {
   // Email cleanup commands
   if (lowerText === 'clean up email' || lowerText === 'clean email' || lowerText === 'cleanup email' || lowerText.includes('clean up my email') || lowerText.includes('archive junk')) {
     try {
-      const response = await handleEmailCleanup();
-      insertConversationMessage(db, today, 'secretary', response);
+      const response = await handleEmailCleanup(user.id);
+      insertConversationMessage(db, user.id, today, 'secretary', response);
       return response;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const errorMsg = `Email cleanup failed: ${msg}`;
-      insertConversationMessage(db, today, 'secretary', errorMsg);
+      insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
       return errorMsg;
     }
   }
@@ -622,12 +740,12 @@ async function handleIncomingMessage(text: string): Promise<string> {
   if ((lowerText === 'archive' || lowerText === 'yes' || lowerText.startsWith('keep ')) && pendingArchiveBatch.length > 0) {
     try {
       const response = await executeArchive(text);
-      insertConversationMessage(db, today, 'secretary', response);
+      insertConversationMessage(db, user.id, today, 'secretary', response);
       return response;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const errorMsg = `Archive failed: ${msg}`;
-      insertConversationMessage(db, today, 'secretary', errorMsg);
+      insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
       return errorMsg;
     }
   }
@@ -635,9 +753,9 @@ async function handleIncomingMessage(text: string): Promise<string> {
   // Check-in response
   if (awaitingCheckInResponse && text.length < 300 && !text.includes('?')) {
     awaitingCheckInResponse = false;
-    insertTimeLog(db, { date: today, hour: hour - 1, activity: text.trim() });
+    insertTimeLog(db, user.id, { date: today, hour: hour - 1, activity: text.trim() });
     const response = `Logged for ${hour - 1}:00: ${text.trim()}`;
-    insertConversationMessage(db, today, 'secretary', response);
+    insertConversationMessage(db, user.id, today, 'secretary', response);
     return response;
   }
 
@@ -648,16 +766,20 @@ async function handleIncomingMessage(text: string): Promise<string> {
     const { getFormattedTaskLists } = await import('./tasks/todo.js');
     const { TOOL_DEFINITIONS, executeTool } = await import('./tools.js');
 
-    const [emails1, emails2, taskContext] = await Promise.all([
-      fetchRecentEmails(config.outlook.email1, 48, 25).catch(() => []),
-      fetchRecentEmails(config.outlook.email2, 48, 25).catch(() => []),
+    // Fetch emails from user's accounts
+    const accounts = getUserEmailAccounts(db, user.id);
+    const emailPromises = accounts.map((a) =>
+      fetchRecentEmails(a.email_address, 48, 25).catch(() => []),
+    );
+    const [emailResults, taskContext] = await Promise.all([
+      Promise.all(emailPromises),
       getFormattedTaskLists().catch(() => 'Failed to load tasks.'),
     ]);
 
-    const emailContext = formatEmailsForContext([...emails1, ...emails2]);
+    const emailContext = formatEmailsForContext(emailResults.flat());
     const smsContext = getRecentSmsMessages(db, 24, 30);
     const dailyContext = buildDailyContext();
-    const conversationHistory = buildConversationHistory(today);
+    const conversationHistory = buildConversationHistory(user.id, today);
 
     const systemPrompt = `${SYSTEM_PROMPT_BASE}
 ${dailyContext}
@@ -672,10 +794,10 @@ RECENT EMAILS (last 48 hours):
 ${emailContext}
 
 CRITICAL INSTRUCTIONS FOR TOOL USE:
-- When Rob asks you to take ANY action (tag, archive, categorize, create task, send email, etc.), you MUST call the tools. Do NOT just describe what you would do.
+- When ${user.name} asks you to take ANY action (tag, archive, categorize, create task, send email, etc.), you MUST call the tools. Do NOT just describe what you would do.
 - For bulk operations (tag 20 emails as spam), use bulk_categorize_emails with an array of IDs — ONE tool call, not 20 separate ones.
 - The email IDs are in the RECENT EMAILS data above — use them directly.
-- If Rob says "tag these as spam" or "categorize as X", call categorize_email immediately for each email. Do NOT ask for confirmation for tagging/categorizing — just do it.
+- If ${user.name} says "tag these as spam" or "categorize as X", call categorize_email immediately for each email. Do NOT ask for confirmation for tagging/categorizing — just do it.
 - For sending emails: ask for approval first. For everything else: act immediately.`;
 
     const historyWithoutLast = conversationHistory.slice(0, -1);
@@ -739,7 +861,7 @@ CRITICAL INSTRUCTIONS FOR TOOL USE:
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const toolUse of toolUseBlocks) {
         console.log(`Executing tool: ${toolUse.name}(${JSON.stringify(toolUse.input)})`);
-        const result = await executeTool(toolUse.name, toolUse.input as Record<string, any>);
+        const result = await executeTool(toolUse.name, toolUse.input as Record<string, any>, user.id);
         console.log(`Tool result: ${result}`);
         toolResults.push({
           type: 'tool_result',
@@ -757,13 +879,13 @@ CRITICAL INSTRUCTIONS FOR TOOL USE:
     }
 
     // Store secretary's response
-    insertConversationMessage(db, today, 'secretary', finalText);
+    insertConversationMessage(db, user.id, today, 'secretary', finalText);
 
     return finalText;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const errorMsg = `Failed to process request: ${msg}`;
-    insertConversationMessage(db, today, 'secretary', errorMsg);
+    insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
     return errorMsg;
   }
 }
@@ -779,6 +901,12 @@ async function main() {
   db = new Database(config.db.path);
   db.pragma('journal_mode = WAL');
   initializeSchema(db);
+
+  // Seed Robert if not already seeded
+  seedRobert(db, config.telegram.chatId || '');
+
+  // Set DB reference for bot (multi-user message routing)
+  setBotDb(db);
 
   ensureJournalDirs();
 
@@ -796,16 +924,37 @@ async function main() {
 
   bot.on('message:text', async (ctx) => {
     const chatId = ctx.chat.id.toString();
-    if (chatId !== config.telegram.chatId) {
-      console.log(`Ignoring message from unauthorized chat: ${chatId}`);
+    const text = ctx.message.text;
+
+    // Handle /start <invite_code> — account linking (no user lookup needed)
+    if (text.startsWith('/start ') && text.trim().length > 7) {
+      const code = text.slice(7).trim();
+      if (!code) {
+        await ctx.reply('Usage: /start <invite_code>');
+        return;
+      }
+      const userId = consumeInvite(db, code);
+      if (!userId) {
+        await ctx.reply('Invalid or expired invite code.');
+        return;
+      }
+      linkTelegramChat(db, userId, chatId);
+      const linkedUser = getUserById(db, userId);
+      await ctx.reply(`Welcome, ${linkedUser?.name ?? 'friend'}! You're linked. Your briefings will arrive here.`);
       return;
     }
 
-    const text = ctx.message.text;
-    console.log(`Received message: ${text.slice(0, 50)}...`);
+    // Look up user by chat_id
+    const user = getUserByTelegramChatId(db, chatId);
+    if (!user) {
+      await ctx.reply('Not registered. Ask your admin for an invite code, then send: /start <code>');
+      return;
+    }
+
+    console.log(`Message from ${user.name} (${user.id}): ${text.slice(0, 50)}...`);
 
     try {
-      const response = await handleIncomingMessage(text);
+      const response = await handleIncomingMessage(user, text);
       if (!response || response.trim().length === 0) {
         await ctx.reply('No response generated. Try again or use "briefing" for a full briefing.');
         return;
