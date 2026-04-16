@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const JOURNAL_BASE = path.join(process.cwd(), 'data', 'journal');
+const JOURNAL_BASE = process.env['JOURNAL_PATH'] ?? '/data/journal';
 const SECRETARY_DIR = path.join(JOURNAL_BASE, 'secretary');
 const ROB_DIR = path.join(JOURNAL_BASE, 'rob');
 

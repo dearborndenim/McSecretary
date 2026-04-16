@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 function required(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -34,7 +32,7 @@ export const config = {
     port: parseInt(optional('PORT', '3000')),
   },
   db: {
-    path: optional('DB_PATH', path.join(process.cwd(), 'data', 'secretary.db')),
+    path: optional('DB_PATH', '/data/secretary.db'),
   },
   github: {
     token: optional('GITHUB_TOKEN', ''),

@@ -3,5 +3,10 @@
   "deploy": {
     "startCommand": "npx tsx src/index.ts",
     "restartPolicyType": "ON_FAILURE"
-  }
+  },
+  "volumes": [
+    {
+      "mount": "/data"
+    }
+  ]
 }
