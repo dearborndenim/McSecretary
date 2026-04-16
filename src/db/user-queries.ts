@@ -66,6 +66,10 @@ export function getUserByTelegramChatId(db: Database.Database, chatId: string): 
   return db.prepare('SELECT * FROM users WHERE telegram_chat_id = ?').get(chatId) as User | undefined;
 }
 
+export function getUserByEmail(db: Database.Database, email: string): User | undefined {
+  return db.prepare('SELECT * FROM users WHERE email = ?').get(email) as User | undefined;
+}
+
 export function getActiveUsers(db: Database.Database): User[] {
   return db.prepare('SELECT * FROM users WHERE briefing_enabled = 1').all() as User[];
 }
@@ -125,12 +129,12 @@ export function setUserPreferences(
   }
 }
 
-export function createInvite(db: Database.Database, userId: string): string {
+export function createInvite(db: Database.Database, userId: string, expiresIn: string = '+7 days'): string {
   const code = crypto.randomUUID().slice(0, 8);
   db.prepare(`
     INSERT INTO user_invites (code, user_id, expires_at)
-    VALUES (?, ?, datetime('now', '+24 hours'))
-  `).run(code, userId);
+    VALUES (?, ?, datetime('now', ?))
+  `).run(code, userId, expiresIn);
   return code;
 }
 

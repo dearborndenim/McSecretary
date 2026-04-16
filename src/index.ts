@@ -44,10 +44,12 @@ import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
 import {
   getUserByTelegramChatId,
   getUserById,
+  getUserByEmail,
   getActiveUsers,
   consumeInvite,
   linkTelegramChat,
   getUserEmailAccounts,
+  createInvite,
 } from './db/user-queries.js';
 import type { User } from './db/user-queries.js';
 import {
@@ -672,6 +674,20 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
       await sendMessageToUser(req.user_id, `Your request #${id} was not approved: ${reason}`).catch(() => {});
     }
     return `Request #${id} rejected: ${reason}`;
+  }
+
+  // Admin-only: /invite <user-email> — generate a 7-day invite code
+  if (lowerText.startsWith('/invite ') && user.role === 'admin') {
+    const email = text.slice(8).trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      return 'Usage: /invite <user-email>';
+    }
+    const targetUser = getUserByEmail(db, email);
+    if (!targetUser) {
+      return `No user found with email: ${email}`;
+    }
+    const code = createInvite(db, targetUser.id);
+    return `Invite code for ${targetUser.name} (${email}):\n\n\`${code}\`\n\nExpires in 7 days. They send /start ${code} to the bot.`;
   }
 
   // Direct commands
