@@ -15,10 +15,12 @@ import {
   expirePendingActions,
   getWeeklySchedule,
 } from './db/calendar-queries.js';
+import { getUserEmailAccounts, getUserPreferences } from './db/user-queries.js';
 import { fetchUnreadOutlookEmails } from './email/outlook.js';
 import { classifyEmail } from './email/classifier.js';
 import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutlookEmail } from './email/actions.js';
 import { generateBriefing } from './briefing/generator.js';
+import type { UserBriefingContext } from './briefing/generator.js';
 import { readRepoFile } from './empire/github.js';
 import { fetchOutlookCalendarEvents } from './calendar/outlook-calendar.js';
 import { mergeEvents } from './calendar/merger.js';
@@ -54,14 +56,14 @@ function getMondayOfWeek(date: Date): string {
   return monday.toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
 
-export async function runTriage(db: Database.Database): Promise<string> {
-  console.log('McSECREtary — triage starting...');
+export async function runTriage(db: Database.Database, userId: string): Promise<string> {
+  console.log(`McSECREtary — triage starting for user ${userId}...`);
   const startTime = Date.now();
 
   const { config } = await import('./config.js');
 
-  const runId = insertAgentRun(db, 'overnight');
-  const lastRun = getLastRunTimestamp(db, 'overnight');
+  const runId = insertAgentRun(db, userId, 'overnight');
+  const lastRun = getLastRunTimestamp(db, userId, 'overnight');
 
   let totalProcessed = 0;
   let totalArchived = 0;
@@ -74,38 +76,46 @@ export async function runTriage(db: Database.Database): Promise<string> {
   try {
     console.log('Fetching emails and calendar...');
 
+    // Fetch email accounts from DB for this user
+    const emailAccounts = getUserEmailAccounts(db, userId);
+    const emailAddresses = emailAccounts.map((a) => a.email_address);
+
+    if (emailAddresses.length === 0) {
+      console.log(`No email accounts configured for user ${userId}`);
+    }
+
     const now = new Date();
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 2);
     const calStartDate = now.toISOString();
     const calEndDate = tomorrow.toISOString();
 
-    const [outlook1, outlook2, calEvents1, calEvents2] = await Promise.all([
-      fetchUnreadOutlookEmails(config.outlook.email1, lastRun).catch((err) => {
-        errors.push(`Outlook1 fetch failed: ${err.message}`);
+    // Fetch emails and calendar for all user's accounts in parallel
+    const emailPromises = emailAddresses.map((email) =>
+      fetchUnreadOutlookEmails(email, lastRun).catch((err) => {
+        errors.push(`${email} fetch failed: ${err.message}`);
         return [] as RawEmail[];
       }),
-      fetchUnreadOutlookEmails(config.outlook.email2, lastRun).catch((err) => {
-        errors.push(`Outlook2 fetch failed: ${err.message}`);
-        return [] as RawEmail[];
-      }),
-      fetchOutlookCalendarEvents(config.outlook.email1, calStartDate, calEndDate).catch((err) => {
-        errors.push(`Outlook1 calendar fetch failed: ${err.message}`);
+    );
+    const calPromises = emailAddresses.map((email) =>
+      fetchOutlookCalendarEvents(email, calStartDate, calEndDate).catch((err) => {
+        errors.push(`${email} calendar fetch failed: ${err.message}`);
         return [] as UnifiedEvent[];
       }),
-      fetchOutlookCalendarEvents(config.outlook.email2, calStartDate, calEndDate).catch((err) => {
-        errors.push(`Outlook2 calendar fetch failed: ${err.message}`);
-        return [] as UnifiedEvent[];
-      }),
+    );
+
+    const [emailResults, calResults] = await Promise.all([
+      Promise.all(emailPromises),
+      Promise.all(calPromises),
     ]);
 
-    const allEmails = [...outlook1, ...outlook2];
-    console.log(`Fetched ${allEmails.length} unread emails (${outlook1.length} OL1, ${outlook2.length} OL2)`);
+    const allEmails = emailResults.flat();
+    console.log(`Fetched ${allEmails.length} unread emails across ${emailAddresses.length} accounts`);
 
     // Process calendar
     console.log('Processing calendar...');
-    const allCalEvents = [...calEvents1, ...calEvents2];
-    console.log(`Fetched ${allCalEvents.length} calendar events (${calEvents1.length} OL1, ${calEvents2.length} OL2)`);
+    const allCalEvents = calResults.flat();
+    console.log(`Fetched ${allCalEvents.length} calendar events across ${emailAddresses.length} accounts`);
 
     for (const evt of allCalEvents) {
       upsertCalendarEvent(db, {
@@ -119,13 +129,14 @@ export async function runTriage(db: Database.Database): Promise<string> {
         is_all_day: evt.isAllDay ? 1 : 0,
         status: evt.status,
         attendees: JSON.stringify(evt.attendees),
+        user_id: userId,
       });
     }
 
     const merged = mergeEvents(allCalEvents);
 
     const weekStart = getMondayOfWeek(now);
-    const schedule = getWeeklySchedule(db, weekStart);
+    const schedule = getWeeklySchedule(db, userId, weekStart);
     const todayDow = (now.getDay() + 6) % 7;
     const todaySchedule = schedule.find((s) => s.day_of_week === todayDow);
     const workStart = todaySchedule?.work_start ?? DEFAULT_WORK_START;
@@ -136,13 +147,13 @@ export async function runTriage(db: Database.Database): Promise<string> {
     const freeSlots = findFreeSlots(todayEvents, dayStart, dayEnd);
     const conflicts = detectConflicts(todayEvents, freeSlots);
 
-    expirePendingActions(db, now.toISOString());
+    expirePendingActions(db, userId, now.toISOString());
 
     for (const conflict of conflicts) {
       if (conflict.proposedMove) {
         const move = conflict.proposedMove;
         const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-        insertPendingAction(db, {
+        insertPendingAction(db, userId, {
           action_type: 'move_event',
           source_event_id: move.eventToMove.id,
           source: move.eventToMove.source,
@@ -159,7 +170,7 @@ export async function runTriage(db: Database.Database): Promise<string> {
       }
     }
 
-    const pendingActions = getPendingActions(db);
+    const pendingActions = getPendingActions(db, userId);
 
     calendarData = {
       events: todayEvents,
@@ -175,8 +186,8 @@ export async function runTriage(db: Database.Database): Promise<string> {
         const classified = await classifyEmail(email);
         allClassified.push(classified);
 
-        getOrCreateSenderProfile(db, classified.sender, classified.senderName);
-        updateSenderProfile(db, classified.sender, classified.category, classified.urgency);
+        getOrCreateSenderProfile(db, userId, classified.sender, classified.senderName);
+        updateSenderProfile(db, userId, classified.sender, classified.category, classified.urgency);
 
         const action = determineAction(classified);
 
@@ -207,6 +218,7 @@ export async function runTriage(db: Database.Database): Promise<string> {
           confidence: classified.confidence,
           summary: classified.summary,
           thread_id: classified.threadId,
+          user_id: userId,
         });
 
         insertAuditLog(db, {
@@ -215,6 +227,7 @@ export async function runTriage(db: Database.Database): Promise<string> {
           target_type: 'email',
           details: JSON.stringify({ category: classified.category, urgency: classified.urgency, reason: action.reason }),
           confidence: classified.confidence,
+          user_id: userId,
         });
 
         totalProcessed++;
@@ -238,7 +251,6 @@ export async function runTriage(db: Database.Database): Promise<string> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log(`Skipping overnight dev report: ${msg}`);
-      // Don't add to errors array — this is optional enrichment
     }
 
     // Fetch production data from piece-work-scanner (graceful failure)
@@ -265,12 +277,35 @@ export async function runTriage(db: Database.Database): Promise<string> {
       console.log(`Skipping production data: ${msg}`);
     }
 
+    // Build user context for personalized briefing
+    const prefs = getUserPreferences(db, userId);
+    let userContext: UserBriefingContext | undefined;
+    if (prefs) {
+      userContext = {
+        name: prefs.business_context ? userId : 'Rob McMillan',
+        business_context: prefs.business_context,
+      };
+    }
+
+    // Try to get user name from DB for briefing context
+    try {
+      const { getUserById } = await import('./db/user-queries.js');
+      const user = getUserById(db, userId);
+      if (user && userContext) {
+        userContext.name = user.name;
+      } else if (user && !userContext) {
+        userContext = { name: user.name, business_context: null };
+      }
+    } catch {
+      // Non-critical
+    }
+
     console.log('Generating morning briefing...');
     briefing = await generateBriefing(allClassified, {
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection);
+    }, calendarData, overnightDevSummary, productionSection, userContext);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
