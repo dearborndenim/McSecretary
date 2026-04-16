@@ -15,6 +15,7 @@ export interface ProcessedEmail {
   summary: string;
   thread_id: string;
   project_id?: string;
+  user_id: string;
 }
 
 export interface SenderProfile {
@@ -27,34 +28,40 @@ export interface SenderProfile {
   last_seen: string | null;
   is_vip: number;
   notes: string | null;
+  user_id: string;
 }
 
 export function insertProcessedEmail(db: Database.Database, email: ProcessedEmail): void {
   db.prepare(`
     INSERT OR REPLACE INTO processed_emails
-    (id, account, sender, sender_name, subject, received_at, category, urgency, action_needed, action_taken, confidence, summary, thread_id, project_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, account, sender, sender_name, subject, received_at, category, urgency, action_needed, action_taken, confidence, summary, thread_id, project_id, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     email.id, email.account, email.sender, email.sender_name, email.subject,
     email.received_at, email.category, email.urgency, email.action_needed,
     email.action_taken, email.confidence, email.summary, email.thread_id,
-    email.project_id ?? null
+    email.project_id ?? null, email.user_id
   );
 }
 
-export function getOrCreateSenderProfile(db: Database.Database, email: string, name: string | null): SenderProfile {
-  const existing = db.prepare('SELECT * FROM sender_profiles WHERE email = ?').get(email) as SenderProfile | undefined;
+export function getOrCreateSenderProfile(
+  db: Database.Database, userId: string, email: string, name: string | null
+): SenderProfile {
+  const existing = db.prepare(
+    'SELECT * FROM sender_profiles WHERE email = ? AND user_id = ?'
+  ).get(email, userId) as SenderProfile | undefined;
   if (existing) return existing;
 
-  db.prepare('INSERT INTO sender_profiles (email, name) VALUES (?, ?)').run(email, name);
-  return db.prepare('SELECT * FROM sender_profiles WHERE email = ?').get(email) as SenderProfile;
+  db.prepare(
+    'INSERT INTO sender_profiles (email, name, user_id) VALUES (?, ?, ?)'
+  ).run(email, name, userId);
+  return db.prepare(
+    'SELECT * FROM sender_profiles WHERE email = ? AND user_id = ?'
+  ).get(email, userId) as SenderProfile;
 }
 
 export function updateSenderProfile(
-  db: Database.Database,
-  email: string,
-  category: string,
-  urgency: string,
+  db: Database.Database, userId: string, email: string, category: string, urgency: string
 ): void {
   db.prepare(`
     UPDATE sender_profiles
@@ -62,15 +69,15 @@ export function updateSenderProfile(
         last_seen = datetime('now'),
         default_category = ?,
         default_urgency = ?
-    WHERE email = ?
-  `).run(category, urgency, email);
+    WHERE email = ? AND user_id = ?
+  `).run(category, urgency, email, userId);
 }
 
-export function insertAgentRun(db: Database.Database, runType: string): number {
+export function insertAgentRun(db: Database.Database, userId: string, runType: string): number {
   const result = db.prepare(`
-    INSERT INTO agent_runs (started_at, run_type)
-    VALUES (datetime('now'), ?)
-  `).run(runType);
+    INSERT INTO agent_runs (started_at, run_type, user_id)
+    VALUES (datetime('now'), ?, ?)
+  `).run(runType, userId);
   return Number(result.lastInsertRowid);
 }
 
@@ -99,20 +106,21 @@ export function insertAuditLog(
     details: string;
     confidence: number;
     approved_by?: string;
+    user_id: string;
   },
 ): void {
   db.prepare(`
-    INSERT INTO audit_log (action_type, target_id, target_type, details, confidence, approved_by)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(entry.action_type, entry.target_id, entry.target_type, entry.details, entry.confidence, entry.approved_by ?? null);
+    INSERT INTO audit_log (action_type, target_id, target_type, details, confidence, approved_by, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(entry.action_type, entry.target_id, entry.target_type, entry.details, entry.confidence, entry.approved_by ?? null, entry.user_id);
 }
 
-export function getLastRunTimestamp(db: Database.Database, runType: string): string | null {
+export function getLastRunTimestamp(db: Database.Database, userId: string, runType: string): string | null {
   const row = db.prepare(`
     SELECT completed_at FROM agent_runs
-    WHERE run_type = ? AND completed_at IS NOT NULL
+    WHERE run_type = ? AND user_id = ? AND completed_at IS NOT NULL
     ORDER BY completed_at DESC
     LIMIT 1
-  `).get(runType) as { completed_at: string } | undefined;
+  `).get(runType, userId) as { completed_at: string } | undefined;
   return row?.completed_at ?? null;
 }

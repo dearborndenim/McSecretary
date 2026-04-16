@@ -14,11 +14,12 @@ export async function generateEndOfDayReflection(
   db: Database.Database,
   anthropic: Anthropic,
   date: string,
+  userId: string = 'robert-mcmillan',
 ): Promise<'completed' | 'skipped'> {
   console.log(`Generating end-of-day reflection for ${date}...`);
 
-  const conversation = getTodayConversation(db, date, 200);
-  const timeLogs = getTimeLogsForDate(db, date);
+  const conversation = getTodayConversation(db, userId, date, 200);
+  const timeLogs = getTimeLogsForDate(db, userId, date);
   const masterLearnings = readMasterLearnings();
   const masterPatterns = readMasterPatterns();
 

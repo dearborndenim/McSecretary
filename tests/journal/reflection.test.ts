@@ -12,6 +12,8 @@ const JOURNAL_DIR = path.join(process.cwd(), 'data', 'journal', 'secretary');
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
   initializeSchema(db);
+  // Seed a user for FK constraint
+  db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert-mcmillan', 'Robert', 'rob@dd.com', 'admin')").run();
   return db;
 }
 
@@ -43,9 +45,9 @@ describe('generateEndOfDayReflection', () => {
     const db = createTestDb();
     const anthropic = mockAnthropic();
 
-    insertConversationMessage(db, testDate, 'secretary', '[Morning Briefing] Good morning.');
-    insertConversationMessage(db, testDate, 'rob', 'Thanks, looks good.');
-    insertConversationMessage(db, testDate, 'secretary', 'Glad to help.');
+    insertConversationMessage(db, 'robert-mcmillan', testDate, 'secretary', '[Morning Briefing] Good morning.');
+    insertConversationMessage(db, 'robert-mcmillan', testDate, 'rob', 'Thanks, looks good.');
+    insertConversationMessage(db, 'robert-mcmillan', testDate, 'secretary', 'Glad to help.');
 
     const result = await generateEndOfDayReflection(db, anthropic, testDate);
 
@@ -65,8 +67,8 @@ describe('generateEndOfDayReflection', () => {
     const anthropic = mockAnthropic();
 
     // Only secretary messages (scheduled tasks ran, Rob didn't respond)
-    insertConversationMessage(db, testDate, 'secretary', '[Morning Briefing] Good morning.');
-    insertConversationMessage(db, testDate, 'secretary', 'Quick check — what did you work on?');
+    insertConversationMessage(db, 'robert-mcmillan', testDate, 'secretary', '[Morning Briefing] Good morning.');
+    insertConversationMessage(db, 'robert-mcmillan', testDate, 'secretary', 'Quick check — what did you work on?');
 
     const result = await generateEndOfDayReflection(db, anthropic, testDate);
 

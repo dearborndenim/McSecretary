@@ -18,6 +18,8 @@ describe('queries', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     initializeSchema(db);
+    // Seed a user for FK constraint
+    db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert', 'Robert', 'rob@dd.com', 'admin')").run();
   });
 
   afterEach(() => {
@@ -40,6 +42,7 @@ describe('queries', () => {
         confidence: 0.95,
         summary: 'Customer asking about bulk order',
         thread_id: 'thread-1',
+        user_id: 'robert',
       };
 
       insertProcessedEmail(db, email);
@@ -48,30 +51,32 @@ describe('queries', () => {
       expect(row.sender).toBe('alice@example.com');
       expect(row.category).toBe('customer_inquiry');
       expect(row.confidence).toBe(0.95);
+      expect(row.user_id).toBe('robert');
     });
   });
 
   describe('getOrCreateSenderProfile', () => {
     it('creates a new profile for unknown sender', () => {
-      const profile = getOrCreateSenderProfile(db, 'bob@example.com', 'Bob');
+      const profile = getOrCreateSenderProfile(db, 'robert', 'bob@example.com', 'Bob');
       expect(profile.email).toBe('bob@example.com');
       expect(profile.name).toBe('Bob');
       expect(profile.total_emails).toBe(0);
+      expect(profile.user_id).toBe('robert');
     });
 
     it('returns existing profile for known sender', () => {
-      getOrCreateSenderProfile(db, 'bob@example.com', 'Bob');
-      const profile = getOrCreateSenderProfile(db, 'bob@example.com', 'Bob');
+      getOrCreateSenderProfile(db, 'robert', 'bob@example.com', 'Bob');
+      const profile = getOrCreateSenderProfile(db, 'robert', 'bob@example.com', 'Bob');
       expect(profile.email).toBe('bob@example.com');
     });
   });
 
   describe('updateSenderProfile', () => {
     it('increments email count and updates last_seen', () => {
-      getOrCreateSenderProfile(db, 'bob@example.com', 'Bob');
-      updateSenderProfile(db, 'bob@example.com', 'customer_inquiry', 'high');
+      getOrCreateSenderProfile(db, 'robert', 'bob@example.com', 'Bob');
+      updateSenderProfile(db, 'robert', 'bob@example.com', 'customer_inquiry', 'high');
 
-      const row = db.prepare('SELECT * FROM sender_profiles WHERE email = ?').get('bob@example.com') as any;
+      const row = db.prepare('SELECT * FROM sender_profiles WHERE email = ? AND user_id = ?').get('bob@example.com', 'robert') as any;
       expect(row.total_emails).toBe(1);
       expect(row.default_category).toBe('customer_inquiry');
     });
@@ -79,12 +84,13 @@ describe('queries', () => {
 
   describe('agent runs', () => {
     it('inserts and completes a run', () => {
-      const runId = insertAgentRun(db, 'overnight');
+      const runId = insertAgentRun(db, 'robert', 'overnight');
       completeAgentRun(db, runId, { emails_processed: 42, actions_taken: 10, tokens_used: 50000, cost_estimate: 1.5 });
 
       const row = db.prepare('SELECT * FROM agent_runs WHERE id = ?').get(runId) as any;
       expect(row.emails_processed).toBe(42);
       expect(row.completed_at).not.toBeNull();
+      expect(row.user_id).toBe('robert');
     });
   });
 
@@ -96,11 +102,26 @@ describe('queries', () => {
         target_type: 'email',
         details: JSON.stringify({ category: 'junk' }),
         confidence: 0.99,
+        user_id: 'robert',
       });
 
       const row = db.prepare('SELECT * FROM audit_log WHERE target_id = ?').get('msg-123') as any;
       expect(row.action_type).toBe('classify');
       expect(row.confidence).toBe(0.99);
+      expect(row.user_id).toBe('robert');
+    });
+  });
+
+  describe('getLastRunTimestamp', () => {
+    it('returns null when no runs exist', () => {
+      expect(getLastRunTimestamp(db, 'robert', 'overnight')).toBeNull();
+    });
+
+    it('returns the latest completed run timestamp', () => {
+      const runId = insertAgentRun(db, 'robert', 'overnight');
+      completeAgentRun(db, runId, { emails_processed: 1, actions_taken: 0, tokens_used: 100, cost_estimate: 0.01 });
+      const ts = getLastRunTimestamp(db, 'robert', 'overnight');
+      expect(ts).not.toBeNull();
     });
   });
 });
