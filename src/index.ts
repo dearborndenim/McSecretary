@@ -41,6 +41,7 @@ import { generateEndOfDayReflection } from './journal/reflection.js';
 import { runWeeklySynthesis } from './journal/synthesis.js';
 import { initApi, startApiServer, getRecentSmsMessages } from './api.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
+import { seedTeam } from './db/seed-team.js';
 import {
   getUserByTelegramChatId,
   getUserById,
@@ -986,6 +987,9 @@ async function main() {
 
   // Seed Robert if not already seeded
   seedRobert(db, config.telegram.chatId || '');
+
+  // Seed team members (Olivier, Merab) so /invite can find them
+  seedTeam(db);
 
   // Set DB reference for bot (multi-user message routing)
   setBotDb(db);

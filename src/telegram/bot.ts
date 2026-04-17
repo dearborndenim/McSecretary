@@ -1,5 +1,6 @@
 import { Bot } from 'grammy';
 import type Database from 'better-sqlite3';
+import { getUserById } from '../db/user-queries.js';
 
 let bot: Bot | null = null;
 let botDb: Database.Database | null = null;
@@ -23,7 +24,6 @@ export function getBot(): Bot {
 
 function getChatIdForUser(userId: string): string {
   if (!botDb) throw new Error('Bot DB not set. Call setBotDb() first.');
-  const { getUserById } = require('../db/user-queries.js');
   const user = getUserById(botDb, userId);
   if (!user?.telegram_chat_id) throw new Error(`No Telegram chat linked for user ${userId}`);
   return user.telegram_chat_id;
