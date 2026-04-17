@@ -11,6 +11,8 @@ export function initializeUserSchema(db: Database.Database): void {
       timezone TEXT NOT NULL DEFAULT 'America/Chicago',
       briefing_enabled INTEGER DEFAULT 1,
       briefing_cron TEXT DEFAULT '0 4 * * 1-5',
+      check_in_cron TEXT,
+      eod_cron TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -56,6 +58,22 @@ export function initializeUserSchema(db: Database.Database): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Add new columns to users table (idempotent)
+  const userCols = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+  const userColNames = new Set(userCols.map((c) => c.name));
+  if (!userColNames.has('check_in_cron')) {
+    db.exec('ALTER TABLE users ADD COLUMN check_in_cron TEXT');
+  }
+  if (!userColNames.has('eod_cron')) {
+    db.exec('ALTER TABLE users ADD COLUMN eod_cron TEXT');
+  }
+
+  // Add synced_at to dev_requests (idempotent)
+  const devCols = db.prepare('PRAGMA table_info(dev_requests)').all() as { name: string }[];
+  if (!devCols.some((c) => c.name === 'synced_at')) {
+    db.exec('ALTER TABLE dev_requests ADD COLUMN synced_at TEXT');
+  }
 
   // Add user_id to existing tables (idempotent — check before ALTER)
   const tablesToAlter = [

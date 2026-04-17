@@ -5,7 +5,54 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
+import type Database from 'better-sqlite3';
 import { listOrgRepos, readRepoFile, getFileSha, updateRepoFile } from './github.js';
+import { formatApprovedRequestsForPlan } from './request-sync.js';
+import {
+  getApprovedUnsyncedDevRequests,
+  markDevRequestSynced,
+} from '../db/request-queries.js';
+
+let empireDb: Database.Database | null = null;
+
+/** Injects a DB handle so empire tools can mark requests as synced. */
+export function setEmpireDb(db: Database.Database): void {
+  empireDb = db;
+}
+
+const NIGHTLY_PLAN_REPO = 'claude_code';
+const NIGHTLY_PLAN_FILE = 'NIGHTLY_PLAN.md';
+const PRIORITY_QUEUE_SECTION = '## Next Session Priority Queue';
+
+/**
+ * Insert `newContent` into the plan file, keeping the Priority Queue section intact
+ * but adding `newContent` after the existing bullet list (and before the next H2/H1).
+ * If the section doesn't exist it's appended at the end of the file.
+ */
+function mergeIntoPriorityQueue(currentPlan: string, newContent: string): string {
+  const trimmed = newContent.trimEnd();
+  const sectionIdx = currentPlan.indexOf(PRIORITY_QUEUE_SECTION);
+  if (sectionIdx === -1) {
+    const sep = currentPlan.endsWith('\n') ? '' : '\n';
+    return `${currentPlan}${sep}\n${PRIORITY_QUEUE_SECTION}\n\n${trimmed}\n`;
+  }
+
+  // Find the end of this section (next top-level heading or EOF).
+  const afterHeader = sectionIdx + PRIORITY_QUEUE_SECTION.length;
+  const rest = currentPlan.slice(afterHeader);
+  // Look for next "\n## " or "\n# " heading
+  const nextHeadingMatch = rest.match(/\n(#+\s[^\n]+)/);
+  let insertAt: number;
+  if (nextHeadingMatch) {
+    insertAt = afterHeader + (nextHeadingMatch.index ?? 0);
+  } else {
+    insertAt = currentPlan.length;
+  }
+
+  const before = currentPlan.slice(0, insertAt).trimEnd();
+  const after = currentPlan.slice(insertAt);
+  return `${before}\n\n${trimmed}\n${after.startsWith('\n') ? after : '\n' + after}`;
+}
 
 export const EMPIRE_TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
@@ -61,6 +108,31 @@ export const EMPIRE_TOOL_DEFINITIONS: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: 'update_nightly_plan',
+    description:
+      'Sync all approved-but-not-yet-synced team dev requests to NIGHTLY_PLAN.md in the claude_code repo under "Next Session Priority Queue". Use after /approve to make sure the Foreman sees the request in its nightly build.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'append_to_nightly_plan',
+    description:
+      'Append an arbitrary task (free-form text) to the "Next Session Priority Queue" section of NIGHTLY_PLAN.md in the claude_code repo. Use when Rob asks to add something directly to tomorrow\'s build.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        task_description: {
+          type: 'string',
+          description: 'Task text to append, e.g., "Investigate cron drift in McSecretary scheduler".',
+        },
+      },
+      required: ['task_description'],
     },
   },
 ];
@@ -151,6 +223,72 @@ export async function executeEmpireTool(
           return `- ${r.name}${desc} (last push: ${pushed})`;
         })
         .join('\n');
+    }
+
+    case 'update_nightly_plan': {
+      if (!empireDb) {
+        return 'update_nightly_plan: DB not configured. Call setEmpireDb() at startup.';
+      }
+      const unsynced = getApprovedUnsyncedDevRequests(empireDb);
+      if (unsynced.length === 0) {
+        return 'update_nightly_plan: no approved unsynced requests to sync.';
+      }
+
+      const section = formatApprovedRequestsForPlan(empireDb, true);
+      // Read current plan (if missing, create minimal file)
+      let currentPlan: string;
+      let sha: string | undefined;
+      try {
+        currentPlan = await readRepoFile(NIGHTLY_PLAN_REPO, NIGHTLY_PLAN_FILE);
+        sha = await getFileSha(NIGHTLY_PLAN_REPO, NIGHTLY_PLAN_FILE);
+      } catch {
+        currentPlan = `# Nightly Plan\n\n${PRIORITY_QUEUE_SECTION}\n`;
+        sha = undefined;
+      }
+
+      const updated = mergeIntoPriorityQueue(currentPlan, section);
+      await updateRepoFile(
+        NIGHTLY_PLAN_REPO,
+        NIGHTLY_PLAN_FILE,
+        updated,
+        `update_nightly_plan: sync ${unsynced.length} approved team request(s)`,
+        sha,
+      );
+
+      // Mark all pushed requests as synced in DB
+      for (const r of unsynced) {
+        markDevRequestSynced(empireDb, r.id);
+      }
+
+      return `update_nightly_plan: synced ${unsynced.length} approved request(s) to NIGHTLY_PLAN.md.`;
+    }
+
+    case 'append_to_nightly_plan': {
+      const taskDescription = (input.task_description as string | undefined)?.trim();
+      if (!taskDescription) {
+        return 'append_to_nightly_plan: missing task_description.';
+      }
+
+      let currentPlan: string;
+      let sha: string | undefined;
+      try {
+        currentPlan = await readRepoFile(NIGHTLY_PLAN_REPO, NIGHTLY_PLAN_FILE);
+        sha = await getFileSha(NIGHTLY_PLAN_REPO, NIGHTLY_PLAN_FILE);
+      } catch {
+        currentPlan = `# Nightly Plan\n\n${PRIORITY_QUEUE_SECTION}\n`;
+        sha = undefined;
+      }
+
+      const line = `- ${taskDescription}`;
+      const updated = mergeIntoPriorityQueue(currentPlan, line);
+      await updateRepoFile(
+        NIGHTLY_PLAN_REPO,
+        NIGHTLY_PLAN_FILE,
+        updated,
+        `append_to_nightly_plan: ${taskDescription.slice(0, 60)}`,
+        sha,
+      );
+      return `append_to_nightly_plan: task appended to NIGHTLY_PLAN.md.`;
     }
 
     case 'get_nightly_plan': {
