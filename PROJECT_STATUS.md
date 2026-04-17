@@ -43,8 +43,8 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 6. Add proactive scheduling suggestions
 7. Test and harden all 20+ tools for reliability
 
-## Maturity: 90% → Full Secretary
-Multi-user system built and merged. 189 tests passing across 27 files. Email, calendar, briefings, dev request queue all user-scoped. Main gaps: business communication drafting, meeting prep, proactive scheduling, Railway persistent volume.
+## Maturity: 92% → Full Secretary
+Multi-user system + per-user schedules + GitHub-backed nightly-plan pipeline. 230 tests passing across 34 files. Email, calendar, briefings, dev request queue all user-scoped. Main gaps: business communication drafting, meeting prep, proactive scheduling.
 
 ### 2026-04-16: Multi-User System Implemented
 - Added `users`, `user_email_accounts`, `user_preferences`, `user_invites`, `dev_requests` tables
@@ -65,3 +65,29 @@ Multi-user system built and merged. 189 tests passing across 27 files. Email, ca
 - Updated config.ts: DB_PATH default to `/data/secretary.db`
 - Updated journal/files.ts: journal path to `/data/journal`
 - **Still needs:** Create actual volume in Railway dashboard and attach to service
+
+### 2026-04-16: Per-User Schedules + Nightly Plan Pipeline
+Merged branch `schedules-and-pipeline` to main. 29 new tests (201 → 230), 0 failures, typecheck clean.
+
+**Per-user schedule windows (Task A):**
+- Added `check_in_cron` + `eod_cron` columns to `users` table with role-based defaults.
+- Admin (Robert): check-ins every hour 6 AM–7 PM CT + EOD 7 PM, Mon-Fri.
+- Members (Olivier/Merab): check-ins every hour 6 AM–2 PM CT + EOD 2:30 PM, Mon-Fri.
+- New `src/scheduler-windows.ts` with pure cron matcher + `shouldUserCheckInNow` / `shouldUserEodNow` gates. Shared handler fires every 30 min; per-user cron gates which users actually receive each tick.
+- End-of-day summary now includes `getTomorrowEventsPreview` (pulled from each user's Outlook calendar) + reflection prompt.
+- Reply to EOD prompt is auto-saved to the user's `/data/journal/rob/<date>.md` file with `[EOD reflection]` tag.
+- Seed scripts now set schedule windows on create and backfill them on existing rows with NULL values (volume wipe recovery).
+- `ensureJournalDirs()` stubs `master-learnings.md` + `master-patterns.md` so morning briefings have something to load before the first weekly synthesis.
+
+**Request→Nightly Plan pipeline (Task B):**
+- New empire tools `update_nightly_plan` and `append_to_nightly_plan` push to `claude_code/NIGHTLY_PLAN.md` on GitHub under `## Next Session Priority Queue`.
+- `/approve` now auto-calls `update_nightly_plan` so approved requests immediately reach the Foreman.
+- `dev_requests.synced_at` column + `getApprovedUnsyncedDevRequests` + `markDevRequestSynced` prevent re-sync duplication.
+- Updated `/Users/robertmcmillan/Documents/Claude/claude_code/PLANNER_INSTRUCTIONS.md` so the Foreman knows to treat `### Team Request #N:` entries as Priority Tier 1b.
+
+**Enhanced briefing (Task C):**
+- Admin morning briefing now includes pending dev requests via `formatPendingRequestsForBriefing` wired into `generateBriefing(pendingDevRequests)`.
+- Production summary + overnight dev summary were already wired.
+- Skipped: inventory/WIP from PO receiver (out of scope tonight).
+
+**Still needs:** Telegram account linking for Olivier/Merab via `/start <code>`, Railway env var confirmation after volume wipe.
