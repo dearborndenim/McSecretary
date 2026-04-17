@@ -8,6 +8,26 @@ const ROB_DIR = path.join(JOURNAL_BASE, 'rob');
 export function ensureJournalDirs(): void {
   fs.mkdirSync(SECRETARY_DIR, { recursive: true });
   fs.mkdirSync(ROB_DIR, { recursive: true });
+
+  // Stub the master knowledge files if they don't exist so the first morning
+  // briefing can load them (even empty) without errors, and so that reads
+  // from `buildDailyContext` always return *something*.
+  const masterLearningsPath = path.join(SECRETARY_DIR, 'master-learnings.md');
+  if (!fs.existsSync(masterLearningsPath)) {
+    fs.writeFileSync(
+      masterLearningsPath,
+      '# Master Learnings\n\n(empty — will be populated by the weekly synthesis every Sunday 7 PM CT)\n',
+      'utf-8',
+    );
+  }
+  const masterPatternsPath = path.join(SECRETARY_DIR, 'master-patterns.md');
+  if (!fs.existsSync(masterPatternsPath)) {
+    fs.writeFileSync(
+      masterPatternsPath,
+      '# Master Patterns\n\n(empty — will be populated by the weekly synthesis every Sunday 7 PM CT)\n',
+      'utf-8',
+    );
+  }
 }
 
 export function writeSecretaryReflection(date: string, content: string): void {

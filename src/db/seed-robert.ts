@@ -1,5 +1,13 @@
 import type Database from 'better-sqlite3';
-import { getUserById, createUser, addEmailAccount, setUserPreferences } from './user-queries.js';
+import {
+  getUserById,
+  createUser,
+  addEmailAccount,
+  setUserPreferences,
+  setUserScheduleWindows,
+  DEFAULT_ADMIN_CHECK_IN,
+  DEFAULT_ADMIN_EOD,
+} from './user-queries.js';
 
 const ROBERT_ID = 'robert-mcmillan';
 
@@ -30,6 +38,16 @@ export function seedRobert(db: Database.Database, telegramChatId: string): void 
 
     setUserPreferences(db, ROBERT_ID, {
       business_context: 'Robert McMillan owns Dearborn Denim (rob@dearborndenim.com) — a denim/jeans company with retail + wholesale, and McMillan Manufacturing (robert@mcmillan-manufacturing.com) — contract manufacturing. He also runs an AI agent empire that automates business operations.',
+    });
+
+    setUserScheduleWindows(db, ROBERT_ID, {
+      check_in_cron: DEFAULT_ADMIN_CHECK_IN,
+      eod_cron: DEFAULT_ADMIN_EOD,
+    });
+  } else if (existing.check_in_cron === null || existing.eod_cron === null) {
+    setUserScheduleWindows(db, ROBERT_ID, {
+      check_in_cron: existing.check_in_cron ?? DEFAULT_ADMIN_CHECK_IN,
+      eod_cron: existing.eod_cron ?? DEFAULT_ADMIN_EOD,
     });
   }
 

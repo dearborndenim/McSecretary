@@ -10,9 +10,24 @@ export interface User {
   timezone: string;
   briefing_enabled: number;
   briefing_cron: string;
+  check_in_cron: string | null;
+  eod_cron: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface UserScheduleWindows {
+  check_in_cron: string;
+  eod_cron: string;
+}
+
+// Defaults used when no per-user override is stored.
+// Admin: 6 AM – 7 PM check-ins, 7 PM end-of-day (Mon-Fri).
+// Member: 6 AM – 2 PM on the hour + 2:30 PM end-of-day (Mon-Fri).
+export const DEFAULT_ADMIN_CHECK_IN = '0 6-19 * * 1-5';
+export const DEFAULT_ADMIN_EOD = '0 19 * * 1-5';
+export const DEFAULT_MEMBER_CHECK_IN = '0 6-14 * * 1-5';
+export const DEFAULT_MEMBER_EOD = '30 14 * * 1-5';
 
 export interface UserEmailAccount {
   id: string;
@@ -156,4 +171,43 @@ export function linkTelegramChat(db: Database.Database, userId: string, chatId: 
 
 export function getAdminUsers(db: Database.Database): User[] {
   return db.prepare("SELECT * FROM users WHERE role = 'admin'").all() as User[];
+}
+
+export function setUserScheduleWindows(
+  db: Database.Database,
+  userId: string,
+  windows: Partial<UserScheduleWindows>,
+): void {
+  const fields: string[] = [];
+  const values: (string | null)[] = [];
+  if (windows.check_in_cron !== undefined) {
+    fields.push('check_in_cron = ?');
+    values.push(windows.check_in_cron);
+  }
+  if (windows.eod_cron !== undefined) {
+    fields.push('eod_cron = ?');
+    values.push(windows.eod_cron);
+  }
+  if (fields.length === 0) return;
+  fields.push("updated_at = datetime('now')");
+  values.push(userId);
+  db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+}
+
+/**
+ * Returns the per-user schedule windows, falling back to sensible defaults
+ * based on the user's role when the DB values are NULL.
+ * Returns undefined if the user doesn't exist.
+ */
+export function getUserScheduleWindows(
+  db: Database.Database,
+  userId: string,
+): UserScheduleWindows | undefined {
+  const user = getUserById(db, userId);
+  if (!user) return undefined;
+  const isAdmin = user.role === 'admin';
+  return {
+    check_in_cron: user.check_in_cron ?? (isAdmin ? DEFAULT_ADMIN_CHECK_IN : DEFAULT_MEMBER_CHECK_IN),
+    eod_cron: user.eod_cron ?? (isAdmin ? DEFAULT_ADMIN_EOD : DEFAULT_MEMBER_EOD),
+  };
 }

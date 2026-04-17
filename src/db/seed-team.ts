@@ -10,6 +10,9 @@ import {
   addEmailAccount,
   setUserPreferences,
   createInvite,
+  setUserScheduleWindows,
+  DEFAULT_MEMBER_CHECK_IN,
+  DEFAULT_MEMBER_EOD,
 } from './user-queries.js';
 
 const TEAM_MEMBERS = [
@@ -55,8 +58,23 @@ export function seedTeam(
         business_context: member.business_context,
       });
 
+      // Member default schedule: 6 AM – 2 PM check-ins + 2:30 PM EOD, Mon-Fri.
+      setUserScheduleWindows(db, member.id, {
+        check_in_cron: DEFAULT_MEMBER_CHECK_IN,
+        eod_cron: DEFAULT_MEMBER_EOD,
+      });
+
       const code = createInvite(db, member.id);
       invites.push({ name: member.name, code });
+    } else {
+      // Backfill schedule windows on an already-seeded member that was created
+      // before the per-user schedule columns existed.
+      if (existing.check_in_cron === null || existing.eod_cron === null) {
+        setUserScheduleWindows(db, member.id, {
+          check_in_cron: existing.check_in_cron ?? DEFAULT_MEMBER_CHECK_IN,
+          eod_cron: existing.eod_cron ?? DEFAULT_MEMBER_EOD,
+        });
+      }
     }
   }
 

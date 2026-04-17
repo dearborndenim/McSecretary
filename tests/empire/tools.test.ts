@@ -216,8 +216,8 @@ describe('isEmpireTool', () => {
 // ---------- tool definitions ----------
 
 describe('EMPIRE_TOOL_DEFINITIONS', () => {
-  it('defines 4 tools', () => {
-    expect(EMPIRE_TOOL_DEFINITIONS).toHaveLength(4);
+  it('defines 6 tools', () => {
+    expect(EMPIRE_TOOL_DEFINITIONS).toHaveLength(6);
   });
 
   it('each tool has name, description, and input_schema', () => {
