@@ -60,10 +60,16 @@ import {
   approveDevRequest,
   rejectDevRequest,
 } from './db/request-queries.js';
+import { shouldUserCheckInNow, shouldUserEodNow } from './scheduler-windows.js';
+import { getTomorrowEventsPreview } from './calendar/tomorrow-preview.js';
+import { setEmpireDb, executeEmpireTool } from './empire/tools.js';
 
 let db: Database.Database;
 let anthropic: Anthropic;
 let awaitingCheckInResponse = false;
+// Per-user flag: expecting Rob/member's reply to the EOD reflection prompt.
+// Cleared when they respond (which is saved as a journal entry).
+const awaitingReflectionFromUser = new Set<string>();
 
 // Pending archive batch — emails waiting for Rob's approval to archive
 let pendingArchiveBatch: EmailSummary[] = [];
@@ -274,16 +280,22 @@ async function handleMorningBriefing(): Promise<void> {
 
 async function handleHourlyCheckIn(): Promise<void> {
   const users = getActiveUsers(db);
+  const now = new Date();
+  let anySent = false;
   for (const user of users) {
+    // Each user has their own schedule window; skip if this isn't their slot.
+    if (!shouldUserCheckInNow(db, user.id, now)) continue;
+
     try {
       await sendCheckInToUser(user.id);
       const today = getChicagoDate();
       insertConversationMessage(db, user.id, today, 'secretary', 'Quick check — what did you work on this past hour?');
+      anySent = true;
     } catch (err) {
       console.error(`Check-in failed for ${user.name}: ${(err as Error).message}`);
     }
   }
-  awaitingCheckInResponse = true;
+  if (anySent) awaitingCheckInResponse = true;
 }
 
 async function handleWeeklySynthesis(): Promise<void> {
@@ -475,8 +487,12 @@ Respond with ONLY the JSON array. No explanation.`,
 async function handleEveningSummary(): Promise<void> {
   const users = getActiveUsers(db);
   const today = getChicagoDate();
+  const now = new Date();
 
   for (const user of users) {
+    // Per-user gating: admin EOD at 7 PM CT, members at 2:30 PM CT (default).
+    if (!shouldUserEodNow(db, user.id, now)) continue;
+
     try {
       const logs = getTimeLogsForDate(db, user.id, today);
 
@@ -490,9 +506,18 @@ async function handleEveningSummary(): Promise<void> {
         summary = `Time Log:\n${logList}\n\nTotal tracked hours: ${logs.length}`;
       }
 
-      const fullMsg = `End of Day Summary\n\n${summary}\n\nHow was your day? Anything you want to reflect on?`;
+      let preview: string;
+      try {
+        preview = await getTomorrowEventsPreview(db, user.id, now);
+      } catch (err) {
+        console.error(`Tomorrow preview failed for ${user.name}: ${(err as Error).message}`);
+        preview = 'No events scheduled for tomorrow.';
+      }
+
+      const fullMsg = `End of Day Summary\n\n${summary}\n\n${preview}\n\nHow was your day? Anything you want to reflect on?`;
       await sendMessageToUser(user.id, fullMsg, false);
       insertConversationMessage(db, user.id, today, 'secretary', fullMsg);
+      awaitingReflectionFromUser.add(user.id);
     } catch (err) {
       console.error(`Evening summary failed for ${user.name}: ${(err as Error).message}`);
     }
@@ -612,6 +637,38 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
   // Store user's message
   insertConversationMessage(db, user.id, today, 'rob', text);
 
+  // End-of-day reflection capture: if the EOD summary just went out and this is
+  // the next user message, save the text as a journal entry and acknowledge.
+  // Skip if the reply is itself a command.
+  if (
+    awaitingReflectionFromUser.has(user.id) &&
+    text.trim().length > 0 &&
+    !text.startsWith('/')
+  ) {
+    awaitingReflectionFromUser.delete(user.id);
+    try {
+      const { writeRobJournal, readRobJournal } = await import('./journal/files.js');
+      const existing = readRobJournal(today);
+      const timestamp = new Date().toLocaleTimeString('en-US', {
+        timeZone: TIMEZONE,
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      const entry = `[${timestamp}] [EOD reflection] ${text.trim()}`;
+      const newContent = existing
+        ? `${existing}\n\n${entry}`
+        : `# ${user.name}'s Journal — ${today}\n\n${entry}`;
+      writeRobJournal(today, newContent);
+      const ack = 'Saved to today\'s journal. Rest up.';
+      insertConversationMessage(db, user.id, today, 'secretary', ack);
+      return ack;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Failed to save EOD reflection:', msg);
+      // Fall through to normal handling if journal write fails.
+    }
+  }
+
   // Dev request commands — available to all users
   if (lowerText.startsWith('/request ')) {
     const description = text.slice(9).trim();
@@ -660,7 +717,16 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     if (req) {
       await sendMessageToUser(req.user_id, `Your request #${id} was approved!${refined ? ` Refined: ${refined}` : ''}`).catch(() => {});
     }
-    return `Request #${id} approved.${refined ? ` Refined: ${refined}` : ''}`;
+    // Push approved request(s) to NIGHTLY_PLAN.md on GitHub so the Foreman picks it up.
+    let syncNote = '';
+    try {
+      const syncResult = await executeEmpireTool('update_nightly_plan', {});
+      syncNote = `\n${syncResult}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      syncNote = `\n(Nightly plan sync failed: ${msg})`;
+    }
+    return `Request #${id} approved.${refined ? ` Refined: ${refined}` : ''}${syncNote}`;
   }
 
   if (lowerText.startsWith('/reject ') && user.role === 'admin') {
@@ -932,6 +998,9 @@ async function main() {
   const { setToolsDb } = await import('./tools.js');
   setToolsDb(db);
 
+  // Give the empire tools a DB handle so update_nightly_plan can mark rows synced.
+  setEmpireDb(db);
+
   // Start API server for Mac Mini agent
   initApi(db, config.api.secret);
   startApiServer(config.api.port);
@@ -983,11 +1052,14 @@ async function main() {
     }
   });
 
-  // Initialize scheduler from DB (with defaults for first run)
+  // Initialize scheduler from DB (with defaults for first run).
+  // Check-In and Evening Summary fire on a union schedule (every 30 min, weekdays)
+  // and per-user windows gate which users actually receive each tick. This lets
+  // admin run 6 AM – 7 PM + 7 PM EOD while members run 6 AM – 2 PM + 2:30 PM EOD.
   initializeDefaultSchedule(db, [
     { name: 'Morning Briefing', schedule: '0 4 * * 1-5', handler: handleMorningBriefing, description: '4 AM weekdays — full email/calendar briefing' },
-    { name: 'Hourly Check-In', schedule: '0 7-15 * * 1-5', handler: handleHourlyCheckIn, description: '7 AM-3 PM weekdays — time tracking prompt' },
-    { name: 'Evening Summary', schedule: '0 16 * * 1-5', handler: handleEveningSummary, description: '4 PM weekdays — day summary + reflection' },
+    { name: 'Hourly Check-In', schedule: '0,30 6-19 * * 1-5', handler: handleHourlyCheckIn, description: 'Every 30 min 6 AM–7 PM weekdays — per-user time tracking prompt' },
+    { name: 'Evening Summary', schedule: '0,30 14-19 * * 1-5', handler: handleEveningSummary, description: '2 PM–7 PM weekdays — per-user day summary + tomorrow preview + reflection' },
     { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
     { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },

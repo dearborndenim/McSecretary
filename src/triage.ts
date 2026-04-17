@@ -22,6 +22,8 @@ import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutl
 import { generateBriefing } from './briefing/generator.js';
 import type { UserBriefingContext } from './briefing/generator.js';
 import { readRepoFile } from './empire/github.js';
+import { formatPendingRequestsForBriefing } from './empire/request-sync.js';
+import { getUserById } from './db/user-queries.js';
 import { fetchOutlookCalendarEvents } from './calendar/outlook-calendar.js';
 import { mergeEvents } from './calendar/merger.js';
 import { findFreeSlots } from './calendar/free-slots.js';
@@ -300,12 +302,23 @@ export async function runTriage(db: Database.Database, userId: string): Promise<
       // Non-critical
     }
 
+    // Include pending dev requests in the admin's briefing only.
+    let pendingDevRequests: string | undefined;
+    try {
+      const user = getUserById(db, userId);
+      if (user?.role === 'admin') {
+        pendingDevRequests = formatPendingRequestsForBriefing(db);
+      }
+    } catch {
+      // Non-critical
+    }
+
     console.log('Generating morning briefing...');
     briefing = await generateBriefing(allClassified, {
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
