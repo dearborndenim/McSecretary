@@ -20,12 +20,13 @@ Generate a concise, actionable morning briefing in markdown format. Structure:
 
 1. **Overnight Dev** — Summary of what the AI agent empire built overnight. Only include if overnight build data is provided.
 2. **Factory Production** — Yesterday's production numbers, trends vs last week, and any notable streaks. Only include if production data is provided.
-3. **Today's Schedule** — Calendar events for today with times (Chicago time), conflicts flagged with suggestions, and free time blocks. Only include if calendar data is provided.
-4. **Needs Your Attention** — Critical/high urgency email items requiring a response. Include sender, one-line summary, and suggested action.
-5. **For Your Review** — Medium priority items to look at when time allows.
-6. **FYI / Handled** — What was auto-archived or marked as informational.
-7. **Stats** — How many emails processed, archived, flagged.
-8. **Dev Requests** — Pending feature requests from team members awaiting your review. Only include if dev request data is provided. Show request ID, who submitted it, and the description.
+3. **Operations Snapshot** — Inventory on hand, uninvoiced PO totals by brand, and work-in-progress summary. Only include if ops data is provided (admin only).
+4. **Today's Schedule** — Calendar events for today with times (Chicago time), conflicts flagged with suggestions, and free time blocks. Only include if calendar data is provided.
+5. **Needs Your Attention** — Critical/high urgency email items requiring a response. Include sender, one-line summary, and suggested action.
+6. **For Your Review** — Medium priority items to look at when time allows.
+7. **FYI / Handled** — What was auto-archived or marked as informational.
+8. **Stats** — How many emails processed, archived, flagged.
+9. **Dev Requests** — Pending feature requests from team members awaiting your review. Only include if dev request data is provided. Show request ID, who submitted it, and the description.
 
 Keep it conversational but direct. ${userName} is busy — lead with what matters.
 Don't use emoji. Use Central Time (Chicago) for all times.`;
@@ -37,6 +38,12 @@ export interface BriefingStats {
   flaggedForReview: number;
 }
 
+export interface AdminOpsSections {
+  inventory?: string;
+  uninvoiced?: string;
+  wip?: string;
+}
+
 export function buildBriefingPrompt(
   emails: ClassifiedEmail[],
   stats: BriefingStats,
@@ -45,6 +52,7 @@ export function buildBriefingPrompt(
   productionSummary?: string,
   userContext?: UserBriefingContext,
   pendingDevRequests?: string,
+  adminOps?: AdminOpsSections,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -122,13 +130,24 @@ ${pendingDevRequests}
 `;
   }
 
+  let adminOpsSection = '';
+  if (adminOps && (adminOps.inventory || adminOps.uninvoiced || adminOps.wip)) {
+    const parts: string[] = [];
+    if (adminOps.inventory) parts.push(adminOps.inventory);
+    if (adminOps.uninvoiced) parts.push(adminOps.uninvoiced);
+    if (adminOps.wip) parts.push(adminOps.wip);
+    adminOpsSection = `
+${parts.join('\n\n')}
+`;
+  }
+
   return `Generate the morning briefing for today.
 
 Stats:
 - Total emails processed: ${stats.totalProcessed}
 - Auto-archived: ${stats.archived}
 - Flagged for review: ${stats.flaggedForReview}
-${overnightSection}${productionSection}${calendarSection}${devRequestsSection}
+${overnightSection}${productionSection}${adminOpsSection}${calendarSection}${devRequestsSection}
 CRITICAL urgency:
 ${formatEmails(critical)}
 
@@ -152,13 +171,14 @@ export async function generateBriefing(
   productionSummary?: string,
   userContext?: UserBriefingContext,
   pendingDevRequests?: string,
+  adminOps?: AdminOpsSections,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
   const client = anthropicClient;
-  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests);
+  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps);
   const systemPrompt = getBriefingSystemPrompt(userContext);
 
   const response = await client.messages.create({

@@ -44,6 +44,10 @@ export const config = {
     url: optional('PIECE_WORK_SCANNER_URL', ''),
     apiKey: optional('PIECE_WORK_SCANNER_API_KEY', ''),
   },
+  poReceiver: {
+    url: optional('PO_RECEIVER_URL', ''),
+    apiKey: optional('PO_RECEIVER_API_KEY', ''),
+  },
 } as const;
 
 if (!config.api.secret) {

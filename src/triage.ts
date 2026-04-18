@@ -304,10 +304,48 @@ export async function runTriage(db: Database.Database, userId: string): Promise<
 
     // Include pending dev requests in the admin's briefing only.
     let pendingDevRequests: string | undefined;
+    let adminOps: { inventory?: string; uninvoiced?: string; wip?: string } | undefined;
     try {
       const user = getUserById(db, userId);
       if (user?.role === 'admin') {
         pendingDevRequests = formatPendingRequestsForBriefing(db);
+
+        // Admin-only operations snapshot: inventory, uninvoiced PO totals, WIP.
+        // Every sub-fetch is graceful-failure so any upstream outage degrades
+        // to an "unavailable" line rather than crashing the briefing.
+        const ops: { inventory?: string; uninvoiced?: string; wip?: string } = {};
+        try {
+          const [{ fetchInventoryOverview, formatInventorySection }, { fetchUninvoicedTotals, formatUninvoicedSection }, { fetchWipSummary, formatWipSection }] =
+            await Promise.all([
+              import('./briefing/inventory.js'),
+              import('./briefing/uninvoiced.js'),
+              import('./briefing/wip.js'),
+            ]);
+
+          if (config.poReceiver?.url && config.poReceiver?.apiKey) {
+            console.log('Fetching inventory overview + uninvoiced totals...');
+            const [inventory, uninvoiced] = await Promise.all([
+              fetchInventoryOverview(config.poReceiver.url, config.poReceiver.apiKey).catch(() => null),
+              fetchUninvoicedTotals(config.poReceiver.url, config.poReceiver.apiKey).catch(() => null),
+            ]);
+            ops.inventory = formatInventorySection(inventory);
+            ops.uninvoiced = formatUninvoicedSection(uninvoiced);
+          } else {
+            console.log('PO_RECEIVER_URL or PO_RECEIVER_API_KEY not configured — skipping inventory + uninvoiced sections');
+            ops.inventory = formatInventorySection(null);
+            ops.uninvoiced = formatUninvoicedSection(null);
+          }
+
+          const wip = config.pieceWorkScanner.url && config.pieceWorkScanner.apiKey
+            ? await fetchWipSummary(config.pieceWorkScanner.url, config.pieceWorkScanner.apiKey).catch(() => null)
+            : null;
+          ops.wip = formatWipSection(wip);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(`Admin ops section partially failed: ${msg}`);
+        }
+
+        adminOps = ops;
       }
     } catch {
       // Non-critical
@@ -318,7 +356,7 @@ export async function runTriage(db: Database.Database, userId: string): Promise<
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
