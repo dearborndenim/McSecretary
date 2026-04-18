@@ -14,7 +14,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - **Auth:** Single Azure AD app with admin-consented client credentials (reads any mailbox in tenant)
 - **Telegram:** One bot, routes messages by chat_id → user_id lookup
 - **Dev requests:** Team members submit `/request`, Robert reviews/refines via `/approve`
-- **Onboarding:** Admin creates user → generates invite code → user sends `/start <code>` to bot
+- **Onboarding:** Admin creates user → generates invite code → user sends `/start <code>` to bot. Full playbook in [ONBOARDING.md](./ONBOARDING.md).
 
 ## Structure
 - `src/config.ts` — env var loading
