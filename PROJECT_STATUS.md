@@ -106,3 +106,13 @@ Merged branch `schedules-and-pipeline` to main. 29 new tests (201 → 230), 0 fa
 - Skipped: inventory/WIP from PO receiver (out of scope tonight).
 
 **Still needs:** Telegram account linking for Olivier/Merab via `/start <code>`, Railway env var confirmation after volume wipe.
+
+### 2026-04-17: Admin Operations Snapshot in Morning Briefing
+Merged branch `feature/briefing-inventory-wip` to main. 31 new tests (230 → 261), 0 new failures, typecheck clean. The pre-existing `tomorrow-preview.test.ts` flake is unchanged.
+
+- Admin morning briefing now includes three operations sections: inventory on hand (total units, SKUs, top 5 low-stock), uninvoiced PO $ per brand, and WIP. Member briefings (Olivier/Merab) are unchanged — the sections are gated by `user.role === 'admin'` in `triage.ts`.
+- New client modules: `src/briefing/inventory.ts`, `src/briefing/uninvoiced.ts`, `src/briefing/wip.ts`. Each fetches with Bearer auth + 10s timeout and returns null on any failure; formatters emit an "unavailable" line so the briefing never crashes.
+- Inventory uses new `/api/integration/inventory-overview` endpoint added to purchase-order-receiver (also shipped tonight). Uninvoiced totals reuse the existing `/api/integration/cost-summary` feed.
+- WIP is stubbed pending a `/integration/wip-summary` endpoint in piece-work-scanner (TODO in `src/briefing/wip.ts`).
+- New env vars: `PO_RECEIVER_URL`, `PO_RECEIVER_API_KEY`.
+- `generateBriefing` / `buildBriefingPrompt` gain an optional `adminOps` param; the Sonnet system prompt now lists an "Operations Snapshot" section admin-only.
