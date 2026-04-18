@@ -44,7 +44,22 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 92% → Full Secretary
-Multi-user system + per-user schedules + GitHub-backed nightly-plan pipeline. 230 tests passing across 34 files. Email, calendar, briefings, dev request queue all user-scoped. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules + GitHub-backed nightly-plan pipeline. 235 tests (5 new 2026-04-17). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped. Main gaps: business communication drafting, meeting prep, proactive scheduling. Pre-existing non-blocking failures: `tests/calendar/tomorrow-preview.test.ts` and `tests/journal/synthesis.test.ts` each have one flaky test (unrelated to onboarding changes).
+
+### 2026-04-17: Onboarding Playbook + /start E2E Integration Test
+- Added `ONBOARDING.md` — admin → invitee handoff sequence, invite-code
+  semantics, role behavior, schedule-window backfill defaults, and
+  failure/recovery modes.
+- Referenced ONBOARDING.md from `CLAUDE.md` onboarding bullet.
+- Verified `/start <code>` handler already does: `consumeInvite` →
+  `linkTelegramChat` → welcome reply; schedule windows are NULL-coalesced
+  to role-based defaults by `getUserScheduleWindows()` on first read
+  (no explicit backfill INSERT needed).
+- **Tests**: +5 integration tests in `tests/multi-user/start-flow-e2e.test.ts`
+  covering member defaults, admin defaults, invalid code, expired code,
+  and single-use invite enforcement. All 27 multi-user + schedule-windows
+  tests still green.
+- **Branch**: `feature/onboarding-docs` → merged to main.
 
 ### 2026-04-16: Multi-User System Implemented
 - Added `users`, `user_email_accounts`, `user_preferences`, `user_invites`, `dev_requests` tables
