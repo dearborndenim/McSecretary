@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-11)
+## Current Reality (last updated: 2026-04-18)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -43,8 +43,8 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 6. Add proactive scheduling suggestions
 7. Test and harden all 20+ tools for reliability
 
-## Maturity: 92% → Full Secretary
-Multi-user system + per-user schedules + GitHub-backed nightly-plan pipeline. 235 tests (5 new 2026-04-17). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped. Main gaps: business communication drafting, meeting prep, proactive scheduling. Pre-existing non-blocking failures: `tests/calendar/tomorrow-preview.test.ts` and `tests/journal/synthesis.test.ts` each have one flaky test (unrelated to onboarding changes).
+## Maturity: 94% → Full Secretary
+Multi-user system + per-user schedules + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer. 301 tests passing (41 new 2026-04-18). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` Telegram command. Main gaps: business communication drafting, meeting prep, proactive scheduling. Pre-existing non-blocking failure: `tests/calendar/tomorrow-preview.test.ts` (date-sensitive flake, unrelated).
 
 ### 2026-04-17: Onboarding Playbook + /start E2E Integration Test
 - Added `ONBOARDING.md` — admin → invitee handoff sequence, invite-code
@@ -106,6 +106,29 @@ Merged branch `schedules-and-pipeline` to main. 29 new tests (201 → 230), 0 fa
 - Skipped: inventory/WIP from PO receiver (out of scope tonight).
 
 **Still needs:** Telegram account linking for Olivier/Merab via `/start <code>`, Railway env var confirmation after volume wipe.
+
+### 2026-04-18: Automated Onboarding + Live WIP Consumer
+Merged branch `feature/onboard-auto-wip-consumer` to main. 41 new tests (260 → 301 passing), 0 new failures, typecheck clean. Pre-existing `tomorrow-preview.test.ts` flake unchanged.
+
+**Automated onboarding (Task A+B+D):**
+- New `src/onboarding/pending-invites.ts` — reads `pending_invites.json` at repo root, mints an invite per entry via existing `createInvite`, emails the code via new `sendInviteEmail`, stamps `onboarded_at` on success (idempotent re-runs). `user_not_found` and `email_failed` outcomes do NOT stamp `onboarded_at` so admin can fix and retry.
+- New `src/email/invite-sender.ts` — reuses the existing Graph API `sendMail` path (same MSAL client-credentials flow McSecretary uses for reading email) when `INVITE_SENDER_EMAIL` is set. Falls back to stdout log when unset (safe local dev). Email body includes code, `/start` instructions, bot handle, and the 6 AM–2:30 PM CT schedule window policy for members.
+- New admin Telegram command `/onboard-all-pending` wired into `src/index.ts`, admin-gated via the same `user.role === 'admin'` pattern as `/invite` / `/review` / `/approve`. Returns a per-invitee summary with totals.
+- `pending_invites.json` seeded at repo root with Olivier + Merab.
+- `ONBOARDING.md` updated with the new command, manifest schema, env vars, failure modes.
+
+**Live WIP consumer (Task C):**
+- `src/briefing/wip.ts` — stub replaced with real `GET /api/integration/wip-summary` fetch on piece-work-scanner. Bearer auth, 5s AbortSignal timeout (tighter than inventory's 10s because WIP fetch runs later in the briefing pipeline). Validates response shape (`total_in_flight`, `oldest_wip_age_hours`, `pieces_by_operation`, `as_of`); any non-2xx, timeout, or malformed JSON returns null so the admin briefing degrades to "WIP unavailable" instead of crashing.
+- `formatWipSection` now renders as-of timestamp, total pieces in flight, oldest WIP age, and per-operation breakdown sorted descending so the biggest stage surfaces first.
+- `tests/briefing/wip.test.ts` — 20 new tests covering formatter + fetch (happy path, blank config, 4xx, 5xx, network error, malformed payload, trailing-slash URL, 5s signal).
+- Reuses the existing `PIECE_WORK_SCANNER_URL` / `PIECE_WORK_SCANNER_API_KEY` env vars already referenced by `briefing/production.ts`.
+
+**New env vars (optional):**
+- `INVITE_SENDER_EMAIL` — mailbox that sends invite emails via Graph. Unset → stdout stub (safe default).
+- `TELEGRAM_BOT_HANDLE` — bot handle in invite emails. Defaults to `@mcsecretary_bot`.
+- `SMTP_HOST=""` — explicit opt-out of Graph send (forces stdout stub).
+
+**Still needs:** Admin runs `/onboard-all-pending` once Olivier/Merab are ready; `INVITE_SENDER_EMAIL` to be set on Railway (currently stdout stub); piece-work-scanner must ship the `/api/integration/wip-summary` endpoint on its side tonight for the live WIP data to flow.
 
 ### 2026-04-17: Admin Operations Snapshot in Morning Briefing
 Merged branch `feature/briefing-inventory-wip` to main. 31 new tests (230 → 261), 0 new failures, typecheck clean. The pre-existing `tomorrow-preview.test.ts` flake is unchanged.

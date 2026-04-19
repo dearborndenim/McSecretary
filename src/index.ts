@@ -757,6 +757,23 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     return `Invite code for ${targetUser.name} (${email}):\n\n\`${code}\`\n\nExpires in 7 days. They send /start ${code} to the bot.`;
   }
 
+  // Admin-only: /onboard-all-pending — bulk-mint invites + email them for
+  // everyone listed in pending_invites.json at the repo root. Entries with
+  // a non-empty onboarded_at are skipped. See src/onboarding/pending-invites.ts.
+  if (lowerText === '/onboard-all-pending' && user.role === 'admin') {
+    try {
+      const { processPendingInvites, formatOnboardingSummary, defaultManifestPath } =
+        await import('./onboarding/pending-invites.js');
+      const result = await processPendingInvites(db, {
+        manifestPath: defaultManifestPath(),
+      });
+      return formatOnboardingSummary(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Bulk onboarding failed: ${msg}`;
+    }
+  }
+
   // Direct commands
   if (lowerText === '/briefing' || lowerText === 'briefing') {
     try {
