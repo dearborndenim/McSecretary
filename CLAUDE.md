@@ -66,5 +66,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `/review` — see pending dev requests
 - `/approve <id> [refined description]` — approve request
 - `/reject <id> <reason>` — reject request
+- `/invite <user-email>` — generate a 7-day invite code for an existing user row
+- `/onboard-all-pending` — bulk-mint + email invites for every entry in `pending_invites.json` (see ONBOARDING.md)
 - `status <project>` — read PROJECT_STATUS.md from GitHub
 - `feedback <project>: <text>` — append feedback

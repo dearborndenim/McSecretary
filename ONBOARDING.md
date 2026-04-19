@@ -43,6 +43,73 @@ Manually — Slack, SMS, email, however is convenient. The bot does not
 deliver codes on the invitee's behalf. This is deliberate: we want the
 admin to confirm the invitee's Telegram account before linkage.
 
+### 3a. Bulk onboarding via `/onboard-all-pending` (admin-only)
+
+When onboarding more than one invitee at a time, the admin can drop a
+manifest at the repo root and run a single Telegram command instead of
+repeating `/invite` per person.
+
+**Manifest** — `pending_invites.json` at the repo root:
+
+```json
+[
+  { "email": "olivier@dearborndenim.com", "name": "Olivier" },
+  { "email": "merab@dearborndenim.com",   "name": "Merab" }
+]
+```
+
+Schema:
+
+| Field          | Required | Notes                                            |
+|----------------|----------|--------------------------------------------------|
+| `email`        | yes      | Must match a row in `users.email`                |
+| `name`         | yes      | Used in the email body greeting                  |
+| `onboarded_at` | no       | ISO timestamp. Written by McSecretary on success |
+
+**Command** — admin DMs the bot:
+
+```
+/onboard-all-pending
+```
+
+For each entry with no `onboarded_at`:
+
+1. Look up the user row by email (must already exist — run `seedTeam` or
+   `admin.ts add-user` first).
+2. Mint a fresh invite code via `createInvite(db, userId)`.
+3. Email the code via `sendInviteEmail` — uses Microsoft Graph
+   `sendMail` from the mailbox named in `INVITE_SENDER_EMAIL`. If that
+   env var is unset, falls back to stdout log (safe for local dev).
+4. Stamp `onboarded_at = <iso>` on the entry so re-running is idempotent.
+
+**Reply** — Telegram summary per invitee with totals, e.g.:
+
+```
+Bulk onboarding summary:
+
+✓ Olivier — emailed code abc12345
+✗ Merab — no user row for merab@dearborndenim.com
+
+Totals: sent=1 stubbed=0 skipped=0 failed=1
+```
+
+**Env vars** for the email path:
+
+| Var                     | Effect                                                                   |
+|-------------------------|--------------------------------------------------------------------------|
+| `INVITE_SENDER_EMAIL`   | Mailbox sending invites. Unset → stdout stub only.                       |
+| `TELEGRAM_BOT_HANDLE`   | Bot handle referenced in the email body. Defaults to `@mcsecretary_bot`. |
+| `SMTP_HOST=""`          | Explicit opt-out — forces stdout stub even when sender is configured.     |
+
+**Failure modes:**
+
+- `user_not_found` — manifest email has no matching row. Fix by seeding
+  the user first, then re-run (entry is NOT marked onboarded).
+- `email_failed` — Graph returned non-2xx or network error. The invite
+  code is still minted in the DB, but the entry is NOT marked onboarded
+  so the admin can re-run after fixing the mail path.
+- `already_onboarded` — previous run stamped `onboarded_at`. Skipped.
+
 ### 4. Invitee: `/start <code>` from Telegram
 
 The invitee opens the bot in Telegram and sends:

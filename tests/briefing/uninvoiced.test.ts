@@ -107,28 +107,6 @@ describe('fetchUninvoicedTotals', () => {
   });
 });
 
-describe('formatWipSection stub', () => {
-  it('always returns an "unavailable" line today (endpoint stubbed)', async () => {
-    const { formatWipSection, fetchWipSummary } = await import('../../src/briefing/wip.js');
-    const result = await fetchWipSummary('https://scanner.example.com', 'test-key');
-    expect(result).toBeNull();
-    const text = formatWipSection(result);
-    expect(text).toContain('WORK IN PROGRESS');
-    expect(text).toContain('unavailable');
-  });
-
-  it('formats a real WIP summary when provided', async () => {
-    const { formatWipSection } = await import('../../src/briefing/wip.js');
-    const text = formatWipSection({
-      as_of: '2026-04-17',
-      total_units_in_progress: 1500,
-      stages: [
-        { stage: 'CUT', units: 500 },
-        { stage: 'SEWN', units: 700 },
-      ],
-    });
-    expect(text).toContain('1,500');
-    expect(text).toContain('CUT: 500');
-    expect(text).toContain('SEWN: 700');
-  });
-});
+// Note: WIP fetch + formatter now live fully tested in tests/briefing/wip.test.ts
+// The old stub-era tests were moved there once piece-work-scanner exposed the
+// /api/integration/wip-summary endpoint.
