@@ -60,11 +60,15 @@ repeating `/invite` per person.
 
 Schema:
 
-| Field          | Required | Notes                                            |
-|----------------|----------|--------------------------------------------------|
-| `email`        | yes      | Must match a row in `users.email`                |
-| `name`         | yes      | Used in the email body greeting                  |
-| `onboarded_at` | no       | ISO timestamp. Written by McSecretary on success |
+| Field              | Required | Notes                                                                          |
+|--------------------|----------|--------------------------------------------------------------------------------|
+| `email`            | yes      | Must match a row in `users.email`                                              |
+| `name`             | yes      | Used in the email body greeting                                                |
+| `role`             | no       | `"admin"` or `"staff"`. Defaults to `"staff"` for backward compatibility.      |
+| `invited_at`       | no       | ISO timestamp stamped by `/onboard-all-pending` on delivery                    |
+| `started_at`       | no       | ISO timestamp stamped by `/start <code>` when invitee links their Telegram     |
+| `reminder_sent_at` | no       | ISO timestamp stamped by the 48h reminder job (prevents re-sends)              |
+| `onboarded_at`     | no       | ISO timestamp. Written by McSecretary on successful initial invite delivery    |
 
 **Command** — admin DMs the bot:
 
@@ -110,6 +114,33 @@ Totals: sent=1 stubbed=0 skipped=0 failed=1
   so the admin can re-run after fixing the mail path.
 - `already_onboarded` — previous run stamped `onboarded_at`. Skipped.
 
+### 3b. Admin: `/onboarding-status` to see who's pending vs linked
+
+At any time the admin can DM:
+
+```
+/onboarding-status
+```
+
+The bot replies with a single message listing up to 20 pending entries
+(no `onboarded_at`) and up to 20 onboarded entries (most recent first).
+Older entries are summarized as `…and N older truncated` so the message
+always fits in a single Telegram reply.
+
+### 3c. Daily 48h reminder job
+
+Scheduled once daily at 9 AM CT. Iterates `pending_invites.json` and,
+for each entry where:
+
+- `invited_at` is >48 hours old,
+- `started_at` is unset (invitee hasn't linked yet),
+- `reminder_sent_at` is unset (no prior reminder),
+
+it mints a fresh invite code and re-sends the invite email with
+`"Reminder: "` prefixed to the subject line, then stamps
+`reminder_sent_at`. Entries that are already linked (`started_at`
+present) or already reminded are skipped.
+
 ### 4. Invitee: `/start <code>` from Telegram
 
 The invitee opens the bot in Telegram and sends:
@@ -139,6 +170,10 @@ the columns are null:
 |--------|------------------------|--------------------|
 | admin  | `0 6-19 * * 1-5`       | `0 19 * * 1-5`     |
 | member | `0 6-14 * * 1-5`       | `30 14 * * 1-5`    |
+| staff  | `0 7-13 * * 1-5`       | `30 13 * * 1-5`    |
+
+Staff bounds are configurable via `STAFF_SCHEDULE_WINDOW_START` /
+`STAFF_SCHEDULE_WINDOW_END` env vars (integer hours 0–23).
 
 Members thus get 6 AM – 2 PM CT hourly check-ins and a 2:30 PM CT EOD
 summary. Admins get 6 AM – 7 PM CT check-ins and a 7 PM CT EOD. Admins

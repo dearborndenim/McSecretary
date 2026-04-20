@@ -27,6 +27,11 @@ export interface SendInviteEmailInput {
   to: string;
   name: string;
   code: string;
+  /**
+   * Optional subject prefix. The 48h reminder job passes `"Reminder: "` so the
+   * re-sent invite is distinguishable in the inbox from the original.
+   */
+  subjectPrefix?: string;
 }
 
 export interface SendInviteEmailResult {
@@ -89,7 +94,8 @@ export async function sendInviteEmail(
   const sender = env.INVITE_SENDER_EMAIL ?? '';
   const botHandle = env.TELEGRAM_BOT_HANDLE ?? '@mcsecretary_bot';
   const body = buildInviteBody(input.name, input.code, botHandle);
-  const subject = `Your McSecretary invite code: ${input.code}`;
+  const prefix = input.subjectPrefix ?? '';
+  const subject = `${prefix}Your McSecretary invite code: ${input.code}`;
 
   // Stdout fallback: intentional stub when the admin mailbox isn't configured
   // (e.g. SMTP_HOST unset in local dev, or INVITE_SENDER_EMAIL blank).

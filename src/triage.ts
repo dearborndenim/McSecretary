@@ -339,7 +339,14 @@ export async function runTriage(db: Database.Database, userId: string): Promise<
           const wip = config.pieceWorkScanner.url && config.pieceWorkScanner.apiKey
             ? await fetchWipSummary(config.pieceWorkScanner.url, config.pieceWorkScanner.apiKey).catch(() => null)
             : null;
-          ops.wip = formatWipSection(wip);
+          // Admin-only morning briefing line: "Oldest WIP: {op} — {age}h old".
+          // Fails silently (returns null) when WIP endpoint is unreachable or
+          // data is missing so the briefing never breaks on this line.
+          const { formatOldestWipLine } = await import('./briefing/wip.js');
+          const oldestLine = formatOldestWipLine(wip);
+          ops.wip = oldestLine
+            ? `${formatWipSection(wip)}\n${oldestLine}`
+            : formatWipSection(wip);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.log(`Admin ops section partially failed: ${msg}`);

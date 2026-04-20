@@ -29,6 +29,59 @@ export const DEFAULT_ADMIN_EOD = '0 19 * * 1-5';
 export const DEFAULT_MEMBER_CHECK_IN = '0 6-14 * * 1-5';
 export const DEFAULT_MEMBER_EOD = '30 14 * * 1-5';
 
+// "Staff" pending-invite role (used by the bulk onboarding manifest) maps to
+// the member schedule window unless `STAFF_SCHEDULE_WINDOW_START/_END` are
+// set. Defaults are 7 AM – 1 PM + 1:30 PM EOD — narrower than members because
+// staff are typically part-time.
+const STAFF_WINDOW_START = 7;
+const STAFF_WINDOW_END = 13;
+const STAFF_EOD_HOUR = 13;
+const STAFF_EOD_MINUTE = 30;
+
+function parseHour(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 0 || n > 23) return fallback;
+  return n;
+}
+
+/**
+ * Resolve the default schedule window for a pending-invite role, honoring the
+ * `STAFF_SCHEDULE_WINDOW_START` / `STAFF_SCHEDULE_WINDOW_END` env vars for
+ * staff. Admin roles always use `DEFAULT_ADMIN_*`. The helper accepts an
+ * optional `env` arg so tests can flip values without mutating process.env.
+ */
+export function resolveScheduleWindowsForRole(
+  role: 'admin' | 'staff',
+  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+): UserScheduleWindows {
+  if (role === 'admin') {
+    return {
+      check_in_cron: DEFAULT_ADMIN_CHECK_IN,
+      eod_cron: DEFAULT_ADMIN_EOD,
+    };
+  }
+  const start = parseHour(env.STAFF_SCHEDULE_WINDOW_START, STAFF_WINDOW_START);
+  const end = parseHour(env.STAFF_SCHEDULE_WINDOW_END, STAFF_WINDOW_END);
+  // Ensure start <= end to avoid a malformed cron range.
+  const lo = Math.min(start, end);
+  const hi = Math.max(start, end);
+  const checkIn = lo === hi ? `0 ${lo} * * 1-5` : `0 ${lo}-${hi} * * 1-5`;
+  // EOD defaults to 30 minutes after the last check-in hour unless explicitly
+  // configured via end; for overridden end hours we keep the :30 convention.
+  const eodHour = hi;
+  const eodMinute = env.STAFF_SCHEDULE_WINDOW_END ? STAFF_EOD_MINUTE : STAFF_EOD_MINUTE;
+  const eod = `${eodMinute} ${eodHour} * * 1-5`;
+  // Preserve legacy default exactly when env is unset.
+  if (env.STAFF_SCHEDULE_WINDOW_START === undefined && env.STAFF_SCHEDULE_WINDOW_END === undefined) {
+    return {
+      check_in_cron: `0 ${STAFF_WINDOW_START}-${STAFF_WINDOW_END} * * 1-5`,
+      eod_cron: `${STAFF_EOD_MINUTE} ${STAFF_EOD_HOUR} * * 1-5`,
+    };
+  }
+  return { check_in_cron: checkIn, eod_cron: eod };
+}
+
 export interface UserEmailAccount {
   id: string;
   user_id: string;

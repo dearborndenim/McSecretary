@@ -28,9 +28,27 @@ import type Database from 'better-sqlite3';
 import { createInvite, getUserByEmail } from '../db/user-queries.js';
 import { sendInviteEmail, type SendInviteEmailDeps } from '../email/invite-sender.js';
 
+/**
+ * Pending-invite role. Admin invitees receive the admin schedule window;
+ * staff invitees receive a narrower configurable window (see
+ * `STAFF_SCHEDULE_WINDOW_START` / `STAFF_SCHEDULE_WINDOW_END` env vars). An
+ * entry without a `role` is treated as `"staff"` for backward compatibility
+ * with manifests that pre-date multi-role support.
+ */
+export type PendingInviteRole = 'admin' | 'staff';
+
 export interface PendingInviteEntry {
   email: string;
   name: string;
+  /** Optional role; defaults to `"staff"` when absent. */
+  role?: PendingInviteRole;
+  /** ISO timestamp the initial invite email was delivered. */
+  invited_at?: string | null;
+  /** ISO timestamp the invitee ran `/start <code>` (when tracked). */
+  started_at?: string | null;
+  /** ISO timestamp a reminder email was delivered (prevents duplicate reminders). */
+  reminder_sent_at?: string | null;
+  /** ISO timestamp the admin ran `/onboard-all-pending` for this entry. */
   onboarded_at?: string | null;
 }
 
@@ -139,7 +157,15 @@ export async function processPendingInvites(
       continue;
     }
 
-    entry.onboarded_at = now();
+    const ts = now();
+    entry.onboarded_at = ts;
+    // Stamp `invited_at` on success so the 48h reminder job has something to
+    // compare against. Preserve an existing value if one is already present
+    // (e.g. manifest was hand-edited).
+    if (!entry.invited_at) entry.invited_at = ts;
+    // Default role to "staff" for entries missing one, so downstream consumers
+    // (reminder job, status renderer) always see a concrete value.
+    if (!entry.role) entry.role = 'staff';
     processed.push({
       email: entry.email,
       name: entry.name,

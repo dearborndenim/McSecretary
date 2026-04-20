@@ -25,6 +25,49 @@ export interface WipSummary {
   total_in_flight: number;
   oldest_wip_age_hours: number;
   pieces_by_operation: Record<string, number>;
+  /**
+   * Optional — when piece-work-scanner exposes per-operation oldest age (newer
+   * `?operation=<code>` support), we surface the op with the longest-standing
+   * WIP. Falls back to the op with the highest piece count when absent.
+   */
+  oldest_operation?: string;
+  pieces_by_operation_oldest_age?: Record<string, number>;
+}
+
+/**
+ * Derive a one-line summary for the admin morning briefing — "⏳ Oldest WIP:
+ * {op} piece — {age}h old". Returns null when data is unavailable so the
+ * caller can skip the line entirely (fail-silent contract).
+ *
+ * The oldest operation is taken from:
+ *   1. `oldest_operation` if the API surfaces it directly,
+ *   2. `pieces_by_operation_oldest_age` max-by-value if present,
+ *   3. the op with the highest count in `pieces_by_operation` as a last resort.
+ */
+export function formatOldestWipLine(summary: WipSummary | null): string | null {
+  if (!summary) return null;
+  if (summary.total_in_flight <= 0) return null;
+  if (summary.oldest_wip_age_hours <= 0) return null;
+
+  let op: string | undefined = summary.oldest_operation;
+
+  if (!op && summary.pieces_by_operation_oldest_age) {
+    const entries = Object.entries(summary.pieces_by_operation_oldest_age);
+    if (entries.length > 0) {
+      entries.sort((a, b) => b[1] - a[1]);
+      op = entries[0]![0];
+    }
+  }
+
+  if (!op) {
+    const entries = Object.entries(summary.pieces_by_operation);
+    if (entries.length === 0) return null;
+    entries.sort((a, b) => b[1] - a[1]);
+    op = entries[0]![0];
+  }
+
+  const age = summary.oldest_wip_age_hours.toFixed(1);
+  return `⏳ Oldest WIP: ${op} piece — ${age}h old`;
 }
 
 const WIP_FETCH_TIMEOUT_MS = 5000;
@@ -70,12 +113,23 @@ export async function fetchWipSummary(
       return null;
     }
 
-    return {
+    const result: WipSummary = {
       as_of: data.as_of,
       total_in_flight: data.total_in_flight,
       oldest_wip_age_hours: data.oldest_wip_age_hours,
       pieces_by_operation: data.pieces_by_operation as Record<string, number>,
     };
+    if (typeof data.oldest_operation === 'string' && data.oldest_operation.length > 0) {
+      result.oldest_operation = data.oldest_operation;
+    }
+    if (
+      typeof data.pieces_by_operation_oldest_age === 'object' &&
+      data.pieces_by_operation_oldest_age !== null
+    ) {
+      result.pieces_by_operation_oldest_age =
+        data.pieces_by_operation_oldest_age as Record<string, number>;
+    }
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(`Failed to fetch WIP summary: ${msg}`);

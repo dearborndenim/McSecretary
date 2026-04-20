@@ -352,6 +352,29 @@ async function handleTaskPolling(): Promise<void> {
   }
 }
 
+async function handleInviteReminders(): Promise<void> {
+  console.log('Running 48h invite reminders...');
+  try {
+    const { runInviteReminders, defaultReminderManifestPath, formatReminderSummary } =
+      await import('./onboarding/reminder.js');
+    const result = await runInviteReminders(db, {
+      manifestPath: defaultReminderManifestPath(),
+    });
+    const summary = formatReminderSummary(result);
+    console.log(summary);
+    // Only notify admin when we actually sent a reminder — skip quiet runs.
+    const anyReminded = result.processed.some(
+      (p) => p.status === 'reminded' || p.status === 'reminded_stubbed',
+    );
+    if (anyReminded) {
+      await sendMessage(summary, false).catch(() => {});
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Invite reminder job failed:', msg);
+  }
+}
+
 async function handleEmailScan(): Promise<void> {
   try {
     console.log('Scanning emails for auto-tagging...');
@@ -774,6 +797,20 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
+  // Admin-only: /onboarding-status — list pending vs onboarded entries from
+  // pending_invites.json. Capped at 20 per section (older entries truncated).
+  if (lowerText === '/onboarding-status' && user.role === 'admin') {
+    try {
+      const { readAndRenderOnboardingStatus, defaultStatusManifestPath } = await import(
+        './onboarding/status.js'
+      );
+      return readAndRenderOnboardingStatus(defaultStatusManifestPath());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Onboarding status failed: ${msg}`;
+    }
+  }
+
   // Direct commands
   if (lowerText === '/briefing' || lowerText === 'briefing') {
     try {
@@ -1046,6 +1083,18 @@ async function main() {
       }
       linkTelegramChat(db, userId, chatId);
       const linkedUser = getUserById(db, userId);
+      // Best-effort: stamp started_at on the matching pending_invites.json entry
+      // so the 48h reminder job knows this invitee completed onboarding.
+      try {
+        const { stampStartedAt, defaultStatusManifestPath } = await import(
+          './onboarding/status.js'
+        );
+        if (linkedUser?.email) {
+          stampStartedAt(defaultStatusManifestPath(), linkedUser.email);
+        }
+      } catch (err) {
+        console.log(`Could not stamp started_at: ${(err as Error).message}`);
+      }
       await ctx.reply(`Welcome, ${linkedUser?.name ?? 'friend'}! You're linked. Your briefings will arrive here.`);
       return;
     }
@@ -1084,6 +1133,7 @@ async function main() {
     { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
     { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },
+    { name: 'Invite Reminders', schedule: '0 9 * * *', handler: handleInviteReminders, description: 'Daily 9 AM — resend invite to entries >48h old with no /start' },
   ]);
   startSchedulerFromDb(db);
 
