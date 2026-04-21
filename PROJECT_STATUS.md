@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-18)
+## Current Reality (last updated: 2026-04-20)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -43,8 +43,38 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 6. Add proactive scheduling suggestions
 7. Test and harden all 20+ tools for reliability
 
-## Maturity: 94% → Full Secretary
-Multi-user system + per-user schedules + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer. 301 tests passing (41 new 2026-04-18). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` Telegram command. Main gaps: business communication drafting, meeting prep, proactive scheduling. Pre-existing non-blocking failure: `tests/calendar/tomorrow-preview.test.ts` (date-sensitive flake, unrelated).
+## Maturity: 95% → Full Secretary
+Multi-user system + per-user schedules (now timezone-aware) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview` admin dry-run. 360 tests passing (24 new 2026-04-20, flaky `tomorrow-preview` hardened). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-20: Briefing Quality Audit — /briefing-preview + flaky-test fix + staff timezone
+Merged branch `nightly-2026-04-20-briefing-audit` to main. 24 new tests (336 → 360 passing), 0 failures, typecheck clean. The previously-flaky `tomorrow-preview` test is now deterministic.
+
+**Task 6.1 — `/briefing-preview` admin command:**
+- New admin-only Telegram command that re-runs `runTriage(db, userId)` — the EXACT same render path the 5 AM morning briefing uses. No duplicate render logic.
+- Replies with a `[Preview — what tomorrow's 5 AM briefing will look like]` header followed by the full rendered briefing. Admin-gated via the existing `user.role === 'admin'` pattern.
+- Wired into `src/index.ts` just before the public `/briefing` handler so the admin variant short-circuits first.
+- 8 tests in `tests/briefing/briefing-preview-command.test.ts` — command parsing, case-insensitivity, strict equality, admin-gate, and source-inspection tests that guarantee the handler keeps calling `runTriage` (one render path invariant).
+
+**Task 6.2 — Hardened flaky `tomorrow-preview` test:**
+- Root cause: the test seeded events on `2026-04-17` but called `getTomorrowEventsPreview(db, 'u1')` with no explicit `now`, so the function defaulted to the wall-clock date. Any run where "today in CT" was not `2026-04-16` caused the Chicago-date filter to silently drop every seeded event.
+- Fix: introduced `vi.useFakeTimers()` + `vi.setSystemTime(FROZEN_NOW)` in `beforeEach` of the original describe block.
+- Added 5 deterministic boundary tests in a new describe block that each pass an explicit `now` arg to encode the specific scenarios that previously drifted: Friday evening → Saturday, late-night CT not leaking into tomorrow, month-end (Apr 30 → May 1), year-end (Dec 31 → Jan 1), DST spring-forward weekend (Mar 7 → Mar 8).
+
+**Task 6.3 — Staff timezone support:**
+- `scheduler-windows.ts` previously hard-coded `America/Chicago` when evaluating per-user cron gates, even though `users.timezone` was already persisted. That meant an ET user with `cron: '0 7 * * 1-5'` fired at 7 AM CT (= 8 AM ET).
+- Added internal `getUserTimezone(db, userId)` helper that reads `users.timezone` (IANA string) and falls back to `America/Chicago` for NULL/empty rows — preserves legacy behavior.
+- `shouldUserCheckInNow` + `shouldUserEodNow` now pass the resolved timezone to `isWithinCronWindow`. `isWithinCronWindow` itself was already timezone-parameterized (pure function).
+- 9 new tests in `tests/scheduler-windows-timezone.test.ts` covering CT (baseline), ET (1h earlier), PT (2h later), UTC, 7 AM CT ≠ 7 AM ET boundary, EOD gate parity with check-in, NULL/empty-timezone legacy fallback, arbitrary IANA acceptance (Asia/Tokyo), and CT-is-still-default confirmation for newly-created users.
+
+**Files modified:**
+- `src/index.ts` — `/briefing-preview` handler
+- `src/scheduler-windows.ts` — user-timezone aware gates
+- `CLAUDE.md` — admin command list
+- `tests/calendar/tomorrow-preview.test.ts` — fake timers + boundary scenarios
+- `tests/briefing/briefing-preview-command.test.ts` — new
+- `tests/scheduler-windows-timezone.test.ts` — new
+
+**No new env vars.** Behavior is driven entirely by the existing `users.timezone` column.
 
 ### 2026-04-17: Onboarding Playbook + /start E2E Integration Test
 - Added `ONBOARDING.md` — admin → invitee handoff sequence, invite-code

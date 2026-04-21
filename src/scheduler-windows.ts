@@ -8,7 +8,10 @@
  */
 
 import type Database from 'better-sqlite3';
-import { getUserScheduleWindows } from './db/user-queries.js';
+import { getUserScheduleWindows, getUserById } from './db/user-queries.js';
+
+/** Default timezone used when a user row has a NULL/empty timezone column. */
+const DEFAULT_TIMEZONE = 'America/Chicago';
 
 /**
  * Minimal cron matcher that supports:
@@ -100,6 +103,20 @@ function parseRange(base: string, min: number, max: number): [number, number] {
   return [n, max];
 }
 
+/**
+ * Resolve the effective timezone for cron matching. Honors `users.timezone`
+ * (IANA format, e.g. `America/New_York`) when set; falls back to
+ * `America/Chicago` when the column is NULL or empty so legacy rows keep
+ * working. Staff scheduled through the bulk-invite flow default to CT; this
+ * lookup lets Robert override per-user via `UPDATE users SET timezone=...`.
+ */
+function getUserTimezone(db: Database.Database, userId: string): string {
+  const user = getUserById(db, userId);
+  if (!user) return DEFAULT_TIMEZONE;
+  const tz = user.timezone?.trim();
+  return tz && tz.length > 0 ? tz : DEFAULT_TIMEZONE;
+}
+
 export function shouldUserCheckInNow(
   db: Database.Database,
   userId: string,
@@ -107,7 +124,8 @@ export function shouldUserCheckInNow(
 ): boolean {
   const windows = getUserScheduleWindows(db, userId);
   if (!windows) return false;
-  return isWithinCronWindow(windows.check_in_cron, now, 'America/Chicago');
+  const tz = getUserTimezone(db, userId);
+  return isWithinCronWindow(windows.check_in_cron, now, tz);
 }
 
 export function shouldUserEodNow(
@@ -117,5 +135,6 @@ export function shouldUserEodNow(
 ): boolean {
   const windows = getUserScheduleWindows(db, userId);
   if (!windows) return false;
-  return isWithinCronWindow(windows.eod_cron, now, 'America/Chicago');
+  const tz = getUserTimezone(db, userId);
+  return isWithinCronWindow(windows.eod_cron, now, tz);
 }
