@@ -811,6 +811,25 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
+  // Admin-only: /briefing-preview — render tomorrow's 5 AM briefing right now
+  // for review. Re-uses the exact `runTriage` render path the morning
+  // handler calls; no duplicate rendering logic. Useful for QA-ing a briefing
+  // before it ships overnight. Admin-gated because non-admins already have
+  // /briefing which renders the same text on demand.
+  if (lowerText === '/briefing-preview' && user.role === 'admin') {
+    try {
+      const briefing = await runTriage(db, user.id);
+      insertConversationMessage(db, user.id, today, 'secretary', `[Briefing Preview]\n${briefing}`);
+      const header = '[Preview — what tomorrow\'s 5 AM briefing will look like]\n\n';
+      return `${header}${briefing}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errorMsg = `Briefing preview failed: ${msg}`;
+      insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
+      return errorMsg;
+    }
+  }
+
   // Direct commands
   if (lowerText === '/briefing' || lowerText === 'briefing') {
     try {
