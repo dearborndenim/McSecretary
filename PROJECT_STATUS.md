@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-20)
+## Current Reality (last updated: 2026-04-21)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -44,7 +44,39 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 95% → Full Secretary
-Multi-user system + per-user schedules (now timezone-aware) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview` admin dry-run. 360 tests passing (24 new 2026-04-20, flaky `tomorrow-preview` hardened). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>]` admin dry-run + `/onboarding-status [--pending-only]`. 395 tests passing (35 new 2026-04-21). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-21: Multi-User Briefing — `/briefing-preview --user=<name>` + `/onboarding-status --pending-only` + TZ delivery-window coverage
+Merged branch `feat/multi-user-briefing` to main. 35 new tests (360 → 395 passing), 0 failures, typecheck clean.
+
+**Task 6.1 — `/briefing-preview --user=<name>`:**
+- Extended the admin-only `/briefing-preview` command with an optional `--user=<name>` flag. Looks up the target user via case-insensitive first-name match on `users.name`. Unknown names return `No user named "X" found.` without running the render path.
+- The render path is still `runTriage(db, targetUserId)` — one render path invariant holds (target defaults to the caller when the flag is absent).
+- New `src/briefing/preview-command.ts` — pure `parseBriefingPreviewCommand(raw)` + `findUserByFirstName(db, name)` helpers. Keeps the parser unit-testable without pulling in config/Anthropic.
+- 14 tests in `tests/briefing/briefing-preview-user-flag.test.ts` — parser matching (bare, `--user=X`, case, whitespace, rejecting bare args and empty flag values), name resolver (case fold, first-name only, unknown → undefined), wiring-source asserts (admin gate + parser + resolver imports present, unknown-name error branch present).
+
+**Task 6.2 — Timezone regression suite expansion (full scheduling-flow for ET/PT):**
+- New `tests/scheduler-delivery-windows-tz.test.ts` — simulates the actual 30-minute scheduler loop across a full UTC day (48 ticks) and asserts which moments cause each user's gate to open. Previously the TZ suite spot-checked a single UTC instant per user.
+- 9 tests total: ET staff (check-in ticks match 7+8 AM ET = 11+12 UTC EDT, 7 AM CT is explicitly NOT the same as 7 AM ET, weekends skipped, EOD at 5 PM ET), PT staff (7-10 AM PT = 14-17 UTC PDT, 7 AM CT = 5 AM PT rejected, EOD 2:30 PM PT ≠ 2:30 PM CT), mixed fleet (ET+PT on same cron, each fires at their local 9 AM UTC tick, and at each local moment ONLY the correct user's gate opens).
+
+**Task 6.3 — `/onboarding-status --pending-only`:**
+- `src/onboarding/status.ts` gained `pendingOnly?: boolean` on `OnboardingStatusInput`. When set, the Onboarded section is suppressed entirely. Pending section still shows counts + `- none` when empty, and the "manifest missing" branch still fires when applicable.
+- Empty-manifest short-circuit only fires for the default view; `--pending-only` still prints `Pending (0): - none` so the admin gets explicit zero feedback.
+- New `parseOnboardingStatusCommand(raw)` pure parser (case-insensitive, whitespace-tolerant, strict on unknown flags).
+- `readAndRenderOnboardingStatus(path, { pendingOnly })` passes the flag through.
+- 12 tests in `tests/onboarding/status-pending-only.test.ts` — parser (bare, flag, case, whitespace, strict-unknown), render (onboarded section omitted, empty pending still surfaces, manifest-missing still works, no regression on default view), wiring-source asserts (parser imported + admin-gated).
+
+**Files modified:**
+- `src/index.ts` — parser-based handlers for `/briefing-preview` (with `--user=<name>`) and `/onboarding-status` (with `--pending-only`)
+- `src/onboarding/status.ts` — `pendingOnly` + `parseOnboardingStatusCommand`
+- `src/briefing/preview-command.ts` — new
+- `CLAUDE.md` — admin command list reflects new flags
+- `tests/briefing/briefing-preview-user-flag.test.ts` — new
+- `tests/briefing/briefing-preview-command.test.ts` — admin-gate assertion updated for parser-based handler
+- `tests/onboarding/status-pending-only.test.ts` — new
+- `tests/scheduler-delivery-windows-tz.test.ts` — new
+
+**No new env vars. No schema changes.**
 
 ### 2026-04-20: Briefing Quality Audit — /briefing-preview + flaky-test fix + staff timezone
 Merged branch `nightly-2026-04-20-briefing-audit` to main. 24 new tests (336 → 360 passing), 0 failures, typecheck clean. The previously-flaky `tomorrow-preview` test is now deterministic.

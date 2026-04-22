@@ -23,6 +23,37 @@ export interface OnboardingStatusInput {
   manifestPath: string;
   /** Whether the manifest existed on disk (lets us report "missing"). */
   manifestMissing?: boolean;
+  /**
+   * When true, the Onboarded section is suppressed entirely. Pending section
+   * still renders with counts, truncation, and "- none" when empty. Used by
+   * the `/onboarding-status --pending-only` admin flag.
+   */
+  pendingOnly?: boolean;
+}
+
+/**
+ * Parsed form of the `/onboarding-status [--pending-only]` Telegram command.
+ */
+export interface ParsedOnboardingStatusCommand {
+  matched: boolean;
+  pendingOnly: boolean;
+}
+
+/**
+ * Parse the raw Telegram text into a structured onboarding-status command.
+ * Returns `{ matched: false, pendingOnly: false }` for anything that isn't
+ * the bare command or the `--pending-only` form. Unknown flags are strictly
+ * rejected so accidental typos don't silently fall through to "show all".
+ */
+export function parseOnboardingStatusCommand(raw: string): ParsedOnboardingStatusCommand {
+  const trimmed = raw.trim();
+  if (/^\/onboarding-status$/i.test(trimmed)) {
+    return { matched: true, pendingOnly: false };
+  }
+  if (/^\/onboarding-status\s+--pending-only$/i.test(trimmed)) {
+    return { matched: true, pendingOnly: true };
+  }
+  return { matched: false, pendingOnly: false };
 }
 
 function formatTimestamp(ts: string | null | undefined): string {
@@ -46,7 +77,11 @@ export function renderOnboardingStatus(input: OnboardingStatusInput): string {
     return `No pending_invites.json found at ${input.manifestPath}.`;
   }
 
-  if (input.entries.length === 0) {
+  // Empty manifest is a distinct case from "no pending" — the file exists
+  // but has zero rows. When pendingOnly is set we still want to show the
+  // "Pending (0)" rollup so the admin has explicit feedback, so only emit
+  // the "empty" short-circuit when rendering the full (default) view.
+  if (input.entries.length === 0 && !input.pendingOnly) {
     return 'pending_invites.json is empty.';
   }
 
@@ -79,24 +114,25 @@ export function renderOnboardingStatus(input: OnboardingStatusInput): string {
     }
   }
 
-  lines.push('');
-
-  // Onboarded section — most recent first.
-  const onboardedSorted = [...onboarded].sort((a, b) =>
-    (b.onboarded_at ?? '').localeCompare(a.onboarded_at ?? ''),
-  );
-  lines.push(`Onboarded (${onboarded.length}):`);
-  if (onboarded.length === 0) {
-    lines.push('- none');
-  } else {
-    const shown = onboardedSorted.slice(0, MAX_PER_SECTION);
-    for (const e of shown) {
-      const ts = formatTimestamp(e.onboarded_at);
-      lines.push(`- ${e.name} <${e.email}> (${describeRole(e)}) onboarded=${ts}`);
-    }
-    const truncated = onboardedSorted.length - shown.length;
-    if (truncated > 0) {
-      lines.push(`…and ${truncated} older truncated`);
+  // Onboarded section — suppressed entirely when pendingOnly is set.
+  if (!input.pendingOnly) {
+    lines.push('');
+    const onboardedSorted = [...onboarded].sort((a, b) =>
+      (b.onboarded_at ?? '').localeCompare(a.onboarded_at ?? ''),
+    );
+    lines.push(`Onboarded (${onboarded.length}):`);
+    if (onboarded.length === 0) {
+      lines.push('- none');
+    } else {
+      const shown = onboardedSorted.slice(0, MAX_PER_SECTION);
+      for (const e of shown) {
+        const ts = formatTimestamp(e.onboarded_at);
+        lines.push(`- ${e.name} <${e.email}> (${describeRole(e)}) onboarded=${ts}`);
+      }
+      const truncated = onboardedSorted.length - shown.length;
+      if (truncated > 0) {
+        lines.push(`…and ${truncated} older truncated`);
+      }
     }
   }
 
@@ -108,12 +144,16 @@ export function renderOnboardingStatus(input: OnboardingStatusInput): string {
  * Telegram handler in index.ts. Errors reading JSON are surfaced in the
  * output rather than thrown.
  */
-export function readAndRenderOnboardingStatus(manifestPath: string): string {
+export function readAndRenderOnboardingStatus(
+  manifestPath: string,
+  opts: { pendingOnly?: boolean } = {},
+): string {
   if (!fs.existsSync(manifestPath)) {
     return renderOnboardingStatus({
       entries: [],
       manifestPath,
       manifestMissing: true,
+      pendingOnly: opts.pendingOnly,
     });
   }
   try {
@@ -125,6 +165,7 @@ export function readAndRenderOnboardingStatus(manifestPath: string): string {
     return renderOnboardingStatus({
       entries: parsed as PendingInviteEntry[],
       manifestPath,
+      pendingOnly: opts.pendingOnly,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
