@@ -68,7 +68,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `/reject <id> <reason>` — reject request
 - `/invite <user-email>` — generate a 7-day invite code for an existing user row
 - `/onboard-all-pending` — bulk-mint + email invites for every entry in `pending_invites.json` (see ONBOARDING.md)
-- `/onboarding-status` — show pending vs onboarded invitees from `pending_invites.json` (20-per-section cap)
-- `/briefing-preview` — render tomorrow's 5 AM morning briefing immediately for QA (re-uses `runTriage` — no duplicate render path)
+- `/onboarding-status [--pending-only]` — show pending vs onboarded invitees from `pending_invites.json` (20-per-section cap). `--pending-only` suppresses the Onboarded section.
+- `/briefing-preview [--user=<name>]` — render tomorrow's 5 AM morning briefing immediately for QA (re-uses `runTriage` — no duplicate render path). `--user=<name>` previews the briefing as if for a named user (case-insensitive first-name match).
 - `status <project>` — read PROJECT_STATUS.md from GitHub
 - `feedback <project>: <text>` — append feedback

@@ -797,36 +797,68 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
-  // Admin-only: /onboarding-status — list pending vs onboarded entries from
-  // pending_invites.json. Capped at 20 per section (older entries truncated).
-  if (lowerText === '/onboarding-status' && user.role === 'admin') {
-    try {
-      const { readAndRenderOnboardingStatus, defaultStatusManifestPath } = await import(
-        './onboarding/status.js'
-      );
-      return readAndRenderOnboardingStatus(defaultStatusManifestPath());
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return `Onboarding status failed: ${msg}`;
+  // Admin-only: /onboarding-status [--pending-only] — list pending vs
+  // onboarded entries from pending_invites.json. Capped at 20 per section
+  // (older entries truncated). `--pending-only` suppresses the Onboarded
+  // section for a tighter "who's still waiting" view.
+  if (user.role === 'admin') {
+    const { parseOnboardingStatusCommand } = await import('./onboarding/status.js');
+    const parsedStatus = parseOnboardingStatusCommand(text);
+    if (parsedStatus.matched) {
+      try {
+        const { readAndRenderOnboardingStatus, defaultStatusManifestPath } = await import(
+          './onboarding/status.js'
+        );
+        return readAndRenderOnboardingStatus(defaultStatusManifestPath(), {
+          pendingOnly: parsedStatus.pendingOnly,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return `Onboarding status failed: ${msg}`;
+      }
     }
   }
 
-  // Admin-only: /briefing-preview — render tomorrow's 5 AM briefing right now
-  // for review. Re-uses the exact `runTriage` render path the morning
-  // handler calls; no duplicate rendering logic. Useful for QA-ing a briefing
-  // before it ships overnight. Admin-gated because non-admins already have
-  // /briefing which renders the same text on demand.
-  if (lowerText === '/briefing-preview' && user.role === 'admin') {
-    try {
-      const briefing = await runTriage(db, user.id);
-      insertConversationMessage(db, user.id, today, 'secretary', `[Briefing Preview]\n${briefing}`);
-      const header = '[Preview — what tomorrow\'s 5 AM briefing will look like]\n\n';
-      return `${header}${briefing}`;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const errorMsg = `Briefing preview failed: ${msg}`;
-      insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
-      return errorMsg;
+  // Admin-only: /briefing-preview [--user=<name>] — render tomorrow's 5 AM
+  // briefing right now for review. Re-uses the exact `runTriage` render path
+  // the morning handler calls; no duplicate rendering logic. When the
+  // `--user=<name>` flag is present the preview is generated as if for that
+  // user (case-insensitive first-name match). Admin-gated because non-admins
+  // already have `/briefing` which renders their own briefing on demand.
+  if (user.role === 'admin') {
+    const { parseBriefingPreviewCommand, findUserByFirstName } = await import(
+      './briefing/preview-command.js'
+    );
+    const parsedPreview = parseBriefingPreviewCommand(text);
+    if (parsedPreview.matched) {
+      try {
+        let targetUser: User = user;
+        if (parsedPreview.targetName) {
+          const resolved = findUserByFirstName(db, parsedPreview.targetName);
+          if (!resolved) {
+            return `No user named "${parsedPreview.targetName}" found.`;
+          }
+          targetUser = resolved;
+        }
+        const briefing = await runTriage(db, targetUser.id);
+        insertConversationMessage(
+          db,
+          user.id,
+          today,
+          'secretary',
+          `[Briefing Preview — target=${targetUser.name}]\n${briefing}`,
+        );
+        const header =
+          targetUser.id === user.id
+            ? '[Preview — what tomorrow\'s 5 AM briefing will look like]\n\n'
+            : `[Preview — what tomorrow's 5 AM briefing will look like for ${targetUser.name}]\n\n`;
+        return `${header}${briefing}`;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const errorMsg = `Briefing preview failed: ${msg}`;
+        insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
+        return errorMsg;
+      }
     }
   }
 

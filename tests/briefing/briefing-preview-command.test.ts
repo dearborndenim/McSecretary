@@ -76,9 +76,12 @@ describe('/briefing-preview wires runTriage render path', () => {
     const path = await import('node:path');
     const indexPath = path.join(process.cwd(), 'src', 'index.ts');
     const source = fs.readFileSync(indexPath, 'utf-8');
-    // Locate the handler's guard line and verify the role check is present.
-    const match = source.match(/lowerText === '\/briefing-preview'[^\n]*/);
-    expect(match).not.toBeNull();
-    expect(match?.[0]).toContain("user.role === 'admin'");
+    // After Task 6.4 (2026-04-21) the handler is parser-based rather than a
+    // literal `lowerText === '/briefing-preview'` compare. Assert the gate
+    // lives in a nearby block with the parser call + admin role check.
+    const idx = source.indexOf('parseBriefingPreviewCommand');
+    expect(idx).toBeGreaterThan(-1);
+    const block = source.slice(Math.max(0, idx - 400), idx + 400);
+    expect(block).toContain("user.role === 'admin'");
   });
 });
