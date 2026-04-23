@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-21)
+## Current Reality (last updated: 2026-04-22)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -44,7 +44,46 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 95% → Full Secretary
-Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>]` admin dry-run + `/onboarding-status [--pending-only]`. 395 tests passing (35 new 2026-04-21). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run + `/briefing-sections --user=<name> (--set=<csv> | --reset)` per-user personalization + `/onboarding-status [--pending-only]`. 414 tests passing (19 new 2026-04-22). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-22: Briefing Personalization — `--sections` filter + per-user `briefing_sections_json`
+Merged branch `briefing-personalization` to main. 19 new tests (395 → 414 passing), 0 failures, typecheck clean.
+
+**Task 7.1 — `/briefing-preview --sections=<csv>` extension:**
+- Extended `parseBriefingPreviewCommand` to accept `--sections=<csv>` and combine arbitrarily with `--user=<name>` (either order). Unknown tokens still reject the match. New `sectionsRaw?: string` field on the parsed result.
+- Handler validates the CSV via the new shared `parseSectionList` helper in `src/briefing/sections.ts`; invalid names return `Invalid section name(s): X, Y. Valid sections: overnight_dev, production, admin_ops, calendar, dev_requests, emails, stats.`
+- Render path is unchanged — still `runTriage(db, targetUserId, { sections })`. `buildBriefingPrompt` / `generateBriefing` gained an optional `sections?: Set<string>` parameter; when provided, only those sections are emitted in the prompt body.
+- Valid section names: `overnight_dev`, `production`, `admin_ops`, `calendar`, `dev_requests`, `emails`, `stats`.
+
+**Task 7.2 — `briefing_sections_json` column + `/briefing-sections` admin command:**
+- Idempotent migration in `src/db/user-schema.ts` adds nullable TEXT `briefing_sections_json` to `users`. NULL → full briefing (default). Set → JSON array of section names; morning scheduler filters to that subset.
+- New `src/db/user-queries.ts` helpers: `getUserBriefingSections(db, id)` (defensive: malformed JSON → null so 5 AM never breaks) and `setUserBriefingSections(db, id, sections | null)`.
+- New `src/briefing/sections-command.ts` — pure `parseBriefingSectionsCommand(raw)` for `/briefing-sections --user=<name> (--set=<csv> | --reset)`. Strict: rejects bare, duplicate flags, mixed set+reset, missing user.
+- `handleMorningBriefing` in `src/index.ts` reads the per-user preference and passes it into `runTriage`. Users without a stored preference hit the legacy `runTriage(db, id)` path (null options) — identical to the pre-2026-04-22 behavior.
+- Admin command writes validate section names before persisting; invalid names return the same error shape the preview command uses.
+
+**Task 7.3 — 19 new tests in `tests/briefing/briefing-personalization.test.ts`:**
+- `--sections` parser happy path (bare, order-independent with `--user`) + prompt-level subset rendering (only `calendar` + `emails` emitted).
+- Unknown-section error: `parseSectionList` valid/invalid split, empty/all-invalid handling, deterministic error-list formatting, `src/index.ts` source wiring.
+- Saved preference drives the filter: `setUserBriefingSections` round-trip + `buildBriefingPrompt` honoring the stored subset.
+- NULL preference preserves legacy full-briefing behavior; malformed JSON degrades to null; every valid section name is recognized (no schema drift between helper + renderer).
+- `/briefing-sections --reset` parser + `setUserBriefingSections(null)` DB round-trip. Rejects mixed `--set + --reset`, bare, missing `--user`.
+- Admin-gate source assertion on `src/index.ts`; scheduler wiring assertion that `handleMorningBriefing` calls `getUserBriefingSections` before `runTriage`.
+
+**Files modified:**
+- `src/db/user-schema.ts` — idempotent `briefing_sections_json` migration
+- `src/db/user-queries.ts` — `briefing_sections_json` on `User` + `getUserBriefingSections` / `setUserBriefingSections`
+- `src/briefing/sections.ts` — new (valid-section list, parser, formatter, validator)
+- `src/briefing/sections-command.ts` — new (`/briefing-sections` parser)
+- `src/briefing/preview-command.ts` — `--sections=` support in `parseBriefingPreviewCommand`
+- `src/briefing/generator.ts` — `buildBriefingPrompt` + `generateBriefing` accept `sections?: Set<string>`
+- `src/triage.ts` — `RunTriageOptions.sections` pass-through
+- `src/index.ts` — `/briefing-preview --sections` validation + `/briefing-sections` handler + scheduler reads stored preference
+- `CLAUDE.md` — admin command reference updated
+- `tests/briefing/briefing-personalization.test.ts` — new (19 tests)
+
+**No new env vars. Schema change is additive + idempotent — NULL preserves pre-2026-04-22 behavior for every user.**
+
 
 ### 2026-04-21: Multi-User Briefing — `/briefing-preview --user=<name>` + `/onboarding-status --pending-only` + TZ delivery-window coverage
 Merged branch `feat/multi-user-briefing` to main. 35 new tests (360 → 395 passing), 0 failures, typecheck clean.

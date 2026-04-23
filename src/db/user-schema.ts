@@ -68,6 +68,13 @@ export function initializeUserSchema(db: Database.Database): void {
   if (!userColNames.has('eod_cron')) {
     db.exec('ALTER TABLE users ADD COLUMN eod_cron TEXT');
   }
+  // Per-user briefing section preference (2026-04-22). NULL = render all
+  // sections (default behavior). When set, must be a JSON array of section
+  // names from VALID_BRIEFING_SECTIONS — only those sections render in the
+  // user's daily 5 AM briefing.
+  if (!userColNames.has('briefing_sections_json')) {
+    db.exec('ALTER TABLE users ADD COLUMN briefing_sections_json TEXT');
+  }
 
   // Add synced_at to dev_requests (idempotent)
   const devCols = db.prepare('PRAGMA table_info(dev_requests)').all() as { name: string }[];

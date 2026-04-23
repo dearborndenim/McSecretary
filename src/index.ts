@@ -266,7 +266,18 @@ async function handleMorningBriefing(): Promise<void> {
         }
       }
 
-      const briefing = await runTriage(db, user.id);
+      // Per-user briefing-section preference (Task 7, 2026-04-22). NULL →
+      // render all sections (legacy behavior). When set, only the stored
+      // subset renders. Invalid / malformed JSON falls back to all sections
+      // because `getUserBriefingSections` returns null on parse failure.
+      const { getUserBriefingSections } = await import('./db/user-queries.js');
+      const { isValidBriefingSection } = await import('./briefing/sections.js');
+      const storedSections = getUserBriefingSections(db, user.id);
+      const validated = storedSections
+        ? storedSections.filter(isValidBriefingSection)
+        : null;
+      const sectionsOpt = validated && validated.length > 0 ? { sections: validated } : undefined;
+      const briefing = await runTriage(db, user.id, sectionsOpt);
       await sendBriefingToUser(user.id, briefing);
       const today = getChicagoDate();
       insertConversationMessage(db, user.id, today, 'secretary', `[Morning Briefing]\n${briefing}`);
@@ -819,12 +830,14 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
-  // Admin-only: /briefing-preview [--user=<name>] — render tomorrow's 5 AM
-  // briefing right now for review. Re-uses the exact `runTriage` render path
-  // the morning handler calls; no duplicate rendering logic. When the
-  // `--user=<name>` flag is present the preview is generated as if for that
-  // user (case-insensitive first-name match). Admin-gated because non-admins
-  // already have `/briefing` which renders their own briefing on demand.
+  // Admin-only: /briefing-preview [--user=<name>] [--sections=<csv>] — render
+  // tomorrow's 5 AM briefing right now for review. Re-uses the exact
+  // `runTriage` render path the morning handler calls; no duplicate rendering
+  // logic. When `--user=<name>` is present the preview is generated as if for
+  // that user (case-insensitive first-name match). When `--sections=<csv>` is
+  // present only those sections render (invalid section names return an error
+  // listing the valid set). Admin-gated because non-admins already have
+  // `/briefing` which renders their own briefing on demand.
   if (user.role === 'admin') {
     const { parseBriefingPreviewCommand, findUserByFirstName } = await import(
       './briefing/preview-command.js'
@@ -840,7 +853,21 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           }
           targetUser = resolved;
         }
-        const briefing = await runTriage(db, targetUser.id);
+        let sectionsFilter: string[] | undefined;
+        if (parsedPreview.sectionsRaw !== undefined) {
+          const { parseSectionList, formatValidSectionsList } = await import(
+            './briefing/sections.js'
+          );
+          const { valid, invalid } = parseSectionList(parsedPreview.sectionsRaw);
+          if (invalid.length > 0) {
+            return `Invalid section name(s): ${invalid.join(', ')}. Valid sections: ${formatValidSectionsList()}.`;
+          }
+          if (valid.length === 0) {
+            return `No valid sections provided. Valid sections: ${formatValidSectionsList()}.`;
+          }
+          sectionsFilter = valid;
+        }
+        const briefing = await runTriage(db, targetUser.id, sectionsFilter ? { sections: sectionsFilter } : undefined);
         insertConversationMessage(
           db,
           user.id,
@@ -858,6 +885,43 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         const errorMsg = `Briefing preview failed: ${msg}`;
         insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
         return errorMsg;
+      }
+    }
+  }
+
+  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset) —
+  // write or clear the per-user `briefing_sections_json` preference. When
+  // set, that user's daily 5 AM briefing renders ONLY those sections. When
+  // cleared (NULL), they revert to the default all-sections behavior.
+  if (user.role === 'admin') {
+    const { parseBriefingSectionsCommand } = await import('./briefing/sections-command.js');
+    const parsedSections = parseBriefingSectionsCommand(text);
+    if (parsedSections.matched) {
+      try {
+        const { findUserByFirstName } = await import('./briefing/preview-command.js');
+        const { parseSectionList, formatValidSectionsList } = await import('./briefing/sections.js');
+        const { setUserBriefingSections } = await import('./db/user-queries.js');
+        const targetName = parsedSections.targetName as string;
+        const target = findUserByFirstName(db, targetName);
+        if (!target) {
+          return `No user named "${targetName}" found.`;
+        }
+        if (parsedSections.reset) {
+          setUserBriefingSections(db, target.id, null);
+          return `Cleared briefing-sections preference for ${target.name}. They will receive the full briefing.`;
+        }
+        const { valid, invalid } = parseSectionList(parsedSections.setRaw ?? '');
+        if (invalid.length > 0) {
+          return `Invalid section name(s): ${invalid.join(', ')}. Valid sections: ${formatValidSectionsList()}.`;
+        }
+        if (valid.length === 0) {
+          return `No valid sections provided. Valid sections: ${formatValidSectionsList()}.`;
+        }
+        setUserBriefingSections(db, target.id, valid);
+        return `Set briefing sections for ${target.name}: ${valid.join(', ')}.`;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return `Briefing-sections update failed: ${msg}`;
       }
     }
   }

@@ -12,6 +12,7 @@ export interface User {
   briefing_cron: string;
   check_in_cron: string | null;
   eod_cron: string | null;
+  briefing_sections_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -263,4 +264,48 @@ export function getUserScheduleWindows(
     check_in_cron: user.check_in_cron ?? (isAdmin ? DEFAULT_ADMIN_CHECK_IN : DEFAULT_MEMBER_CHECK_IN),
     eod_cron: user.eod_cron ?? (isAdmin ? DEFAULT_ADMIN_EOD : DEFAULT_MEMBER_EOD),
   };
+}
+
+/**
+ * Read the per-user briefing-section preference. Returns:
+ *   - `null` when the column is NULL / unset — caller should render ALL
+ *     sections (default behavior preserved for every user without an
+ *     explicit preference).
+ *   - `string[]` of section names when set. The caller is responsible for
+ *     validating the section names against VALID_BRIEFING_SECTIONS.
+ *
+ * Malformed JSON is treated as NULL (defensive: never break the 5 AM
+ * briefing path for a single corrupt row).
+ */
+export function getUserBriefingSections(
+  db: Database.Database,
+  userId: string,
+): string[] | null {
+  const user = getUserById(db, userId);
+  if (!user || user.briefing_sections_json === null || user.briefing_sections_json === undefined) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(user.briefing_sections_json);
+    if (!Array.isArray(parsed)) return null;
+    const strs = parsed.filter((x): x is string => typeof x === 'string');
+    return strs.length > 0 ? strs : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the per-user briefing-section preference. Passing `null` clears the
+ * preference so the user reverts to the default (all sections). Callers must
+ * validate section names BEFORE calling this helper.
+ */
+export function setUserBriefingSections(
+  db: Database.Database,
+  userId: string,
+  sections: string[] | null,
+): void {
+  const value = sections === null ? null : JSON.stringify(sections);
+  db.prepare("UPDATE users SET briefing_sections_json = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(value, userId);
 }

@@ -1,5 +1,5 @@
 /**
- * Parser + user resolver for `/briefing-preview [--user=<name>]`.
+ * Parser + user resolver for `/briefing-preview [--user=<name>] [--sections=<csv>]`.
  *
  * Kept as pure functions so the logic is unit-testable without having to
  * import `src/index.ts` (which pulls in config + the Anthropic SDK).
@@ -12,32 +12,68 @@ export interface ParsedBriefingPreviewCommand {
   matched: boolean;
   /** The raw name from --user=<name> (case preserved). Undefined when absent. */
   targetName?: string;
+  /**
+   * Raw comma-separated value from `--sections=<csv>` (unvalidated; caller
+   * passes it to parseSectionList for validation). Undefined when absent.
+   */
+  sectionsRaw?: string;
 }
 
 /**
  * Parse a raw Telegram text into a structured `/briefing-preview` command.
- * Returns `{ matched: false }` for anything that isn't the bare command or
- * the `--user=<name>` form. The command prefix match is case-insensitive;
- * the target name is returned with its original casing for the display
- * string when we fall through to findUserByFirstName (which folds case).
+ * Returns `{ matched: false }` for anything that isn't the bare command or a
+ * supported flag combination. The command prefix match is case-insensitive;
+ * flag values are returned with their original casing so downstream resolvers
+ * can fold case as needed.
+ *
+ * Supported forms:
+ *   /briefing-preview
+ *   /briefing-preview --user=<name>
+ *   /briefing-preview --sections=<csv>
+ *   /briefing-preview --user=<name> --sections=<csv>
+ *   /briefing-preview --sections=<csv> --user=<name>
  */
 export function parseBriefingPreviewCommand(raw: string): ParsedBriefingPreviewCommand {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return { matched: false };
 
-  // Bare command.
-  if (/^\/briefing-preview$/i.test(trimmed)) {
+  // Must start with the command (case-insensitive); anything after is optional flags.
+  const prefixMatch = trimmed.match(/^\/briefing-preview(?:\s+(.*))?$/i);
+  if (!prefixMatch) return { matched: false };
+
+  const rest = (prefixMatch[1] ?? '').trim();
+  if (rest.length === 0) {
     return { matched: true };
   }
 
-  // --user=<name> form. Tolerates extra whitespace but requires the flag to
-  // start with `--user=` followed by a non-empty value.
-  const flagMatch = trimmed.match(/^\/briefing-preview\s+--user=(\S+)$/i);
-  if (flagMatch && flagMatch[1] && flagMatch[1].length > 0) {
-    return { matched: true, targetName: flagMatch[1] };
+  // Tokenize on whitespace and require every token to be a recognized flag.
+  // Order-independent; each flag may appear at most once.
+  const tokens = rest.split(/\s+/);
+  let targetName: string | undefined;
+  let sectionsRaw: string | undefined;
+
+  for (const token of tokens) {
+    const userMatch = token.match(/^--user=(.+)$/i);
+    if (userMatch && userMatch[1] && userMatch[1].length > 0) {
+      if (targetName !== undefined) return { matched: false }; // duplicate flag
+      targetName = userMatch[1];
+      continue;
+    }
+    const sectionsMatch = token.match(/^--sections=(.+)$/i);
+    if (sectionsMatch && sectionsMatch[1] && sectionsMatch[1].length > 0) {
+      if (sectionsRaw !== undefined) return { matched: false }; // duplicate flag
+      sectionsRaw = sectionsMatch[1];
+      continue;
+    }
+    // Unknown token → reject (keeps parser strict so typos don't silently pass).
+    return { matched: false };
   }
 
-  return { matched: false };
+  return {
+    matched: true,
+    targetName,
+    sectionsRaw,
+  };
 }
 
 /**
