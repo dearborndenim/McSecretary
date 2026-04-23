@@ -69,6 +69,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `/invite <user-email>` — generate a 7-day invite code for an existing user row
 - `/onboard-all-pending` — bulk-mint + email invites for every entry in `pending_invites.json` (see ONBOARDING.md)
 - `/onboarding-status [--pending-only]` — show pending vs onboarded invitees from `pending_invites.json` (20-per-section cap). `--pending-only` suppresses the Onboarded section.
-- `/briefing-preview [--user=<name>]` — render tomorrow's 5 AM morning briefing immediately for QA (re-uses `runTriage` — no duplicate render path). `--user=<name>` previews the briefing as if for a named user (case-insensitive first-name match).
+- `/briefing-preview [--user=<name>] [--sections=<csv>]` — render tomorrow's 5 AM morning briefing immediately for QA (re-uses `runTriage` — no duplicate render path). `--user=<name>` previews the briefing as if for a named user (case-insensitive first-name match). `--sections=<csv>` renders only those sections (valid names: `overnight_dev`, `production`, `admin_ops`, `calendar`, `dev_requests`, `emails`, `stats`). Invalid section names return an error listing the valid set.
+- `/briefing-sections --user=<name> (--set=<csv> | --reset)` — write or clear the per-user `briefing_sections_json` preference. When set, that user's daily 5 AM briefing renders ONLY those sections. `--reset` clears to NULL (full briefing, default behavior).
 - `status <project>` — read PROJECT_STATUS.md from GitHub
 - `feedback <project>: <text>` — append feedback

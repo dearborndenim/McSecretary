@@ -58,7 +58,21 @@ function getMondayOfWeek(date: Date): string {
   return monday.toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
 
-export async function runTriage(db: Database.Database, userId: string): Promise<string> {
+export interface RunTriageOptions {
+  /**
+   * Optional subset of section names to render. When provided (Task 7,
+   * 2026-04-22), ONLY those sections appear in the generated briefing. When
+   * omitted/undefined, all sections render (legacy behavior preserved for
+   * every user without a `briefing_sections_json` preference).
+   */
+  sections?: string[];
+}
+
+export async function runTriage(
+  db: Database.Database,
+  userId: string,
+  options?: RunTriageOptions,
+): Promise<string> {
   console.log(`McSECREtary — triage starting for user ${userId}...`);
   const startTime = Date.now();
 
@@ -359,11 +373,14 @@ export async function runTriage(db: Database.Database, userId: string): Promise<
     }
 
     console.log('Generating morning briefing...');
+    const sectionsSet = options?.sections && options.sections.length > 0
+      ? new Set(options.sections)
+      : undefined;
     briefing = await generateBriefing(allClassified, {
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsSet);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

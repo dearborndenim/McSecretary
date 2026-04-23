@@ -44,6 +44,22 @@ export interface AdminOpsSections {
   wip?: string;
 }
 
+/**
+ * Section-filter helper for Task 7 (2026-04-22).
+ *
+ * - `undefined` (default) → render every section whose data is provided.
+ *   This is the legacy behavior and must be preserved for every user who
+ *   has not set `briefing_sections_json`.
+ * - `Set<string>` of section names → render ONLY those sections. Stats is
+ *   always included in the prompt body even when filtered out because the
+ *   emails block reads from `stats` in its header line; filtering `stats`
+ *   only suppresses the "Stats:" preamble block.
+ */
+function sectionEnabled(sections: Set<string> | undefined, name: string): boolean {
+  if (sections === undefined) return true;
+  return sections.has(name);
+}
+
 export function buildBriefingPrompt(
   emails: ClassifiedEmail[],
   stats: BriefingStats,
@@ -53,6 +69,7 @@ export function buildBriefingPrompt(
   userContext?: UserBriefingContext,
   pendingDevRequests?: string,
   adminOps?: AdminOpsSections,
+  sections?: Set<string>,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -70,7 +87,7 @@ export function buildBriefingPrompt(
           .join('\n');
 
   let calendarSection = '';
-  if (calendar) {
+  if (calendar && sectionEnabled(sections, 'calendar')) {
     const eventList = calendar.events.length === 0
       ? 'No events scheduled.'
       : calendar.events
@@ -108,7 +125,7 @@ ${pendingList}
   }
 
   let overnightSection = '';
-  if (overnightDevSummary) {
+  if (overnightDevSummary && sectionEnabled(sections, 'overnight_dev')) {
     overnightSection = `
 OVERNIGHT DEV REPORT:
 ${overnightDevSummary}
@@ -116,14 +133,14 @@ ${overnightDevSummary}
   }
 
   let productionSection = '';
-  if (productionSummary) {
+  if (productionSummary && sectionEnabled(sections, 'production')) {
     productionSection = `
 ${productionSummary}
 `;
   }
 
   let devRequestsSection = '';
-  if (pendingDevRequests) {
+  if (pendingDevRequests && sectionEnabled(sections, 'dev_requests')) {
     devRequestsSection = `
 PENDING DEV REQUESTS (awaiting your review):
 ${pendingDevRequests}
@@ -131,7 +148,7 @@ ${pendingDevRequests}
   }
 
   let adminOpsSection = '';
-  if (adminOps && (adminOps.inventory || adminOps.uninvoiced || adminOps.wip)) {
+  if (adminOps && (adminOps.inventory || adminOps.uninvoiced || adminOps.wip) && sectionEnabled(sections, 'admin_ops')) {
     const parts: string[] = [];
     if (adminOps.inventory) parts.push(adminOps.inventory);
     if (adminOps.uninvoiced) parts.push(adminOps.uninvoiced);
@@ -141,13 +158,16 @@ ${parts.join('\n\n')}
 `;
   }
 
-  return `Generate the morning briefing for today.
-
-Stats:
+  const statsBlock = sectionEnabled(sections, 'stats')
+    ? `Stats:
 - Total emails processed: ${stats.totalProcessed}
 - Auto-archived: ${stats.archived}
 - Flagged for review: ${stats.flaggedForReview}
-${overnightSection}${productionSection}${adminOpsSection}${calendarSection}${devRequestsSection}
+`
+    : '';
+
+  const emailsBlock = sectionEnabled(sections, 'emails')
+    ? `
 CRITICAL urgency:
 ${formatEmails(critical)}
 
@@ -158,7 +178,12 @@ MEDIUM urgency:
 ${formatEmails(medium)}
 
 LOW urgency:
-${formatEmails(low)}`;
+${formatEmails(low)}`
+    : '';
+
+  return `Generate the morning briefing for today.
+
+${statsBlock}${overnightSection}${productionSection}${adminOpsSection}${calendarSection}${devRequestsSection}${emailsBlock}`;
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -172,13 +197,14 @@ export async function generateBriefing(
   userContext?: UserBriefingContext,
   pendingDevRequests?: string,
   adminOps?: AdminOpsSections,
+  sections?: Set<string>,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
   const client = anthropicClient;
-  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps);
+  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps, sections);
   const systemPrompt = getBriefingSystemPrompt(userContext);
 
   const response = await client.messages.create({
