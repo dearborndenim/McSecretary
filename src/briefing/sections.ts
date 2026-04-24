@@ -22,6 +22,33 @@ export const VALID_BRIEFING_SECTIONS = [
 
 export type BriefingSectionName = (typeof VALID_BRIEFING_SECTIONS)[number];
 
+/**
+ * One-line human-friendly descriptions used by `/briefing-sections --list`
+ * (Task 7 polish, 2026-04-23). Keys MUST stay in lockstep with
+ * VALID_BRIEFING_SECTIONS — schema-drift protection is exercised by the
+ * test suite.
+ */
+export const BRIEFING_SECTION_DESCRIPTIONS: Record<BriefingSectionName, string> = {
+  overnight_dev: 'Overnight AI agent empire build report from NIGHTLY_PLAN.md.',
+  production:    'Factory production numbers and trends from piece-work-scanner.',
+  admin_ops:     'Inventory on hand, uninvoiced PO totals, and WIP (admin only).',
+  calendar:      "Today's schedule, conflicts, and free time blocks.",
+  dev_requests:  'Pending team dev requests awaiting admin review.',
+  emails:        'Critical / high / medium / low urgency email triage list.',
+  stats:         'Counts: emails processed, auto-archived, flagged for review.',
+};
+
+/**
+ * Render the canonical section list with one-line descriptions, one per line.
+ * Used by `/briefing-sections --list` (no --user) so the admin can see every
+ * supported section name without crawling source.
+ */
+export function formatSectionListWithDescriptions(): string {
+  return VALID_BRIEFING_SECTIONS
+    .map((name) => `- ${name}: ${BRIEFING_SECTION_DESCRIPTIONS[name]}`)
+    .join('\n');
+}
+
 /** Case-sensitive membership check — section names are lower_snake_case. */
 export function isValidBriefingSection(name: string): name is BriefingSectionName {
   return (VALID_BRIEFING_SECTIONS as readonly string[]).includes(name);
