@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-22)
+## Current Reality (last updated: 2026-04-23)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -44,7 +44,37 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 95% → Full Secretary
-Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run + `/briefing-sections --user=<name> (--set=<csv> | --reset)` per-user personalization + `/onboarding-status [--pending-only]`. 414 tests passing (19 new 2026-04-22). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list)` / `/briefing-sections --list` per-user personalization with **section-order honored from stored array** + `/onboarding-status [--pending-only]`. 431 tests passing (17 new 2026-04-23). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-23: Briefing UX Polish — `--list` flag + preview override + per-section ordering
+Merged branch `nightly-2026-04-23-briefing-ux-polish` to main. 17 new tests (414 → 431 passing), 0 failures, typecheck clean.
+
+**Sub-task 1 — `/briefing-sections --list`:**
+- New mutually-exclusive `--list` action on `/briefing-sections`. Bare (`/briefing-sections --list`) prints the canonical catalog of valid section names, one bullet per name with a one-line description (sourced from new `BRIEFING_SECTION_DESCRIPTIONS` map in `src/briefing/sections.ts`). With `--user=<name>` it prints that user's stored `briefing_sections_json` value or `(default: full briefing)` when NULL.
+- Parser update: `parseBriefingSectionsCommand` now treats `--set` / `--reset` / `--list` as mutually exclusive (exactly one required). `--user` is required for `--set` and `--reset` but OPTIONAL for `--list` (bare `--list` is the catalog form). Order-independent.
+- New `formatSectionListWithDescriptions()` helper — used by the `--list` (no `--user`) branch. Schema-drift test asserts every `VALID_BRIEFING_SECTIONS` entry has a description and vice versa.
+
+**Sub-task 2 — `/briefing-preview --sections=<csv> --user=<name>` combined:**
+- The handler already wired both flags through `runTriage` correctly (target user + override sections); polish work added explicit tests for: parse order, preview path does NOT persist (source-grep asserts no `setUserBriefingSections` call inside `/briefing-preview` handler block), user without stored pref + override produces filtered prompt, invalid section in csv hits the same error path used by the bare-sections form.
+
+**Sub-task 3 — Per-section ordering preference:**
+- `buildBriefingPrompt` now accepts `BriefingSectionFilter = readonly string[] | Set<string>`. When an array is passed, the prompt assembles section blocks in the array's order. `Set<string>` and `undefined` fall back to the canonical default order (`stats, overnight_dev, production, admin_ops, calendar, dev_requests, emails`) — the historical pre-2026-04-23 behavior, preserved byte-for-byte.
+- `triage.ts` no longer wraps `options.sections` in a `Set` — the array is forwarded as-is so the user's stored ORDER survives end-to-end from the 5 AM scheduler through to the prompt.
+- Defense-in-depth: unknown section names in the array are silently dropped during render (handler validates first, but a stale stored pref containing a removed section name cannot crash 5 AM).
+- CLAUDE.md updated to document order semantics and the new `--list` form.
+
+**Files modified:**
+- `src/briefing/sections.ts` — `BRIEFING_SECTION_DESCRIPTIONS` + `formatSectionListWithDescriptions()`
+- `src/briefing/sections-command.ts` — `--list` flag + mutual-exclusion enforcement
+- `src/briefing/generator.ts` — `BriefingSectionFilter` union, `resolveSectionOrder` helper, ordered block assembly via `blocksByName` map
+- `src/triage.ts` — forwards array (not Set) so order survives end-to-end
+- `src/index.ts` — `/briefing-sections --list` handler branch (admin-gated)
+- `CLAUDE.md` — `--list` form + ordering semantics + preview override note
+- `tests/briefing/briefing-ux-polish.test.ts` — new (17 tests)
+
+**No new env vars. No schema changes. Zero regression in 414 prior tests; ET/PT scheduler regression suite (19 tests) still passes.**
+
+
 
 ### 2026-04-22: Briefing Personalization — `--sections` filter + per-user `briefing_sections_json`
 Merged branch `briefing-personalization` to main. 19 new tests (395 → 414 passing), 0 failures, typecheck clean.

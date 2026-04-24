@@ -373,14 +373,18 @@ export async function runTriage(
     }
 
     console.log('Generating morning briefing...');
-    const sectionsSet = options?.sections && options.sections.length > 0
-      ? new Set(options.sections)
+    // Preserve array ORDER when passing to the renderer (Task 7 polish,
+    // 2026-04-23). Previously this was wrapped in a Set, which silently
+    // discarded the user's stored ordering. Now the array order from
+    // `briefing_sections_json` drives the section sequence in the prompt.
+    const sectionsOrdered = options?.sections && options.sections.length > 0
+      ? options.sections
       : undefined;
     briefing = await generateBriefing(allClassified, {
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsSet);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

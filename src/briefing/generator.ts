@@ -45,19 +45,61 @@ export interface AdminOpsSections {
 }
 
 /**
+ * Default render order — used when no explicit per-user section preference
+ * is supplied (Task 7 polish, 2026-04-23). Pre-2026-04-23 behavior was to
+ * concatenate sections in this exact sequence; preserving the legacy default
+ * means every user without `briefing_sections_json` sees their briefing in
+ * the historical order.
+ */
+const DEFAULT_BRIEFING_SECTION_ORDER: readonly string[] = [
+  'stats',
+  'overnight_dev',
+  'production',
+  'admin_ops',
+  'calendar',
+  'dev_requests',
+  'emails',
+];
+
+export type BriefingSectionFilter = readonly string[] | Set<string>;
+
+/**
  * Section-filter helper for Task 7 (2026-04-22).
  *
  * - `undefined` (default) → render every section whose data is provided.
  *   This is the legacy behavior and must be preserved for every user who
  *   has not set `briefing_sections_json`.
- * - `Set<string>` of section names → render ONLY those sections. Stats is
- *   always included in the prompt body even when filtered out because the
- *   emails block reads from `stats` in its header line; filtering `stats`
- *   only suppresses the "Stats:" preamble block.
+ * - `Set<string>` of section names → render ONLY those sections. Order is
+ *   the canonical default order (Set has no meaningful order).
+ * - `readonly string[]` of section names (Task 7 polish, 2026-04-23) →
+ *   render ONLY those sections AND honor the array's order. Unknown names
+ *   are silently dropped (defense in depth — handler validates first).
+ *
+ * Stats is always included in the prompt body even when filtered out because
+ * the emails block reads from `stats` in its header line; filtering `stats`
+ * only suppresses the "Stats:" preamble block.
  */
-function sectionEnabled(sections: Set<string> | undefined, name: string): boolean {
+function sectionEnabled(sections: BriefingSectionFilter | undefined, name: string): boolean {
   if (sections === undefined) return true;
-  return sections.has(name);
+  if (sections instanceof Set) return sections.has(name);
+  return sections.includes(name);
+}
+
+/**
+ * Resolve the order in which section blocks should be concatenated.
+ *
+ * - `undefined` → canonical default order.
+ * - `Set<string>` → canonical default order intersected with the set
+ *   (Sets are not user-ordered preferences).
+ * - `readonly string[]` → honor the array order. Unknown names are dropped
+ *   so a stale stored pref can't surface a section that no longer exists.
+ */
+function resolveSectionOrder(sections: BriefingSectionFilter | undefined): readonly string[] {
+  if (sections === undefined) return DEFAULT_BRIEFING_SECTION_ORDER;
+  if (sections instanceof Set) {
+    return DEFAULT_BRIEFING_SECTION_ORDER.filter((name) => sections.has(name));
+  }
+  return sections.filter((name) => DEFAULT_BRIEFING_SECTION_ORDER.includes(name));
 }
 
 export function buildBriefingPrompt(
@@ -69,7 +111,7 @@ export function buildBriefingPrompt(
   userContext?: UserBriefingContext,
   pendingDevRequests?: string,
   adminOps?: AdminOpsSections,
-  sections?: Set<string>,
+  sections?: BriefingSectionFilter,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -181,9 +223,31 @@ LOW urgency:
 ${formatEmails(low)}`
     : '';
 
+  // Section name → rendered block. Empty strings are dropped during assembly
+  // (a section with no data — e.g., no calendar fixture — should not produce
+  // an empty header). This map is the single source of truth for the link
+  // between a section name and its rendered prompt fragment.
+  const blocksByName: Record<string, string> = {
+    stats: statsBlock,
+    overnight_dev: overnightSection,
+    production: productionSection,
+    admin_ops: adminOpsSection,
+    calendar: calendarSection,
+    dev_requests: devRequestsSection,
+    emails: emailsBlock,
+  };
+
+  // Honor the user's stored array order when supplied; otherwise fall back
+  // to the canonical default order so legacy behavior is byte-identical.
+  const order = resolveSectionOrder(sections);
+  const body = order
+    .map((name) => blocksByName[name])
+    .filter((block): block is string => typeof block === 'string' && block.length > 0)
+    .join('');
+
   return `Generate the morning briefing for today.
 
-${statsBlock}${overnightSection}${productionSection}${adminOpsSection}${calendarSection}${devRequestsSection}${emailsBlock}`;
+${body}`;
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -197,7 +261,7 @@ export async function generateBriefing(
   userContext?: UserBriefingContext,
   pendingDevRequests?: string,
   adminOps?: AdminOpsSections,
-  sections?: Set<string>,
+  sections?: BriefingSectionFilter,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');

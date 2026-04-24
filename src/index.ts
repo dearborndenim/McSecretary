@@ -889,18 +889,40 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
-  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset) —
-  // write or clear the per-user `briefing_sections_json` preference. When
-  // set, that user's daily 5 AM briefing renders ONLY those sections. When
-  // cleared (NULL), they revert to the default all-sections behavior.
+  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset | --list)
+  // OR /briefing-sections --list — write, clear, or read the per-user
+  // `briefing_sections_json` preference. When set, that user's daily 5 AM
+  // briefing renders ONLY those sections in the stored array order. When
+  // cleared (NULL), they revert to the default all-sections behavior. The
+  // `--list` form is read-only: with --user it shows that user's stored
+  // pref; bare it shows the canonical catalog of valid section names.
   if (user.role === 'admin') {
     const { parseBriefingSectionsCommand } = await import('./briefing/sections-command.js');
     const parsedSections = parseBriefingSectionsCommand(text);
     if (parsedSections.matched) {
       try {
         const { findUserByFirstName } = await import('./briefing/preview-command.js');
-        const { parseSectionList, formatValidSectionsList } = await import('./briefing/sections.js');
-        const { setUserBriefingSections } = await import('./db/user-queries.js');
+        const { parseSectionList, formatValidSectionsList, formatSectionListWithDescriptions } =
+          await import('./briefing/sections.js');
+        const { setUserBriefingSections, getUserBriefingSections } = await import('./db/user-queries.js');
+
+        // --list path: read-only. Bare → catalog. With --user → that user's pref.
+        if (parsedSections.list) {
+          if (!parsedSections.targetName) {
+            return `Valid briefing sections:\n${formatSectionListWithDescriptions()}`;
+          }
+          const target = findUserByFirstName(db, parsedSections.targetName);
+          if (!target) {
+            return `No user named "${parsedSections.targetName}" found.`;
+          }
+          const stored = getUserBriefingSections(db, target.id);
+          if (!stored || stored.length === 0) {
+            return `${target.name} briefing-sections preference: (default: full briefing)`;
+          }
+          return `${target.name} briefing-sections preference: ${stored.join(', ')}`;
+        }
+
+        // --set / --reset path: requires --user (parser already enforces this).
         const targetName = parsedSections.targetName as string;
         const target = findUserByFirstName(db, targetName);
         if (!target) {
