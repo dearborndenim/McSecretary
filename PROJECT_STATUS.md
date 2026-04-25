@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-23)
+## Current Reality (last updated: 2026-04-24)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -44,7 +44,41 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 95% → Full Secretary
-Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list)` / `/briefing-sections --list` per-user personalization with **section-order honored from stored array** + `/onboarding-status [--pending-only]`. 431 tests passing (17 new 2026-04-23). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff)` / `/briefing-sections --list` / `/briefing-sections --set-all=<csv> --apply-to=all` per-user + bulk personalization with **section-order honored from stored array** + `/onboarding-status [--pending-only]`. 453 tests passing (22 new 2026-04-24). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-24: Briefing UX Polish 2 — `--diff` + `--set-all/--apply-to` bulk-set
+Merged branch `nightly-2026-04-24` to main. 22 new tests (431 → 453 passing), 0 failures, typecheck clean.
+
+**Sub-task 1 — `/briefing-sections --diff --user=<name>`:**
+- New mutually-exclusive `--diff` action on the parser. Requires `--user` (per-user op, no bare form). Combined with any other action (`--set` / `--reset` / `--list` / `--set-all`) → reject.
+- Output (partial pref): four lines — `User: <Name>`, `Current: <stored csv>`, `Missing: <canonical-minus-stored csv or (none)>`, `Order: [<stored csv>]`. The Missing list iterates `VALID_BRIEFING_SECTIONS` so its order is canonical, not the user's order.
+- Output (NULL pref): three lines — `User: <Name>`, `Current: (default: full briefing)`, `Missing: (none)`. No `Order:` line (no stored array to echo).
+- Unknown user: `User '<name>' not found. Use /onboarding-status for the list.` (different shape from the `--list`/`--set`/`--reset` paths' `No user named "<name>" found.` — intentionally specific to `--diff` per the task spec).
+- Defense-in-depth: stale stored prefs containing removed section names are silently filtered before the diff is computed, so `Current:` / `Order:` never leak unknown tokens.
+
+**Sub-task 2 — `/briefing-sections --set-all=<csv> --apply-to=all`:**
+- New mutually-exclusive `--set-all` action. Parser enforces: must be paired with `--apply-to=all` (any other value rejected, missing → reject), no `--user` (orphan param rejected), `--apply-to` orphan (without `--set-all`) also rejected.
+- Validation reuses the same `parseSectionList` + `formatValidSectionsList` helpers the per-user `--set` path uses, so the error shape is byte-identical (`Invalid section name(s): X. Valid sections: ...`).
+- Targets `getActiveUsers(db)` (briefing_enabled=1) — that's the "onboarded" population the morning-briefing scheduler actually iterates.
+- Output: `Updated N users: A, B, C[, ...and K more]. Sections: <csv>.` Lists up to 20 names alphabetically as returned by SQLite. The `...and K more` tail fires only when N > 20.
+- No `--dry-run` flag (kept the parser surface clean per the task brief).
+
+**Tests (22 new, all in `tests/briefing/briefing-ux-polish-2.test.ts`):**
+- Parser `--diff`: happy path, flag-order independence, mutual exclusion vs every sibling action, requires `--user`.
+- Parser `--set-all`: happy path, flag-order independence, missing `--apply-to` → reject, `--apply-to` other than `all` → reject, orphan `--apply-to` without `--set-all` → reject, combined with `--user` → reject.
+- Parser regression: bare `/briefing-sections` rejected, `--user` alone rejected, all four pre-existing forms (`--set`, `--reset`, `--list` bare, `--list --user`) still match.
+- `--diff` output: partial pref (matches the spec's exact format), NULL pref, unknown user, ALL sections (Missing: (none)), unknown stored section names dropped.
+- `--set-all` DB round-trip: 3-user fixture, every user gets the same array via `setUserBriefingSections`, summary lists all names.
+- `--set-all` truncation: 25-user fixture, summary shows exactly 20 names then `...and 5 more`.
+- Source-grep wiring on `src/index.ts`: `parsedSections.setAllRaw` branch uses `parseSectionList` + `formatValidSectionsList` + `setUserBriefingSections` + `getActiveUsers` + the canonical `Invalid section name(s):` error string; `parsedSections.diff` branch present + uses `Use /onboarding-status for the list.` + emits `Current: ` / `Missing: ` / `Order: ` lines; whole `/briefing-sections` handler block sits inside `if (user.role === 'admin')`.
+
+**Files modified:**
+- `src/briefing/sections-command.ts` — new `--diff` and `--set-all` / `--apply-to` flags + mutual-exclusion enforcement, `ParsedBriefingSectionsCommand` interface extended (`diff`, `setAllRaw`, `applyTo`)
+- `src/index.ts` — `--set-all` + `--diff` handler branches; existing `--list` / `--set` / `--reset` paths untouched
+- `CLAUDE.md` — updated `/briefing-sections` admin command reference for both new forms
+- `tests/briefing/briefing-ux-polish-2.test.ts` — new (22 tests)
+
+**No new env vars. No schema changes. Zero regression in 431 prior tests.**
 
 ### 2026-04-23: Briefing UX Polish — `--list` flag + preview override + per-section ordering
 Merged branch `nightly-2026-04-23-briefing-ux-polish` to main. 17 new tests (414 → 431 passing), 0 failures, typecheck clean.
