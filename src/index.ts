@@ -889,22 +889,59 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
-  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset | --list)
-  // OR /briefing-sections --list — write, clear, or read the per-user
-  // `briefing_sections_json` preference. When set, that user's daily 5 AM
-  // briefing renders ONLY those sections in the stored array order. When
-  // cleared (NULL), they revert to the default all-sections behavior. The
-  // `--list` form is read-only: with --user it shows that user's stored
-  // pref; bare it shows the canonical catalog of valid section names.
+  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff)
+  // OR /briefing-sections --list
+  // OR /briefing-sections --set-all=<csv> --apply-to=all
+  //
+  // Read, write, clear, diff, or bulk-set the per-user `briefing_sections_json`
+  // preference. When set, that user's daily 5 AM briefing renders ONLY those
+  // sections in the stored array order. When cleared (NULL), they revert to
+  // the default all-sections behavior.
+  //
+  // Forms:
+  //   --list                     → canonical catalog (no --user)
+  //   --user --list              → that user's stored pref
+  //   --user --set=<csv>         → write
+  //   --user --reset             → clear (NULL)
+  //   --user --diff              → user's pref vs full briefing (missing sections + order)
+  //   --set-all=<csv> --apply-to=all → bulk-write to every onboarded user
   if (user.role === 'admin') {
     const { parseBriefingSectionsCommand } = await import('./briefing/sections-command.js');
     const parsedSections = parseBriefingSectionsCommand(text);
     if (parsedSections.matched) {
       try {
         const { findUserByFirstName } = await import('./briefing/preview-command.js');
-        const { parseSectionList, formatValidSectionsList, formatSectionListWithDescriptions } =
-          await import('./briefing/sections.js');
-        const { setUserBriefingSections, getUserBriefingSections } = await import('./db/user-queries.js');
+        const {
+          parseSectionList,
+          formatValidSectionsList,
+          formatSectionListWithDescriptions,
+          VALID_BRIEFING_SECTIONS,
+        } = await import('./briefing/sections.js');
+        const {
+          setUserBriefingSections,
+          getUserBriefingSections,
+          getActiveUsers,
+        } = await import('./db/user-queries.js');
+
+        // --set-all path: bulk-set every onboarded user. No --user.
+        if (parsedSections.setAllRaw !== undefined) {
+          const { valid, invalid } = parseSectionList(parsedSections.setAllRaw);
+          if (invalid.length > 0) {
+            return `Invalid section name(s): ${invalid.join(', ')}. Valid sections: ${formatValidSectionsList()}.`;
+          }
+          if (valid.length === 0) {
+            return `No valid sections provided. Valid sections: ${formatValidSectionsList()}.`;
+          }
+          const onboarded = getActiveUsers(db);
+          for (const u of onboarded) {
+            setUserBriefingSections(db, u.id, valid);
+          }
+          const names = onboarded.map((u) => u.name);
+          const shown = names.slice(0, 20);
+          const extra = names.length - shown.length;
+          const tail = extra > 0 ? `, ...and ${extra} more` : '';
+          return `Updated ${onboarded.length} users: ${shown.join(', ')}${tail}. Sections: ${valid.join(', ')}.`;
+        }
 
         // --list path: read-only. Bare → catalog. With --user → that user's pref.
         if (parsedSections.list) {
@@ -920,6 +957,38 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
             return `${target.name} briefing-sections preference: (default: full briefing)`;
           }
           return `${target.name} briefing-sections preference: ${stored.join(', ')}`;
+        }
+
+        // --diff path: read-only. Requires --user. Shows user's pref vs full briefing
+        // (current sections, missing sections, render order).
+        if (parsedSections.diff) {
+          const targetName = parsedSections.targetName as string;
+          const target = findUserByFirstName(db, targetName);
+          if (!target) {
+            return `User '${targetName}' not found. Use /onboarding-status for the list.`;
+          }
+          const stored = getUserBriefingSections(db, target.id);
+          if (!stored || stored.length === 0) {
+            return [
+              `User: ${target.name}`,
+              `Current: (default: full briefing)`,
+              `Missing: (none)`,
+            ].join('\n');
+          }
+          // Filter the stored array to only known sections (defense-in-depth so
+          // a stale pref containing a removed section name doesn't poison output).
+          const storedKnown = stored.filter((s): s is string =>
+            (VALID_BRIEFING_SECTIONS as readonly string[]).includes(s),
+          );
+          const missing = (VALID_BRIEFING_SECTIONS as readonly string[]).filter(
+            (s) => !storedKnown.includes(s),
+          );
+          return [
+            `User: ${target.name}`,
+            `Current: ${storedKnown.join(', ')}`,
+            `Missing: ${missing.length === 0 ? '(none)' : missing.join(', ')}`,
+            `Order: [${storedKnown.join(', ')}]`,
+          ].join('\n');
         }
 
         // --set / --reset path: requires --user (parser already enforces this).
