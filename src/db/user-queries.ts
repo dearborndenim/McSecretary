@@ -309,3 +309,77 @@ export function setUserBriefingSections(
   db.prepare("UPDATE users SET briefing_sections_json = ?, updated_at = datetime('now') WHERE id = ?")
     .run(value, userId);
 }
+
+// ============================================================================
+// Briefing-sections audit log (2026-04-25, Task 6 — UX polish 3).
+//
+// Every successful preference write (--set / --reset / --set-all / --clone-from)
+// records a row here so the admin can audit who changed what and when. The
+// daily 7 AM digest reads this table for ts >= now-24h.
+// ============================================================================
+
+export type BriefingSectionsAuditAction =
+  | 'set'
+  | 'reset'
+  | 'set-all'
+  | 'clone-from';
+
+export interface BriefingSectionsAuditRow {
+  id: number;
+  ts: string;
+  user_name: string;
+  action: BriefingSectionsAuditAction;
+  source_user: string | null;
+  sections_json: string | null;
+  actor: string;
+}
+
+export interface InsertBriefingSectionsAuditInput {
+  ts?: string; // ISO; defaults to current ISO time at row insert
+  user_name: string;
+  action: BriefingSectionsAuditAction;
+  source_user?: string | null;
+  sections_json?: string | null;
+  actor?: string;
+}
+
+/**
+ * Insert one audit row. Callers wrap the call in try/catch so a transient
+ * audit-write failure never breaks the parent /briefing-sections handler.
+ */
+export function insertBriefingSectionsAudit(
+  db: Database.Database,
+  input: InsertBriefingSectionsAuditInput,
+): void {
+  const ts = input.ts ?? new Date().toISOString();
+  db.prepare(
+    `INSERT INTO briefing_sections_audit
+       (ts, user_name, action, source_user, sections_json, actor)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    ts,
+    input.user_name,
+    input.action,
+    input.source_user ?? null,
+    input.sections_json ?? null,
+    input.actor ?? 'admin',
+  );
+}
+
+/**
+ * Return audit rows whose `ts` is >= the given ISO cutoff, newest first. Used
+ * by the daily 7 AM digest to summarize the last 24h of preference changes.
+ */
+export function getBriefingSectionsAuditSince(
+  db: Database.Database,
+  cutoffIso: string,
+): BriefingSectionsAuditRow[] {
+  return db
+    .prepare(
+      `SELECT id, ts, user_name, action, source_user, sections_json, actor
+       FROM briefing_sections_audit
+       WHERE ts >= ?
+       ORDER BY ts DESC, id DESC`,
+    )
+    .all(cutoffIso) as BriefingSectionsAuditRow[];
+}

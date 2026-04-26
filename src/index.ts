@@ -363,6 +363,43 @@ async function handleTaskPolling(): Promise<void> {
   }
 }
 
+/**
+ * Daily 7 AM CT job — summarize the last 24h of /briefing-sections preference
+ * changes. Empty result → silent (no message). Populated result → message is
+ * delivered to the admin (Telegram by default, or to BRIEFING_AUDIT_DIGEST_RECIPIENT
+ * when set as an email address — wiring TBD; for now we always log + Telegram).
+ * Opt-out via `DISABLE_BRIEFING_AUDIT_DIGEST=1`.
+ */
+async function handleBriefingSectionsAuditDigest(): Promise<void> {
+  console.log('Running briefing-sections audit digest...');
+  try {
+    const { runBriefingSectionsAuditDigest } = await import(
+      './briefing/sections-audit-digest.js'
+    );
+    const result = runBriefingSectionsAuditDigest(db);
+    if (!result.ran || result.message === null) {
+      console.log(`Briefing-audit digest skipped: ${result.reason ?? 'unknown'}`);
+      return;
+    }
+    const recipient = process.env.BRIEFING_AUDIT_DIGEST_RECIPIENT ?? '';
+    const header = `[Briefing-sections audit — last 24h]`;
+    const body = `${header}\n${result.message}`;
+    console.log(body);
+    if (recipient.length > 0) {
+      // Recipient configured — send via Telegram broadcast (admin chat). The
+      // explicit recipient knob lets ops route to a different surface later
+      // (e.g. a dedicated audit channel) without code changes.
+      await sendMessage(body, false).catch(() => {});
+    } else {
+      // No recipient → log only. Safe default for new deploys.
+      console.log('BRIEFING_AUDIT_DIGEST_RECIPIENT unset — log-only.');
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Briefing-audit digest failed:', msg);
+  }
+}
+
 async function handleInviteReminders(): Promise<void> {
   console.log('Running 48h invite reminders...');
   try {
@@ -889,14 +926,14 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     }
   }
 
-  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff)
+  // Admin-only: /briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff | --clone-from=<src>)
   // OR /briefing-sections --list
   // OR /briefing-sections --set-all=<csv> --apply-to=all
   //
-  // Read, write, clear, diff, or bulk-set the per-user `briefing_sections_json`
-  // preference. When set, that user's daily 5 AM briefing renders ONLY those
-  // sections in the stored array order. When cleared (NULL), they revert to
-  // the default all-sections behavior.
+  // Read, write, clear, diff, clone, or bulk-set the per-user
+  // `briefing_sections_json` preference. When set, that user's daily 5 AM
+  // briefing renders ONLY those sections in the stored array order. When
+  // cleared (NULL), they revert to the default all-sections behavior.
   //
   // Forms:
   //   --list                     → canonical catalog (no --user)
@@ -904,6 +941,7 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
   //   --user --set=<csv>         → write
   //   --user --reset             → clear (NULL)
   //   --user --diff              → user's pref vs full briefing (missing sections + order)
+  //   --user=<target> --clone-from=<src> → copy src's pref onto target
   //   --set-all=<csv> --apply-to=all → bulk-write to every onboarded user
   if (user.role === 'admin') {
     const { parseBriefingSectionsCommand } = await import('./briefing/sections-command.js');
@@ -921,7 +959,23 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           setUserBriefingSections,
           getUserBriefingSections,
           getActiveUsers,
+          insertBriefingSectionsAudit,
         } = await import('./db/user-queries.js');
+
+        // Helper — best-effort audit write; never propagates errors.
+        const writeAudit = (input: {
+          user_name: string;
+          action: 'set' | 'reset' | 'set-all' | 'clone-from';
+          source_user?: string | null;
+          sections_json?: string | null;
+        }): void => {
+          try {
+            insertBriefingSectionsAudit(db, input);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`briefing_sections_audit write failed: ${msg}`);
+          }
+        };
 
         // --set-all path: bulk-set every onboarded user. No --user.
         if (parsedSections.setAllRaw !== undefined) {
@@ -936,11 +990,73 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           for (const u of onboarded) {
             setUserBriefingSections(db, u.id, valid);
           }
+          // Audit one row per affected user so the digest reports the full set.
+          const sectionsJson = JSON.stringify(valid);
+          for (const u of onboarded) {
+            writeAudit({
+              user_name: u.name,
+              action: 'set-all',
+              sections_json: sectionsJson,
+            });
+          }
           const names = onboarded.map((u) => u.name);
           const shown = names.slice(0, 20);
           const extra = names.length - shown.length;
           const tail = extra > 0 ? `, ...and ${extra} more` : '';
           return `Updated ${onboarded.length} users: ${shown.join(', ')}${tail}. Sections: ${valid.join(', ')}.`;
+        }
+
+        // --clone-from path: copy <src>'s pref onto <target>. Requires --user=<target>.
+        if (parsedSections.cloneFrom !== undefined) {
+          const targetName = parsedSections.targetName as string;
+          const srcName = parsedSections.cloneFrom;
+          // Self-clone is a no-op error — friendly message.
+          if (targetName.trim().toLowerCase() === srcName.trim().toLowerCase()) {
+            return `Cannot clone-from self.`;
+          }
+          const src = findUserByFirstName(db, srcName);
+          if (!src) {
+            return `User '${srcName}' not found.`;
+          }
+          const target = findUserByFirstName(db, targetName);
+          if (!target) {
+            return `User '${targetName}' not found.`;
+          }
+          const srcStored = getUserBriefingSections(db, src.id);
+          if (!srcStored || srcStored.length === 0) {
+            // Source has NULL prefs (default full briefing) — write NULL on target.
+            setUserBriefingSections(db, target.id, null);
+            writeAudit({
+              user_name: target.name,
+              action: 'clone-from',
+              source_user: src.name,
+              sections_json: null,
+            });
+            return `Cloned briefing prefs from '${src.name}' to '${target.name}'. Sections: (default: full briefing)`;
+          }
+          // Filter to known sections so a stale src pref containing a removed
+          // section name can't be propagated forward.
+          const valid = srcStored.filter((s): s is string =>
+            (VALID_BRIEFING_SECTIONS as readonly string[]).includes(s),
+          );
+          if (valid.length === 0) {
+            setUserBriefingSections(db, target.id, null);
+            writeAudit({
+              user_name: target.name,
+              action: 'clone-from',
+              source_user: src.name,
+              sections_json: null,
+            });
+            return `Cloned briefing prefs from '${src.name}' to '${target.name}'. Sections: (default: full briefing)`;
+          }
+          setUserBriefingSections(db, target.id, valid);
+          writeAudit({
+            user_name: target.name,
+            action: 'clone-from',
+            source_user: src.name,
+            sections_json: JSON.stringify(valid),
+          });
+          return `Cloned briefing prefs from '${src.name}' to '${target.name}'. Sections: ${valid.join(', ')}`;
         }
 
         // --list path: read-only. Bare → catalog. With --user → that user's pref.
@@ -999,6 +1115,11 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         }
         if (parsedSections.reset) {
           setUserBriefingSections(db, target.id, null);
+          writeAudit({
+            user_name: target.name,
+            action: 'reset',
+            sections_json: null,
+          });
           return `Cleared briefing-sections preference for ${target.name}. They will receive the full briefing.`;
         }
         const { valid, invalid } = parseSectionList(parsedSections.setRaw ?? '');
@@ -1009,6 +1130,11 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           return `No valid sections provided. Valid sections: ${formatValidSectionsList()}.`;
         }
         setUserBriefingSections(db, target.id, valid);
+        writeAudit({
+          user_name: target.name,
+          action: 'set',
+          sections_json: JSON.stringify(valid),
+        });
         return `Set briefing sections for ${target.name}: ${valid.join(', ')}.`;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1340,6 +1466,7 @@ async function main() {
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
     { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },
     { name: 'Invite Reminders', schedule: '0 9 * * *', handler: handleInviteReminders, description: 'Daily 9 AM — resend invite to entries >48h old with no /start' },
+    { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
   ]);
   startSchedulerFromDb(db);
 

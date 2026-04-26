@@ -76,6 +76,25 @@ export function initializeUserSchema(db: Database.Database): void {
     db.exec('ALTER TABLE users ADD COLUMN briefing_sections_json TEXT');
   }
 
+  // Briefing-sections audit log (2026-04-25, Task 6 — UX polish 3).
+  // Every successful write to `users.briefing_sections_json` writes a row
+  // here so the admin can audit who changed what and when. The row is
+  // best-effort — write failures are caught and logged in the handler so
+  // they never break the parent /briefing-sections command.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS briefing_sections_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      user_name TEXT NOT NULL,
+      action TEXT NOT NULL,
+      source_user TEXT,
+      sections_json TEXT,
+      actor TEXT NOT NULL DEFAULT 'admin'
+    );
+    CREATE INDEX IF NOT EXISTS idx_briefing_sections_audit_ts
+      ON briefing_sections_audit(ts);
+  `);
+
   // Add synced_at to dev_requests (idempotent)
   const devCols = db.prepare('PRAGMA table_info(dev_requests)').all() as { name: string }[];
   if (!devCols.some((c) => c.name === 'synced_at')) {
