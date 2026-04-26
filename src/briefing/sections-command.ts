@@ -13,6 +13,9 @@
  *   /briefing-sections --user=<name> --diff      → user's pref vs full briefing
  *   /briefing-sections --set-all=<csv> --apply-to=all → bulk-set all onboarded users
  *
+ * Polish 2026-04-25 added clone-from:
+ *   /briefing-sections --user=<target> --clone-from=<src> → copy src's pref onto target
+ *
  * Parser is pure — it does NOT validate section names against
  * VALID_BRIEFING_SECTIONS (that happens in the handler after the parser
  * result is known, so we can emit a helpful "invalid section(s)" error
@@ -46,6 +49,12 @@ export interface ParsedBriefingSectionsCommand {
   setAllRaw?: string;
   /** Value of the `--apply-to=<scope>` flag. Currently must be `all` when set. */
   applyTo?: string;
+  /**
+   * Source user name from `--clone-from=<name>`. Present only when the
+   * `--clone-from=` form matched. Must be paired with `--user=<target>` (and
+   * the target must differ from the source — handler enforces).
+   */
+  cloneFrom?: string;
 }
 
 export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSectionsCommand {
@@ -68,9 +77,15 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
   let diff = false;
   let setAllRaw: string | undefined;
   let applyTo: string | undefined;
+  let cloneFrom: string | undefined;
 
   const conflictsWithAction = () =>
-    setRaw !== undefined || reset || list || diff || setAllRaw !== undefined;
+    setRaw !== undefined ||
+    reset ||
+    list ||
+    diff ||
+    setAllRaw !== undefined ||
+    cloneFrom !== undefined;
 
   for (const token of tokens) {
     const userMatch = token.match(/^--user=(.+)$/i);
@@ -97,6 +112,12 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
       setRaw = setMatch[1];
       continue;
     }
+    const cloneFromMatch = token.match(/^--clone-from=(.+)$/i);
+    if (cloneFromMatch && cloneFromMatch[1] && cloneFromMatch[1].length > 0) {
+      if (conflictsWithAction()) return { matched: false };
+      cloneFrom = cloneFromMatch[1];
+      continue;
+    }
     if (/^--reset$/i.test(token)) {
       if (conflictsWithAction()) return { matched: false };
       reset = true;
@@ -121,7 +142,8 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     (reset ? 1 : 0) +
     (list ? 1 : 0) +
     (diff ? 1 : 0) +
-    (setAllRaw !== undefined ? 1 : 0);
+    (setAllRaw !== undefined ? 1 : 0) +
+    (cloneFrom !== undefined ? 1 : 0);
   if (actionCount !== 1) return { matched: false };
 
   // --set-all REQUIRES --apply-to=all (and only "all").
@@ -134,8 +156,11 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     if (applyTo !== undefined) return { matched: false };
   }
 
-  // --list may appear bare (no --user). --set / --reset / --diff still require
-  // --user.
+  // --clone-from requires --user=<target> (different user from source).
+  if (cloneFrom !== undefined && targetName === undefined) return { matched: false };
+
+  // --list may appear bare (no --user). --set / --reset / --diff / --clone-from
+  // still require --user.
   if (!list && setAllRaw === undefined && !targetName) return { matched: false };
 
   return {
@@ -147,5 +172,6 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     diff: diff || undefined,
     setAllRaw,
     applyTo,
+    cloneFrom,
   };
 }

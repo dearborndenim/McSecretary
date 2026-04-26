@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-24)
+## Current Reality (last updated: 2026-04-25)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -44,7 +44,45 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 95% → Full Secretary
-Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff)` / `/briefing-sections --list` / `/briefing-sections --set-all=<csv> --apply-to=all` per-user + bulk personalization with **section-order honored from stored array** + `/onboarding-status [--pending-only]`. 453 tests passing (22 new 2026-04-24). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff | --clone-from=<src>)` / `/briefing-sections --list` / `/briefing-sections --set-all=<csv> --apply-to=all` per-user + bulk personalization with **section-order honored from stored array** + **`briefing_sections_audit` write on every preference change + daily 7 AM CT digest** + `/onboarding-status [--pending-only]`. 474 tests passing (21 new 2026-04-25). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-25: Briefing UX Polish 3 — `--clone-from` + audit log + daily 7 AM digest
+Merged branch `feature/briefing-ux-polish-3` to main. 21 new tests (453 → 474 passing), 0 failures, typecheck clean.
+
+**Sub-task 1 — `/briefing-sections --user=<target> --clone-from=<src>`:**
+- New mutually-exclusive `--clone-from` action on the parser. Requires `--user=<target>`. Combined with any other action (`--set` / `--reset` / `--list` / `--diff` / `--set-all`) → reject. Empty value → reject.
+- Behaviors: source not found → `User '<src>' not found.`; target not found → `User '<target>' not found.`; clone-to-self (case-insensitive, trimmed) → `Cannot clone-from self.`; NULL source pref (default full briefing) → writes NULL on target (resets target to default); populated source → copies the array verbatim onto target (defense-in-depth: filters out unknown stored section names so a stale src pref can't propagate forward). Success → `Cloned briefing prefs from '<src>' to '<target>'. Sections: <csv | (default: full briefing)>`.
+
+**Sub-task 2 — `briefing_sections_audit` table:**
+- Idempotent migration adds the table to `initializeUserSchema`. Columns: `id`, `ts` (ISO), `user_name`, `action` (`set`/`reset`/`set-all`/`clone-from`), `source_user` (nullable, only set for `clone-from`), `sections_json` (nullable, the new value being applied), `actor` (defaults to `'admin'`). Indexed on `ts` so the digest scan stays cheap.
+- New `insertBriefingSectionsAudit(db, input)` + `getBriefingSectionsAuditSince(db, cutoffIso)` helpers in `src/db/user-queries.ts`.
+- Every `--set` / `--reset` / `--set-all` / `--clone-from` path writes a row. The handler uses an inline `writeAudit()` closure wrapped in try/catch — audit-write failures log only and never break the parent command. `--set-all` writes one row per affected user so the digest reports the full set.
+
+**Sub-task 3 — Daily 7 AM CT `Briefing Audit Digest` scheduler job:**
+- New `src/briefing/sections-audit-digest.ts` with `runBriefingSectionsAuditDigest(db, deps?)` + `formatBriefingSectionsAuditDigest(rows, windowHours?)` pure helpers. Pulls audit rows where `ts >= now-24h`, groups by action, renders a text-only summary with per-row bullets (`Olivier → calendar, emails`, `Merab → (default: full briefing)`, `Rob ← cloned from Olivier → calendar, emails`, `Olivier (bulk) → stats`).
+- `src/index.ts` registers `Briefing Audit Digest` on cron `0 7 * * *` (Central Time via `TIMEZONE`). Empty case → silent (no message). Populated case → broadcast to admin via `sendMessage` when `BRIEFING_AUDIT_DIGEST_RECIPIENT` is set; log-only otherwise. Opt-out via `DISABLE_BRIEFING_AUDIT_DIGEST=1`.
+
+**Tests (21 new, all in `tests/briefing/briefing-ux-polish-3.test.ts`):**
+- Parser `--clone-from`: happy path, flag-order independence, requires `--user`, mutual exclusion vs every sibling action, empty value rejected, regression check on all 6 pre-existing forms.
+- Handler clone-from: happy path (verbatim copy), NULL source resets target, unknown source/target/self errors (target/source untouched on each error path), case-insensitive self-clone detection.
+- Audit log: row written for each of the 4 action types (`set`, `reset`, `set-all`, `clone-from`); clone-from row attributes both target (`user_name`) and source (`source_user`); `ts` cutoff correctly excludes rows older than the window.
+- Digest: empty case returns null + reason `empty`; populated case produces grouped digest with counts + per-row bullets; `DISABLE_BRIEFING_AUDIT_DIGEST=1` opt-out returns `disabled`; `set-all` rows grouped under their own header with `(bulk)` suffix.
+- Source-grep wiring on `src/index.ts`: clone-from branch admin-gated + uses friendly error strings; `writeAudit` helper invoked with each canonical action label; daily 7 AM CT digest job registered with cron `0 7 * * *`; `BRIEFING_AUDIT_DIGEST_RECIPIENT` env knob surfaced.
+
+**Files modified:**
+- `src/briefing/sections-command.ts` — `--clone-from` flag + `cloneFrom?: string` field on `ParsedBriefingSectionsCommand` + mutual-exclusion enforcement
+- `src/briefing/sections-audit-digest.ts` — new (formatter + runner)
+- `src/db/user-schema.ts` — idempotent `briefing_sections_audit` table + index
+- `src/db/user-queries.ts` — `BriefingSectionsAuditAction` / `BriefingSectionsAuditRow` types + `insertBriefingSectionsAudit` + `getBriefingSectionsAuditSince`
+- `src/index.ts` — `--clone-from` handler branch, `writeAudit()` closure on every action path, `handleBriefingSectionsAuditDigest` job + `Briefing Audit Digest` cron registration
+- `CLAUDE.md` — `/briefing-sections --clone-from` form + audit-digest env knobs documented
+- `tests/briefing/briefing-ux-polish-3.test.ts` — new (21 tests)
+
+**New env vars:**
+- `BRIEFING_AUDIT_DIGEST_RECIPIENT` — when set, the daily 7 AM CT digest is broadcast via Telegram. Unset → log-only (safe default).
+- `DISABLE_BRIEFING_AUDIT_DIGEST=1` — opt out of the daily 7 AM CT job entirely.
+
+**Schema change is additive + idempotent. Zero regression in 453 prior tests.**
 
 ### 2026-04-24: Briefing UX Polish 2 — `--diff` + `--set-all/--apply-to` bulk-set
 Merged branch `nightly-2026-04-24` to main. 22 new tests (431 → 453 passing), 0 failures, typecheck clean.
