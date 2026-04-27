@@ -960,12 +960,29 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           getUserBriefingSections,
           getActiveUsers,
           insertBriefingSectionsAudit,
+          getBriefingSectionsAuditForUserSince,
+          pruneBriefingSectionsAuditOlderThan,
         } = await import('./db/user-queries.js');
 
-        // Helper — best-effort audit write; never propagates errors.
+        // Audit-log retention — auto-prune rows older than the configured
+        // window before each insert. Default 90d, clamp [1, 3650]. Best-effort:
+        // any failure is logged and swallowed (never blocks the action).
+        const resolveRetentionDays = (): number => {
+          const raw = process.env.BRIEFING_AUDIT_RETENTION_DAYS;
+          const fallback = 90;
+          if (!raw) return fallback;
+          const parsed = Number.parseInt(raw, 10);
+          if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+          if (parsed < 1) return 1;
+          if (parsed > 3650) return 3650;
+          return parsed;
+        };
+
+        // Helper — best-effort audit write; never propagates errors. Also
+        // auto-prunes rows older than the retention window on every insert.
         const writeAudit = (input: {
           user_name: string;
-          action: 'set' | 'reset' | 'set-all' | 'clone-from';
+          action: 'set' | 'reset' | 'set-all' | 'clone-from' | 'revert';
           source_user?: string | null;
           sections_json?: string | null;
         }): void => {
@@ -974,6 +991,14 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`briefing_sections_audit write failed: ${msg}`);
+          }
+          try {
+            const days = resolveRetentionDays();
+            const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+            pruneBriefingSectionsAuditOlderThan(db, cutoff);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`briefing_sections_audit prune failed: ${msg}`);
           }
         };
 
@@ -1105,6 +1130,102 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
             `Missing: ${missing.length === 0 ? '(none)' : missing.join(', ')}`,
             `Order: [${storedKnown.join(', ')}]`,
           ].join('\n');
+        }
+
+        // --history path: read-only. Requires --user. Optional --days=N
+        // (default 7, clamp [1, 90] — audit rows older than 90d are pruned).
+        if (parsedSections.history) {
+          const targetName = parsedSections.targetName as string;
+          const target = findUserByFirstName(db, targetName);
+          if (!target) {
+            return `User '${targetName}' not found.`;
+          }
+          const requested = parsedSections.historyDays ?? 7;
+          const clamped = requested < 1 ? 1 : requested > 90 ? 90 : requested;
+          const cutoff = new Date(Date.now() - clamped * 24 * 60 * 60 * 1000).toISOString();
+          const rows = getBriefingSectionsAuditForUserSince(db, target.name, cutoff);
+          if (rows.length === 0) {
+            return `No audit history for '${target.name}' in last ${clamped} day(s).`;
+          }
+          const lines = rows.map((row) => {
+            const dt = new Date(row.ts);
+            const yyyy = dt.getUTCFullYear();
+            const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(dt.getUTCDate()).padStart(2, '0');
+            const hh = String(dt.getUTCHours()).padStart(2, '0');
+            const mi = String(dt.getUTCMinutes()).padStart(2, '0');
+            const stamp = `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+            const fromPart = row.source_user ? ` from ${row.source_user}` : '';
+            let sectionsLabel: string;
+            if (row.sections_json === null) {
+              sectionsLabel = '(default)';
+            } else {
+              try {
+                const parsed = JSON.parse(row.sections_json);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  const strs = parsed.filter((x): x is string => typeof x === 'string');
+                  sectionsLabel = strs.length === 0 ? '(default)' : strs.join(',');
+                } else {
+                  sectionsLabel = '(default)';
+                }
+              } catch {
+                sectionsLabel = '(default)';
+              }
+            }
+            return `${stamp} ${row.action}${fromPart} sections=${sectionsLabel}`;
+          });
+          return lines.join('\n');
+        }
+
+        // --revert path: undo the most recent action by writing the prior
+        // sections_json from the audit log (the 2nd-most-recent row for this
+        // user). The most-recent row is the action being reverted. Writes
+        // itself as a new audit row with action=revert.
+        if (parsedSections.revert) {
+          const targetName = parsedSections.targetName as string;
+          const target = findUserByFirstName(db, targetName);
+          if (!target) {
+            return `User '${targetName}' not found.`;
+          }
+          // Pull the full history (effectively 90d max — audit is pruned).
+          const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+          const rows = getBriefingSectionsAuditForUserSince(db, target.name, cutoff);
+          if (rows.length < 2) {
+            return `No prior briefing-sections action to revert for '${target.name}'.`;
+          }
+          // rows is newest-first; the second one is the prior state.
+          const prior = rows[1];
+          if (!prior) {
+            return `No prior briefing-sections action to revert for '${target.name}'.`;
+          }
+          let priorSections: string[] | null = null;
+          if (prior.sections_json !== null) {
+            try {
+              const parsed = JSON.parse(prior.sections_json);
+              if (Array.isArray(parsed)) {
+                const strs = parsed.filter((x): x is string => typeof x === 'string');
+                // Defense-in-depth: filter to known sections so a stale row
+                // can't propagate forward.
+                const valid = strs.filter((s) =>
+                  (VALID_BRIEFING_SECTIONS as readonly string[]).includes(s),
+                );
+                priorSections = valid.length === 0 ? null : valid;
+              }
+            } catch {
+              priorSections = null;
+            }
+          }
+          setUserBriefingSections(db, target.id, priorSections);
+          writeAudit({
+            user_name: target.name,
+            action: 'revert',
+            sections_json: priorSections === null ? null : JSON.stringify(priorSections),
+          });
+          const sectionsLabel =
+            priorSections === null || priorSections.length === 0
+              ? '(default: full briefing)'
+              : priorSections.join(', ');
+          return `Reverted briefing prefs for '${target.name}' to ${sectionsLabel}.`;
         }
 
         // --set / --reset path: requires --user (parser already enforces this).

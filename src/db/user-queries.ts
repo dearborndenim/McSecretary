@@ -322,7 +322,8 @@ export type BriefingSectionsAuditAction =
   | 'set'
   | 'reset'
   | 'set-all'
-  | 'clone-from';
+  | 'clone-from'
+  | 'revert';
 
 export interface BriefingSectionsAuditRow {
   id: number;
@@ -382,4 +383,44 @@ export function getBriefingSectionsAuditSince(
        ORDER BY ts DESC, id DESC`,
     )
     .all(cutoffIso) as BriefingSectionsAuditRow[];
+}
+
+/**
+ * Return audit rows for a specific user (case-insensitive name match) whose
+ * `ts` is >= the given ISO cutoff, newest first. Used by the
+ * `/briefing-sections --history --user=<name> --days=N` admin command.
+ *
+ * Note: matches by `user_name` column (the display name we logged at insert
+ * time), not by user id. The audit table is intentionally name-based so
+ * historical rows survive a user-id rotation.
+ */
+export function getBriefingSectionsAuditForUserSince(
+  db: Database.Database,
+  userName: string,
+  cutoffIso: string,
+): BriefingSectionsAuditRow[] {
+  return db
+    .prepare(
+      `SELECT id, ts, user_name, action, source_user, sections_json, actor
+       FROM briefing_sections_audit
+       WHERE LOWER(user_name) = LOWER(?)
+         AND ts >= ?
+       ORDER BY ts DESC, id DESC`,
+    )
+    .all(userName, cutoffIso) as BriefingSectionsAuditRow[];
+}
+
+/**
+ * Delete audit rows whose `ts` is < the given ISO cutoff. Returns the number
+ * of rows deleted. Best-effort retention enforcement — caller wraps in
+ * try/catch so a transient failure does not break the parent action.
+ */
+export function pruneBriefingSectionsAuditOlderThan(
+  db: Database.Database,
+  cutoffIso: string,
+): number {
+  const result = db
+    .prepare(`DELETE FROM briefing_sections_audit WHERE ts < ?`)
+    .run(cutoffIso);
+  return Number(result.changes ?? 0);
 }

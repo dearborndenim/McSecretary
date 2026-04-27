@@ -3,7 +3,7 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-25)
+## Current Reality (last updated: 2026-04-26)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
@@ -44,7 +44,47 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 7. Test and harden all 20+ tools for reliability
 
 ## Maturity: 95% → Full Secretary
-Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff | --clone-from=<src>)` / `/briefing-sections --list` / `/briefing-sections --set-all=<csv> --apply-to=all` per-user + bulk personalization with **section-order honored from stored array** + **`briefing_sections_audit` write on every preference change + daily 7 AM CT digest** + `/onboarding-status [--pending-only]`. 474 tests passing (21 new 2026-04-25). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+Multi-user system + per-user schedules (timezone-aware, full scheduling-flow covered) + GitHub-backed nightly-plan pipeline + automated bulk onboarding + live WIP consumer + `/briefing-preview [--user=<name>] [--sections=<csv>]` admin dry-run (preview `--sections` overrides saved pref without persisting) + `/briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff | --clone-from=<src> | --history [--days=N] | --revert)` / `/briefing-sections --list` / `/briefing-sections --set-all=<csv> --apply-to=all` per-user + bulk personalization with **section-order honored from stored array** + **`briefing_sections_audit` write on every preference change + auto-prune >90d (`BRIEFING_AUDIT_RETENTION_DAYS`) + daily 7 AM CT digest + `--history` viewer + `--revert` undo** + `/onboarding-status [--pending-only]`. 503 tests passing (29 new 2026-04-26). Email, calendar, briefings, dev request queue all user-scoped. Onboarding playbook shipped + `/onboard-all-pending` + `/onboarding-status` Telegram commands. Main gaps: business communication drafting, meeting prep, proactive scheduling.
+
+### 2026-04-26: Briefing UX Polish 4 — `--history` + `--revert` + audit retention
+Merged branch `feature/mcsecretary-briefing-polish-4` to main. 29 new tests (474 → 503 passing), 0 failures, typecheck clean.
+
+**Sub-task 1 — `/briefing-sections --history --user=<name> [--days=N]`:**
+- New mutually-exclusive `--history` action on the parser. Requires `--user`. Optional `--days=N` (positive integer; default 7; handler clamps [1, 90] since audit table is pruned at 90d).
+- Output: one line per audit row in reverse-chronological order, format `YYYY-MM-DD HH:MM <action> [from <source_user>] sections=<csv | (default)>` (UTC timestamps, two-digit zero-padded). Empty case → `No audit history for '<name>' in last <N> day(s).` (echoes the clamped value). Unknown user → `User '<name>' not found.`.
+- New `getBriefingSectionsAuditForUserSince(db, userName, cutoffIso)` helper in `src/db/user-queries.ts` — case-insensitive `user_name` match, joined with the `ts >= cutoff` window, ordered by `ts DESC, id DESC` so the newest action surfaces first.
+
+**Sub-task 2 — Audit-log retention auto-prune >90d on insert:**
+- New `pruneBriefingSectionsAuditOlderThan(db, cutoffIso)` helper deletes rows older than the cutoff and returns the affected row count.
+- `writeAudit` closure in `src/index.ts` now calls `pruneBriefingSectionsAuditOlderThan` after every successful insert. Best-effort — failures logged via `console.error` and swallowed so a transient prune failure never breaks the parent action.
+- New `BRIEFING_AUDIT_RETENTION_DAYS` env var (default 90, clamp [1, 3650]). Invalid/zero/negative values fall back to 90.
+- The `briefing_sections_audit(ts)` index is already idempotently created via `CREATE INDEX IF NOT EXISTS` in `initializeUserSchema` — no schema change needed.
+
+**Sub-task 3 — `/briefing-sections --revert --user=<name>`:**
+- New mutually-exclusive `--revert` action. Requires `--user`. Reads the user's audit history newest-first, takes the 2nd-most-recent row (the most-recent is the action being reverted), and writes its `sections_json` back to the user's `briefing_sections_json` column.
+- <2 audit rows → `No prior briefing-sections action to revert for '<name>'.`. Unknown user → `User '<name>' not found.`. Stale section names in the prior row are filtered against `VALID_BRIEFING_SECTIONS` (defense-in-depth so a removed section can't propagate forward).
+- The revert itself writes a new audit row with `action='revert'` (the audit chain self-documents). Output: `Reverted briefing prefs for '<name>' to <csv | (default: full briefing)>.`.
+- New `'revert'` value added to the `BriefingSectionsAuditAction` union.
+
+**Tests (29 new, all in `tests/briefing/briefing-ux-polish-4.test.ts`):**
+- Parser `--history`: happy path (with + without `--days`), `--days` flag-order independence, requires `--user`, rejects `--days` without `--history`, mutual exclusion vs every sibling action (set/reset/list/diff/clone-from/revert/set-all), rejects negative/zero/non-integer `--days`.
+- Parser `--revert`: happy path, requires `--user`, mutual exclusion vs every sibling action, regression check on all 7 pre-existing forms.
+- `--history` handler: happy path (3-row reverse-chrono ordering with mixed actions + clone-from `from <source>` segment + verifies unrelated user's row excluded), empty case, unknown user, days clamping (0 → 1, 999 → 90), days window filtering (5d row visible, 30d row excluded at 7d window), case-insensitive name match.
+- Retention auto-prune: `pruneBriefingSectionsAuditOlderThan` deletes ancient rows + leaves recent rows untouched, returns 0 when nothing to prune, idempotent index on `briefing_sections_audit(ts)` present + re-running schema init does not throw.
+- `--revert` handler: happy path (reverts to prior set), reverts to `(default: full briefing)` when prior row was a reset, rejects with friendly error when 0 or 1 audit rows exist, writes a new audit row with `action='revert'` (verified via 3-row count + newest-first action check), unknown user error, stale section names filtered out.
+- Source-grep wiring on `src/index.ts`: `--history` branch admin-gated + uses friendly error strings + calls `getBriefingSectionsAuditForUserSince`; `--revert` branch admin-gated + emits `action: 'revert'` audit row; `writeAudit` closure invokes `pruneBriefingSectionsAuditOlderThan` and reads `BRIEFING_AUDIT_RETENTION_DAYS`.
+
+**Files modified:**
+- `src/briefing/sections-command.ts` — `--history` / `--days=N` / `--revert` flags + mutual-exclusion enforcement, `ParsedBriefingSectionsCommand` extended (`history`, `historyDays`, `revert`)
+- `src/db/user-queries.ts` — `'revert'` added to `BriefingSectionsAuditAction` union, new `getBriefingSectionsAuditForUserSince` + `pruneBriefingSectionsAuditOlderThan` helpers
+- `src/index.ts` — `--history` + `--revert` handler branches; `writeAudit` closure now auto-prunes after every insert via new `resolveRetentionDays` helper reading `BRIEFING_AUDIT_RETENTION_DAYS`
+- `CLAUDE.md` — `/briefing-sections` admin command reference extended for `--history` / `--revert` + retention env knob documented
+- `tests/briefing/briefing-ux-polish-4.test.ts` — new (29 tests)
+
+**New env var:**
+- `BRIEFING_AUDIT_RETENTION_DAYS` — sliding-window retention for `briefing_sections_audit` (default 90, clamp [1, 3650]). Old rows are pruned on every successful insert.
+
+**Schema change is additive + idempotent. Zero regression in 474 prior tests.**
 
 ### 2026-04-25: Briefing UX Polish 3 — `--clone-from` + audit log + daily 7 AM digest
 Merged branch `feature/briefing-ux-polish-3` to main. 21 new tests (453 → 474 passing), 0 failures, typecheck clean.
