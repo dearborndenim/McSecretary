@@ -16,6 +16,10 @@
  * Polish 2026-04-25 added clone-from:
  *   /briefing-sections --user=<target> --clone-from=<src> → copy src's pref onto target
  *
+ * Polish 2026-04-26 added history + revert:
+ *   /briefing-sections --user=<name> --history [--days=N]  → audit history for that user
+ *   /briefing-sections --user=<name> --revert              → undo last action for that user
+ *
  * Parser is pure — it does NOT validate section names against
  * VALID_BRIEFING_SECTIONS (that happens in the handler after the parser
  * result is known, so we can emit a helpful "invalid section(s)" error
@@ -55,6 +59,22 @@ export interface ParsedBriefingSectionsCommand {
    * the target must differ from the source — handler enforces).
    */
   cloneFrom?: string;
+  /**
+   * True when the `--history` flag was present. Mutually exclusive with all
+   * other action flags. Requires `--user`. Optional `--days=N` (default 7,
+   * clamp [1, 90]).
+   */
+  history?: boolean;
+  /**
+   * Days window for the `--history` form. Positive integer. Defaults to 7
+   * when --history is present and --days is unset. Caller clamps to [1, 90].
+   */
+  historyDays?: number;
+  /**
+   * True when the `--revert` flag was present. Mutually exclusive with all
+   * other action flags. Requires `--user`.
+   */
+  revert?: boolean;
 }
 
 export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSectionsCommand {
@@ -78,6 +98,9 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
   let setAllRaw: string | undefined;
   let applyTo: string | undefined;
   let cloneFrom: string | undefined;
+  let history = false;
+  let historyDays: number | undefined;
+  let revert = false;
 
   const conflictsWithAction = () =>
     setRaw !== undefined ||
@@ -85,7 +108,9 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     list ||
     diff ||
     setAllRaw !== undefined ||
-    cloneFrom !== undefined;
+    cloneFrom !== undefined ||
+    history ||
+    revert;
 
   for (const token of tokens) {
     const userMatch = token.match(/^--user=(.+)$/i);
@@ -133,6 +158,26 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
       diff = true;
       continue;
     }
+    if (/^--history$/i.test(token)) {
+      if (conflictsWithAction()) return { matched: false };
+      history = true;
+      continue;
+    }
+    const daysMatch = token.match(/^--days=(.+)$/i);
+    if (daysMatch && daysMatch[1] && daysMatch[1].length > 0) {
+      if (historyDays !== undefined) return { matched: false };
+      const parsed = Number.parseInt(daysMatch[1], 10);
+      if (!Number.isFinite(parsed) || String(parsed) !== daysMatch[1].trim() || parsed <= 0) {
+        return { matched: false };
+      }
+      historyDays = parsed;
+      continue;
+    }
+    if (/^--revert$/i.test(token)) {
+      if (conflictsWithAction()) return { matched: false };
+      revert = true;
+      continue;
+    }
     return { matched: false };
   }
 
@@ -143,8 +188,13 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     (list ? 1 : 0) +
     (diff ? 1 : 0) +
     (setAllRaw !== undefined ? 1 : 0) +
-    (cloneFrom !== undefined ? 1 : 0);
+    (cloneFrom !== undefined ? 1 : 0) +
+    (history ? 1 : 0) +
+    (revert ? 1 : 0);
   if (actionCount !== 1) return { matched: false };
+
+  // --days is only valid alongside --history.
+  if (historyDays !== undefined && !history) return { matched: false };
 
   // --set-all REQUIRES --apply-to=all (and only "all").
   if (setAllRaw !== undefined) {
@@ -159,8 +209,11 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
   // --clone-from requires --user=<target> (different user from source).
   if (cloneFrom !== undefined && targetName === undefined) return { matched: false };
 
+  // --history / --revert require --user.
+  if ((history || revert) && targetName === undefined) return { matched: false };
+
   // --list may appear bare (no --user). --set / --reset / --diff / --clone-from
-  // still require --user.
+  // / --history / --revert still require --user.
   if (!list && setAllRaw === undefined && !targetName) return { matched: false };
 
   return {
@@ -173,5 +226,8 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     setAllRaw,
     applyTo,
     cloneFrom,
+    history: history || undefined,
+    historyDays,
+    revert: revert || undefined,
   };
 }
