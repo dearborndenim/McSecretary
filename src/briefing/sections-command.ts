@@ -20,6 +20,9 @@
  *   /briefing-sections --user=<name> --history [--days=N]  → audit history for that user
  *   /briefing-sections --user=<name> --revert              → undo last action for that user
  *
+ * Polish 2026-04-27 extended --revert with --to=<audit-id>:
+ *   /briefing-sections --user=<name> --revert --to=<id>    → revert to a specific audit row
+ *
  * Parser is pure — it does NOT validate section names against
  * VALID_BRIEFING_SECTIONS (that happens in the handler after the parser
  * result is known, so we can emit a helpful "invalid section(s)" error
@@ -75,6 +78,14 @@ export interface ParsedBriefingSectionsCommand {
    * other action flags. Requires `--user`.
    */
   revert?: boolean;
+  /**
+   * Numeric audit-row id from `--to=<audit-id>`. Only valid alongside
+   * `--revert`. When set, the handler reverts to that specific historical
+   * audit row (writes its `sections_json` back to the user). The handler
+   * validates that the id exists, belongs to the target user, and is not
+   * the most-recent row (which would be a no-op).
+   */
+  revertTo?: number;
 }
 
 export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSectionsCommand {
@@ -101,6 +112,7 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
   let history = false;
   let historyDays: number | undefined;
   let revert = false;
+  let revertTo: number | undefined;
 
   const conflictsWithAction = () =>
     setRaw !== undefined ||
@@ -178,6 +190,16 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
       revert = true;
       continue;
     }
+    const toMatch = token.match(/^--to=(.+)$/i);
+    if (toMatch && toMatch[1] && toMatch[1].length > 0) {
+      if (revertTo !== undefined) return { matched: false };
+      const parsed = Number.parseInt(toMatch[1], 10);
+      if (!Number.isFinite(parsed) || String(parsed) !== toMatch[1].trim() || parsed <= 0) {
+        return { matched: false };
+      }
+      revertTo = parsed;
+      continue;
+    }
     return { matched: false };
   }
 
@@ -195,6 +217,9 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
 
   // --days is only valid alongside --history.
   if (historyDays !== undefined && !history) return { matched: false };
+
+  // --to is only valid alongside --revert.
+  if (revertTo !== undefined && !revert) return { matched: false };
 
   // --set-all REQUIRES --apply-to=all (and only "all").
   if (setAllRaw !== undefined) {
@@ -229,5 +254,6 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     history: history || undefined,
     historyDays,
     revert: revert || undefined,
+    revertTo,
   };
 }

@@ -42,11 +42,13 @@ export function formatBriefingSectionsAuditDigest(
   if (rows.length === 0) return null;
 
   // Group by action type. Iterate in canonical order so the digest is stable.
+  // Polish 5 (2026-04-27) added 'revert' as a tracked action group.
   const groups: Record<string, BriefingSectionsAuditRow[]> = {
     set: [],
     reset: [],
     'set-all': [],
     'clone-from': [],
+    revert: [],
   };
   for (const row of rows) {
     const bucket = groups[row.action];
@@ -57,14 +59,28 @@ export function formatBriefingSectionsAuditDigest(
   lines.push(
     `Briefing-sections preference changes in the last ${windowHours}h: ${rows.length}`,
   );
-  lines.push('');
 
   const actionOrder: BriefingSectionsAuditRow['action'][] = [
     'set',
     'reset',
     'set-all',
     'clone-from',
+    'revert',
   ];
+
+  // Polish 5 — per-action count summary. Suppresses sections with zero
+  // counts so the digest stays tight. Renders inline on one line:
+  //   "By action: set=2, reset=1, revert=4"
+  const summaryParts: string[] = [];
+  for (const action of actionOrder) {
+    const items = groups[action];
+    if (!items || items.length === 0) continue;
+    summaryParts.push(`${action}=${items.length}`);
+  }
+  if (summaryParts.length > 0) {
+    lines.push(`By action: ${summaryParts.join(', ')}`);
+  }
+  lines.push('');
 
   for (const action of actionOrder) {
     const items = groups[action];
@@ -96,6 +112,11 @@ function formatAuditLine(row: BriefingSectionsAuditRow): string {
       return `${prefix} (bulk) → ${describeSections(row.sections_json)}`;
     case 'clone-from':
       return `${prefix} ← cloned from ${row.source_user ?? '(unknown)'} → ${describeSections(row.sections_json)}`;
+    case 'revert':
+      // source_user, when present, is `audit:<id>` — the targeted historical
+      // row id. Include the trailing breadcrumb so admins can trace the
+      // revert back to the row it pointed at.
+      return `${prefix} (revert${row.source_user ? ` ${row.source_user}` : ''}) → ${describeSections(row.sections_json)}`;
     default:
       return `${prefix} (unknown action: ${row.action})`;
   }
