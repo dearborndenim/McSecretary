@@ -961,6 +961,7 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           getActiveUsers,
           insertBriefingSectionsAudit,
           getBriefingSectionsAuditForUserSince,
+          getBriefingSectionsAuditById,
           pruneBriefingSectionsAuditOlderThan,
         } = await import('./db/user-queries.js');
 
@@ -1181,13 +1182,96 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         // sections_json from the audit log (the 2nd-most-recent row for this
         // user). The most-recent row is the action being reverted. Writes
         // itself as a new audit row with action=revert.
+        //
+        // Polish 5 (2026-04-27) added `--to=<audit-id>` for targeted reverts:
+        // revert to a specific historical audit row instead of just the
+        // previous one. The targeted row's sections_json is applied back to
+        // the user; the new audit row records `source_user='audit:<id>'` so
+        // the trail stays inspectable.
         if (parsedSections.revert) {
           const targetName = parsedSections.targetName as string;
           const target = findUserByFirstName(db, targetName);
           if (!target) {
             return `User '${targetName}' not found.`;
           }
-          // Pull the full history (effectively 90d max — audit is pruned).
+
+          // Helper: extract a normalized sections array from a prior audit
+          // row, filtering to known section names so stale rows can't
+          // propagate forward. Returns null when the row stored NULL or
+          // an empty/invalid array.
+          const extractPriorSections = (sectionsJson: string | null): string[] | null => {
+            if (sectionsJson === null) return null;
+            try {
+              const parsed = JSON.parse(sectionsJson);
+              if (Array.isArray(parsed)) {
+                const strs = parsed.filter((x): x is string => typeof x === 'string');
+                const valid = strs.filter((s) =>
+                  (VALID_BRIEFING_SECTIONS as readonly string[]).includes(s),
+                );
+                return valid.length === 0 ? null : valid;
+              }
+            } catch {
+              /* fall through */
+            }
+            return null;
+          };
+
+          const labelFor = (priorSections: string[] | null): string =>
+            priorSections === null || priorSections.length === 0
+              ? '(default: full briefing)'
+              : priorSections.join(', ');
+
+          // Best-effort revert-spike alert. Never blocks the reply. Shared
+          // between the bare --revert and --to=<id> branches so any revert
+          // (regardless of shape) increments the daily counter.
+          const fireRevertAlertIfWarranted = async (): Promise<void> => {
+            try {
+              const { maybeFireRevertAlert } = await import('./briefing/revert-alert.js');
+              await maybeFireRevertAlert(db, target.name, {
+                sendMessage: async (text: string) => {
+                  await sendMessage(text, false).catch(() => {});
+                },
+              });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error(`maybeFireRevertAlert failed: ${msg}`);
+            }
+          };
+
+          // --to=<id> branch: validate and revert to a specific audit row.
+          if (parsedSections.revertTo !== undefined) {
+            const auditId = parsedSections.revertTo;
+            const targetRow = getBriefingSectionsAuditById(db, auditId);
+            if (!targetRow) {
+              return `Audit id ${auditId} not found.`;
+            }
+            if (targetRow.user_name.trim().toLowerCase() !== target.name.trim().toLowerCase()) {
+              return `Audit id ${auditId} belongs to '${targetRow.user_name}', not '${target.name}'.`;
+            }
+            // Confirm it's not the current (most-recent) row — that would be a no-op.
+            const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+            const rows = getBriefingSectionsAuditForUserSince(db, target.name, cutoff);
+            if (rows.length === 0) {
+              // Pruned out of window — treat as not-found for revert purposes.
+              return `Audit id ${auditId} is outside the revert window for '${target.name}'.`;
+            }
+            const mostRecent = rows[0];
+            if (mostRecent && mostRecent.id === auditId) {
+              return `Audit id ${auditId} is the current state for '${target.name}'; nothing to revert.`;
+            }
+            const priorSections = extractPriorSections(targetRow.sections_json);
+            setUserBriefingSections(db, target.id, priorSections);
+            writeAudit({
+              user_name: target.name,
+              action: 'revert',
+              source_user: `audit:${auditId}`,
+              sections_json: priorSections === null ? null : JSON.stringify(priorSections),
+            });
+            await fireRevertAlertIfWarranted();
+            return `Reverted briefing prefs for '${target.name}' to audit ${auditId}: ${labelFor(priorSections)}.`;
+          }
+
+          // Bare --revert: undo most-recent action (Polish 4 behavior).
           const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
           const rows = getBriefingSectionsAuditForUserSince(db, target.name, cutoff);
           if (rows.length < 2) {
@@ -1198,34 +1282,15 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           if (!prior) {
             return `No prior briefing-sections action to revert for '${target.name}'.`;
           }
-          let priorSections: string[] | null = null;
-          if (prior.sections_json !== null) {
-            try {
-              const parsed = JSON.parse(prior.sections_json);
-              if (Array.isArray(parsed)) {
-                const strs = parsed.filter((x): x is string => typeof x === 'string');
-                // Defense-in-depth: filter to known sections so a stale row
-                // can't propagate forward.
-                const valid = strs.filter((s) =>
-                  (VALID_BRIEFING_SECTIONS as readonly string[]).includes(s),
-                );
-                priorSections = valid.length === 0 ? null : valid;
-              }
-            } catch {
-              priorSections = null;
-            }
-          }
+          const priorSections = extractPriorSections(prior.sections_json);
           setUserBriefingSections(db, target.id, priorSections);
           writeAudit({
             user_name: target.name,
             action: 'revert',
             sections_json: priorSections === null ? null : JSON.stringify(priorSections),
           });
-          const sectionsLabel =
-            priorSections === null || priorSections.length === 0
-              ? '(default: full briefing)'
-              : priorSections.join(', ');
-          return `Reverted briefing prefs for '${target.name}' to ${sectionsLabel}.`;
+          await fireRevertAlertIfWarranted();
+          return `Reverted briefing prefs for '${target.name}' to ${labelFor(priorSections)}.`;
         }
 
         // --set / --reset path: requires --user (parser already enforces this).

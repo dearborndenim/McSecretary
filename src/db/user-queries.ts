@@ -411,6 +411,28 @@ export function getBriefingSectionsAuditForUserSince(
 }
 
 /**
+ * Look up one audit row by primary id. Returns `undefined` when no such row
+ * exists. Used by the `/briefing-sections --revert --to=<id>` admin command
+ * so the handler can validate the target row exists, belongs to the requested
+ * user, and is not the most-recent row before applying the revert.
+ *
+ * Polish 5 (2026-04-27).
+ */
+export function getBriefingSectionsAuditById(
+  db: Database.Database,
+  id: number,
+): BriefingSectionsAuditRow | undefined {
+  const row = db
+    .prepare(
+      `SELECT id, ts, user_name, action, source_user, sections_json, actor
+       FROM briefing_sections_audit
+       WHERE id = ?`,
+    )
+    .get(id) as BriefingSectionsAuditRow | undefined;
+  return row;
+}
+
+/**
  * Delete audit rows whose `ts` is < the given ISO cutoff. Returns the number
  * of rows deleted. Best-effort retention enforcement — caller wraps in
  * try/catch so a transient failure does not break the parent action.
