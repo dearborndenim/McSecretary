@@ -3,7 +3,15 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
-## Current Reality (last updated: 2026-04-26)
+## 2026-04-27 — Briefing UX Polish 5 (this session)
+- **`/briefing-sections --revert --user=<name> --to=<audit-id>`** — undo to a specific historical audit row instead of just the previous one. Validates the row exists, belongs to the requested user, and is not the current/most-recent row (which would be a no-op). Writes a new audit row with `action='revert'` and `source_user='audit:<id>'` so the trail stays inspectable. Bare `--revert` (no `--to`) preserves Polish 4 behavior. Mutually-exclusive vs `--set`/`--reset`/`--diff`/`--list`/`--set-all`/`--clone-from`/`--history`. Friendly errors per failure mode (audit not found, audit belongs to different user, audit is current state, audit outside revert window).
+- **Audit digest action breakdown** — daily 7 AM CT digest text now opens with a `By action: set=N, reset=N, set-all=N, clone-from=N, revert=N` summary line; zero-count groups suppressed; `revert` rows render with a `(revert audit:<id>)` breadcrumb so the targeted historical row is visible.
+- **Per-user revert-spike alert** — new `src/briefing/revert-alert.ts` with `maybeFireRevertAlert(db, userName, deps)`. Fires a warning when a user has > `BRIEFING_REVERT_ALERT_THRESHOLD` (default 3) revert audit rows in the trailing 24h. 12h per-user cooldown prevents spam. Alert message broadcast via Telegram (when `sendMessage` dep supplied) alongside console log. Hard opt-out via `DISABLE_BRIEFING_REVERT_ALERT=1`. Alert delivery failures are swallowed so they never block the parent revert. Wired into both bare and `--to=<id>` revert branches in `src/index.ts` so any revert (regardless of shape) increments the daily counter.
+- New `getBriefingSectionsAuditById()` helper in `src/db/user-queries.ts` for the `--to=<id>` validation path.
+- +15 tests (503 → 518). New `tests/briefing/briefing-ux-polish-5.test.ts`: 4 parser (--to=N, rejects --to without --revert, rejects non-numeric/zero/negative, bare --revert preserved), 2 audit-id lookup (returns row / undefined), 4 digest formatting (per-action breakdown, zero suppression, revert breadcrumb, empty preserved), 5 revert-alert (below threshold, fires + sendMessage, cooldown blocks, DISABLE env, threshold env override).
+- Branch `mcsecretary-briefing-ux-5` merged to main (`57caa2b` → `9b5ddd7`).
+
+## Current Reality (last updated: 2026-04-27)
 - **Deployment:** Railway (cron job) — GITHUB_TOKEN set on Railway for cross-repo access
 - **GitHub:** github.com/dearborndenim/McSecretary
 - **Communication:** Telegram bot for notifications and interaction with Robert
