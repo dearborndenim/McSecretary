@@ -23,6 +23,10 @@
  * Polish 2026-04-27 extended --revert with --to=<audit-id>:
  *   /briefing-sections --user=<name> --revert --to=<id>    → revert to a specific audit row
  *
+ * Polish 2026-04-28 extended --history with --json:
+ *   /briefing-sections --user=<name> --history --json [--days=N]
+ *     → JSON array (programmatic consumers) instead of human-readable lines
+ *
  * Parser is pure — it does NOT validate section names against
  * VALID_BRIEFING_SECTIONS (that happens in the handler after the parser
  * result is known, so we can emit a helpful "invalid section(s)" error
@@ -79,6 +83,15 @@ export interface ParsedBriefingSectionsCommand {
    */
   revert?: boolean;
   /**
+   * True when the `--json` flag was present. Only valid alongside `--history`.
+   * When set, the handler emits a JSON array (newest-first) of audit rows
+   * instead of human-readable lines. Stale-section filtering is skipped in
+   * JSON mode so programmatic consumers receive the raw stored sections.
+   *
+   * Polish 6 (2026-04-28).
+   */
+  json?: boolean;
+  /**
    * Numeric audit-row id from `--to=<audit-id>`. Only valid alongside
    * `--revert`. When set, the handler reverts to that specific historical
    * audit row (writes its `sections_json` back to the user). The handler
@@ -113,6 +126,7 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
   let historyDays: number | undefined;
   let revert = false;
   let revertTo: number | undefined;
+  let json = false;
 
   const conflictsWithAction = () =>
     setRaw !== undefined ||
@@ -190,6 +204,13 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
       revert = true;
       continue;
     }
+    if (/^--json$/i.test(token)) {
+      // --json is a modifier (not an action). Only valid alongside --history.
+      // Validation that --history is set happens after the loop.
+      if (json) return { matched: false };
+      json = true;
+      continue;
+    }
     const toMatch = token.match(/^--to=(.+)$/i);
     if (toMatch && toMatch[1] && toMatch[1].length > 0) {
       if (revertTo !== undefined) return { matched: false };
@@ -220,6 +241,10 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
 
   // --to is only valid alongside --revert.
   if (revertTo !== undefined && !revert) return { matched: false };
+
+  // --json is only valid alongside --history (mutually-exclusive with all
+  // other action flags by virtue of --history being the only carrier).
+  if (json && !history) return { matched: false };
 
   // --set-all REQUIRES --apply-to=all (and only "all").
   if (setAllRaw !== undefined) {
@@ -255,5 +280,6 @@ export function parseBriefingSectionsCommand(raw: string): ParsedBriefingSection
     historyDays,
     revert: revert || undefined,
     revertTo,
+    json: json || undefined,
   };
 }

@@ -1145,6 +1145,35 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           const clamped = requested < 1 ? 1 : requested > 90 ? 90 : requested;
           const cutoff = new Date(Date.now() - clamped * 24 * 60 * 60 * 1000).toISOString();
           const rows = getBriefingSectionsAuditForUserSince(db, target.name, cutoff);
+          // --json modifier (Polish 6, 2026-04-28): emit programmatic JSON
+          // array (newest-first) instead of human-readable lines. Empty
+          // history → `[]`. `sections` field is the parsed raw array (NOT
+          // stale-filtered) so programmatic consumers see exactly what was
+          // stored. NULL sections_json → `sections: null`.
+          if (parsedSections.json) {
+            const jsonRows = rows.map((row) => {
+              let sections: string[] | null = null;
+              if (row.sections_json !== null) {
+                try {
+                  const parsed = JSON.parse(row.sections_json);
+                  if (Array.isArray(parsed)) {
+                    sections = parsed.filter((x): x is string => typeof x === 'string');
+                  }
+                } catch {
+                  sections = null;
+                }
+              }
+              return {
+                id: row.id,
+                ts: row.ts,
+                action: row.action,
+                source_user: row.source_user,
+                sections,
+                actor: row.actor,
+              };
+            });
+            return JSON.stringify(jsonRows);
+          }
           if (rows.length === 0) {
             return `No audit history for '${target.name}' in last ${clamped} day(s).`;
           }
