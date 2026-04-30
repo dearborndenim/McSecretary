@@ -78,6 +78,20 @@ let pendingArchiveBatch: EmailSummary[] = [];
 // Task polling — last known state for change detection
 let lastTaskSnapshot: Map<string, { listName: string; taskId: string; title: string; status: string }> = new Map();
 
+// Briefing-preview cache (Briefing UX Polish 7 — 2026-04-29).
+// Lazy-built on first use so module load stays light. Honors
+// `DISABLE_BRIEFING_PREVIEW_CACHE=1` (returns no-op shim) and
+// `BRIEFING_PREVIEW_CACHE_TTL_SECONDS` (default 300).
+let _briefingPreviewCache: import('./briefing/preview-cache.js').BriefingPreviewCache | undefined;
+async function getBriefingPreviewCache(): Promise<
+  import('./briefing/preview-cache.js').BriefingPreviewCache
+> {
+  if (_briefingPreviewCache) return _briefingPreviewCache;
+  const { buildBriefingPreviewCache } = await import('./briefing/preview-cache.js');
+  _briefingPreviewCache = buildBriefingPreviewCache();
+  return _briefingPreviewCache;
+}
+
 function getChicagoDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
@@ -904,7 +918,27 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
           }
           sectionsFilter = valid;
         }
-        const briefing = await runTriage(db, targetUser.id, sectionsFilter ? { sections: sectionsFilter } : undefined);
+        // Briefing UX Polish 7 (2026-04-29): cache identical previews for
+        // 5 min keyed on (user, sortedSections). Cache hit short-circuits the
+        // costly `runTriage` round-trip. Failures inside the cache layer are
+        // contained so a cache bug never blocks the preview.
+        const previewCache = await getBriefingPreviewCache();
+        let briefing: string;
+        const cached = previewCache.get(targetUser.id, sectionsFilter);
+        if (cached !== undefined) {
+          briefing = cached;
+        } else {
+          briefing = await runTriage(
+            db,
+            targetUser.id,
+            sectionsFilter ? { sections: sectionsFilter } : undefined,
+          );
+          try {
+            previewCache.set(targetUser.id, sectionsFilter, briefing);
+          } catch {
+            /* never let a cache-write failure surface */
+          }
+        }
         insertConversationMessage(
           db,
           user.id,
