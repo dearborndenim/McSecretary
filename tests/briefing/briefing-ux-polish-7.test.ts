@@ -1,12 +1,22 @@
 /**
  * Briefing UX polish 7 — 2026-04-29.
  *
- * Sub-feature 1: /briefing-preview cache — avoid regenerating identical
- * previews within 5 min for the same (user, sortedSections). In-process cache
- * keyed on canonical key. TTL configurable via BRIEFING_PREVIEW_CACHE_TTL_SECONDS
- * (default 300). Hard opt-out via DISABLE_BRIEFING_PREVIEW_CACHE=1.
+ * Two sub-features:
+ *   1. /briefing-preview cache — avoid regenerating identical previews within
+ *      5 min for the same (user, sortedSections). In-process cache keyed on
+ *      canonical key. TTL configurable via BRIEFING_PREVIEW_CACHE_TTL_SECONDS
+ *      (default 300). Hard opt-out via DISABLE_BRIEFING_PREVIEW_CACHE=1.
+ *   2. /briefing-sections audit digest user filter — when
+ *      BRIEFING_AUDIT_DIGEST_USERS=alice,bob is set, scope the daily digest to
+ *      those users (case-insensitive). Unset / blank → fleet-wide.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { initializeSchema } from '../../src/db/schema.js';
+import {
+  createUser,
+  insertBriefingSectionsAudit,
+} from '../../src/db/user-queries.js';
 import {
   buildBriefingPreviewCache,
   canonicalCacheKey,
@@ -14,6 +24,11 @@ import {
   InMemoryBriefingPreviewCache,
   NoopBriefingPreviewCache,
 } from '../../src/briefing/preview-cache.js';
+import {
+  parseAuditDigestUserFilter,
+  filterAuditRowsByUsers,
+  runBriefingSectionsAuditDigest,
+} from '../../src/briefing/sections-audit-digest.js';
 
 // ============================================================================
 // Deliverable 1 — /briefing-preview cache
@@ -142,3 +157,172 @@ describe('Polish 7 — preview cache: env factory', () => {
   });
 });
 
+// ============================================================================
+// Deliverable 2 — Audit digest user filter
+// ============================================================================
+
+describe('Polish 7 — audit digest: parseAuditDigestUserFilter', () => {
+  it('returns undefined when env unset', () => {
+    expect(parseAuditDigestUserFilter(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when env is empty / whitespace / no real entries', () => {
+    expect(parseAuditDigestUserFilter('')).toBeUndefined();
+    expect(parseAuditDigestUserFilter('   ')).toBeUndefined();
+    expect(parseAuditDigestUserFilter(',,,')).toBeUndefined();
+    expect(parseAuditDigestUserFilter(' , , ,')).toBeUndefined();
+  });
+
+  it('returns lower-cased trimmed Set when csv has real entries', () => {
+    const f = parseAuditDigestUserFilter(' Alice , BOB ');
+    expect(f).toBeDefined();
+    expect(f!.has('alice')).toBe(true);
+    expect(f!.has('bob')).toBe(true);
+    expect(f!.size).toBe(2);
+  });
+});
+
+describe('Polish 7 — audit digest: filterAuditRowsByUsers', () => {
+  const sampleRows = [
+    {
+      id: 1,
+      ts: '2026-04-29T10:00:00Z',
+      user_name: 'Alice',
+      action: 'set',
+      source_user: null,
+      sections_json: '["emails"]',
+      actor: 'admin',
+    },
+    {
+      id: 2,
+      ts: '2026-04-29T11:00:00Z',
+      user_name: 'BOB',
+      action: 'reset',
+      source_user: null,
+      sections_json: null,
+      actor: 'admin',
+    },
+    {
+      id: 3,
+      ts: '2026-04-29T12:00:00Z',
+      user_name: 'Carol',
+      action: 'set',
+      source_user: null,
+      sections_json: '["stats"]',
+      actor: 'admin',
+    },
+  ] as const;
+
+  it('returns identity when filter is undefined (fleet-wide)', () => {
+    const out = filterAuditRowsByUsers([...sampleRows], undefined);
+    expect(out.length).toBe(3);
+  });
+
+  it('keeps only rows whose user_name matches the filter (case-insensitive)', () => {
+    const filter = parseAuditDigestUserFilter('alice,bob');
+    const out = filterAuditRowsByUsers([...sampleRows], filter);
+    expect(out.map((r) => r.user_name).sort()).toEqual(['Alice', 'BOB']);
+  });
+
+  it('case-insensitive — matches mixed-case env to mixed-case user_name', () => {
+    const filter = parseAuditDigestUserFilter('CAROL');
+    const out = filterAuditRowsByUsers([...sampleRows], filter);
+    expect(out.length).toBe(1);
+    expect(out[0]?.user_name).toBe('Carol');
+  });
+});
+
+describe('Polish 7 — audit digest: runBriefingSectionsAuditDigest end-to-end', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeSchema(db);
+    createUser(db, {
+      id: 'u-alice',
+      name: 'Alice',
+      email: 'alice@example.com',
+      role: 'member',
+    });
+    createUser(db, {
+      id: 'u-bob',
+      name: 'Bob',
+      email: 'bob@example.com',
+      role: 'member',
+    });
+    createUser(db, {
+      id: 'u-carol',
+      name: 'Carol',
+      email: 'carol@example.com',
+      role: 'member',
+    });
+    const recentTs = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    insertBriefingSectionsAudit(db, {
+      ts: recentTs,
+      user_name: 'Alice',
+      action: 'set',
+      sections_json: '["emails"]',
+    });
+    insertBriefingSectionsAudit(db, {
+      ts: recentTs,
+      user_name: 'Bob',
+      action: 'reset',
+      sections_json: null,
+    });
+    insertBriefingSectionsAudit(db, {
+      ts: recentTs,
+      user_name: 'Carol',
+      action: 'set',
+      sections_json: '["stats"]',
+    });
+  });
+
+  it('env unset → fleet-wide (all 3 rows in digest)', () => {
+    const result = runBriefingSectionsAuditDigest(db, { env: {} });
+    expect(result.ran).toBe(true);
+    expect(result.rowCount).toBe(3);
+    expect(result.message).toContain('Alice');
+    expect(result.message).toContain('Bob');
+    expect(result.message).toContain('Carol');
+  });
+
+  it('env set → scoped (only matching users in digest)', () => {
+    const result = runBriefingSectionsAuditDigest(db, {
+      env: { BRIEFING_AUDIT_DIGEST_USERS: 'Alice,Bob' },
+    });
+    expect(result.ran).toBe(true);
+    expect(result.rowCount).toBe(2);
+    expect(result.message).toContain('Alice');
+    expect(result.message).toContain('Bob');
+    expect(result.message).not.toContain('Carol');
+  });
+
+  it('env empty CSV → fleet-wide (treated as unset)', () => {
+    const result = runBriefingSectionsAuditDigest(db, {
+      env: { BRIEFING_AUDIT_DIGEST_USERS: ',,,' },
+    });
+    expect(result.ran).toBe(true);
+    expect(result.rowCount).toBe(3);
+    expect(result.message).toContain('Carol');
+  });
+
+  it('env case-insensitive matching against user_name', () => {
+    const result = runBriefingSectionsAuditDigest(db, {
+      env: { BRIEFING_AUDIT_DIGEST_USERS: 'aLiCe' },
+    });
+    expect(result.ran).toBe(true);
+    expect(result.rowCount).toBe(1);
+    expect(result.message).toContain('Alice');
+    expect(result.message).not.toContain('Bob');
+    expect(result.message).not.toContain('Carol');
+  });
+
+  it('env scoped + no matching rows → empty digest, ran=false, reason=empty', () => {
+    const result = runBriefingSectionsAuditDigest(db, {
+      env: { BRIEFING_AUDIT_DIGEST_USERS: 'Nobody' },
+    });
+    expect(result.ran).toBe(false);
+    expect(result.rowCount).toBe(0);
+    expect(result.message).toBeNull();
+    expect(result.reason).toBe('empty');
+  });
+});

@@ -144,10 +144,53 @@ export interface RunAuditDigestResult {
 }
 
 /**
+ * Parse `BRIEFING_AUDIT_DIGEST_USERS` env CSV into a normalized lower-case
+ * Set of user names. Whitespace per token is trimmed; empty tokens dropped;
+ * unset / blank / "no real entries" returns `undefined` (= unfiltered /
+ * fleet-wide). Pure — exported for tests.
+ *
+ * Examples:
+ *   "alice,bob"          → Set{ "alice", "bob" }
+ *   " Alice , BOB "      → Set{ "alice", "bob" }   (trim + lowercase)
+ *   ",,, "               → undefined               (no real entries → fleet-wide)
+ *   undefined / ""       → undefined               (env unset → fleet-wide)
+ */
+export function parseAuditDigestUserFilter(
+  raw: string | undefined,
+): Set<string> | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  const names = trimmed
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+  if (names.length === 0) return undefined;
+  return new Set(names);
+}
+
+/**
+ * Apply the user filter from `parseAuditDigestUserFilter` to a row list.
+ * `undefined` filter → identity (fleet-wide). Match is case-insensitive on
+ * `user_name`. Pure — exported for tests.
+ */
+export function filterAuditRowsByUsers(
+  rows: BriefingSectionsAuditRow[],
+  filter: Set<string> | undefined,
+): BriefingSectionsAuditRow[] {
+  if (filter === undefined) return rows;
+  return rows.filter((r) => filter.has((r.user_name ?? '').toLowerCase()));
+}
+
+/**
  * Top-level entry point for the daily 7 AM CT scheduler. Reads audit rows
  * from the trailing 24h, renders a digest, and returns it. Empty case →
  * `{ ran: false, message: null, reason: 'empty' }`. Opt-out via
  * `DISABLE_BRIEFING_AUDIT_DIGEST=1`.
+ *
+ * Polish 7 (2026-04-29): when `BRIEFING_AUDIT_DIGEST_USERS=alice,bob` is set,
+ * the digest is scoped to those users (case-insensitive `user_name` match).
+ * Empty CSV after split → unfiltered (fleet-wide). Unset → unfiltered.
  */
 export function runBriefingSectionsAuditDigest(
   db: Database.Database,
@@ -159,7 +202,9 @@ export function runBriefingSectionsAuditDigest(
   }
   const now = deps.now ? deps.now() : new Date();
   const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const rows = getBriefingSectionsAuditSince(db, cutoff);
+  const allRows = getBriefingSectionsAuditSince(db, cutoff);
+  const userFilter = parseAuditDigestUserFilter(env.BRIEFING_AUDIT_DIGEST_USERS);
+  const rows = filterAuditRowsByUsers(allRows, userFilter);
   const message = formatBriefingSectionsAuditDigest(rows, 24);
   if (message === null) {
     return { ran: false, rowCount: 0, message: null, reason: 'empty' };
