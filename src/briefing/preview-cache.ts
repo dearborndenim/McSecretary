@@ -15,6 +15,20 @@
  *   - `DISABLE_BRIEFING_PREVIEW_CACHE=1`    hard opt-out → factory returns a no-op shim
  */
 
+/**
+ * Counters + age snapshot returned by `stats()`. Hits/misses are cumulative
+ * since process start (no decay). `oldestEntryAgeMs` is the age of the oldest
+ * live entry in ms, or `null` when the cache is empty (or the no-op shim).
+ *
+ * Polish 8 (2026-04-30) — backs the `/admin/briefing-preview-cache-stats`
+ * endpoint.
+ */
+export interface BriefingPreviewCacheStats {
+  hits: number;
+  misses: number;
+  oldestEntryAgeMs: number | null;
+}
+
 export interface BriefingPreviewCache {
   /**
    * Look up a previously rendered preview. Returns `undefined` on miss or if
@@ -29,6 +43,19 @@ export interface BriefingPreviewCache {
   size(): number;
   /** Whether this cache is a real cache or the no-op shim (DISABLE=1 path). */
   readonly enabled: boolean;
+  /**
+   * Configured TTL in seconds — set at construction time, exposed for the
+   * stats endpoint so admins don't have to cross-reference the env var.
+   * `0` for the no-op shim (no entries ever stored).
+   */
+  readonly ttlSeconds: number;
+  /**
+   * Snapshot of cache observability counters. Hits/misses are incremented on
+   * every `get()` call (expired entries count as a miss). `oldestEntryAgeMs`
+   * walks the live entries to find the oldest `createdAt`. Returns `null`
+   * when the cache is empty or this is the no-op shim.
+   */
+  stats(): BriefingPreviewCacheStats;
 }
 
 /**
@@ -53,6 +80,8 @@ export function canonicalCacheKey(
 
 interface CacheEntry {
   rendered: string;
+  /** Epoch ms when this entry was inserted (used for `oldestEntryAgeMs`). */
+  createdAt: number;
   /** Epoch ms when this entry expires. */
   expiresAt: number;
 }
@@ -65,34 +94,48 @@ interface CacheEntry {
  */
 export class InMemoryBriefingPreviewCache implements BriefingPreviewCache {
   readonly enabled = true;
+  readonly ttlSeconds: number;
   private readonly entries = new Map<string, CacheEntry>();
   private readonly ttlMs: number;
   private readonly nowFn: () => number;
+  /** Cumulative hit/miss counters since process start. */
+  private hits = 0;
+  private misses = 0;
 
   constructor(ttlSeconds: number, nowFn: () => number = () => Date.now()) {
     // Defensive clamp — caller's factory already validates, but if a test
     // passes a bogus value directly we still want a sane bound.
     const safe = Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 300;
-    this.ttlMs = Math.min(safe, 86400) * 1000;
+    const clamped = Math.min(safe, 86400);
+    this.ttlSeconds = clamped;
+    this.ttlMs = clamped * 1000;
     this.nowFn = nowFn;
   }
 
   get(userId: string, sections: readonly string[] | undefined): string | undefined {
     const key = canonicalCacheKey(userId, sections);
     const entry = this.entries.get(key);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= this.nowFn()) {
-      this.entries.delete(key);
+    if (!entry) {
+      this.misses++;
       return undefined;
     }
+    if (entry.expiresAt <= this.nowFn()) {
+      // Expired entries count as a miss — the caller will re-render.
+      this.entries.delete(key);
+      this.misses++;
+      return undefined;
+    }
+    this.hits++;
     return entry.rendered;
   }
 
   set(userId: string, sections: readonly string[] | undefined, rendered: string): void {
     const key = canonicalCacheKey(userId, sections);
+    const now = this.nowFn();
     this.entries.set(key, {
       rendered,
-      expiresAt: this.nowFn() + this.ttlMs,
+      createdAt: now,
+      expiresAt: now + this.ttlMs,
     });
   }
 
@@ -108,6 +151,28 @@ export class InMemoryBriefingPreviewCache implements BriefingPreviewCache {
     }
     return this.entries.size;
   }
+
+  stats(): BriefingPreviewCacheStats {
+    // Walk live entries (post-expiry-sweep) for the min `createdAt`. Sweep
+    // first so the age reflects only live entries — an expired-but-not-yet-
+    // evicted row should not skew the answer.
+    const now = this.nowFn();
+    let oldest: number | null = null;
+    for (const [k, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(k);
+        continue;
+      }
+      if (oldest === null || entry.createdAt < oldest) {
+        oldest = entry.createdAt;
+      }
+    }
+    return {
+      hits: this.hits,
+      misses: this.misses,
+      oldestEntryAgeMs: oldest === null ? null : Math.max(0, now - oldest),
+    };
+  }
 }
 
 /**
@@ -116,6 +181,8 @@ export class InMemoryBriefingPreviewCache implements BriefingPreviewCache {
  */
 export class NoopBriefingPreviewCache implements BriefingPreviewCache {
   readonly enabled = false;
+  /** No entries are ever stored, so TTL is irrelevant — surface as 0. */
+  readonly ttlSeconds = 0;
   get(): undefined {
     return undefined;
   }
@@ -127,6 +194,11 @@ export class NoopBriefingPreviewCache implements BriefingPreviewCache {
   }
   size(): number {
     return 0;
+  }
+  stats(): BriefingPreviewCacheStats {
+    // No counters are tracked — the endpoint reflects `disabled:true` so the
+    // shape stays uniform with the in-memory case.
+    return { hits: 0, misses: 0, oldestEntryAgeMs: null };
   }
 }
 

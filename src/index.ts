@@ -39,7 +39,12 @@ import type { EmailSummary } from './email/reader.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { generateEndOfDayReflection } from './journal/reflection.js';
 import { runWeeklySynthesis } from './journal/synthesis.js';
-import { initApi, startApiServer, getRecentSmsMessages } from './api.js';
+import {
+  initApi,
+  startApiServer,
+  getRecentSmsMessages,
+  setBriefingPreviewCacheProvider,
+} from './api.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
 import { seedTeam } from './db/seed-team.js';
 import {
@@ -1642,6 +1647,10 @@ async function main() {
 
   // Start API server for Mac Mini agent
   initApi(db, config.api.secret);
+  // Polish 8 (2026-04-30): expose live preview-cache to /admin endpoint.
+  // Returns `undefined` until the cache is lazy-built on first /briefing-preview;
+  // the endpoint reflects `disabled:true` in that pre-warm state.
+  setBriefingPreviewCacheProvider(() => _briefingPreviewCache);
   startApiServer(config.api.port);
 
   const bot = await initBot();

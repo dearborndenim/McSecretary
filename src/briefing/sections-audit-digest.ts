@@ -183,6 +183,31 @@ export function filterAuditRowsByUsers(
 }
 
 /**
+ * Drop `action='revert'` rows from the audit digest payload. Polish 8
+ * (2026-04-30) — reverts can dominate the daily digest as fleet-wide noise
+ * once `/briefing-sections --revert` ships. Set `BRIEFING_AUDIT_DIGEST_INCLUDE_REVERTS=0`
+ * to suppress them; default is to include (backward-compatible). Pure —
+ * exported for tests.
+ */
+export function filterAuditRowsExcludingReverts(
+  rows: BriefingSectionsAuditRow[],
+): BriefingSectionsAuditRow[] {
+  return rows.filter((r) => r.action !== 'revert');
+}
+
+/**
+ * Resolve the `BRIEFING_AUDIT_DIGEST_INCLUDE_REVERTS` env knob. Default is
+ * `true` (include). Only the literal string `'0'` flips it off — anything
+ * else (`'1'`, `''`, `'true'`, unset) keeps the default. Pure — exported for
+ * tests.
+ */
+export function shouldIncludeRevertsInDigest(
+  env: Record<string, string | undefined>,
+): boolean {
+  return env.BRIEFING_AUDIT_DIGEST_INCLUDE_REVERTS !== '0';
+}
+
+/**
  * Top-level entry point for the daily 7 AM CT scheduler. Reads audit rows
  * from the trailing 24h, renders a digest, and returns it. Empty case →
  * `{ ran: false, message: null, reason: 'empty' }`. Opt-out via
@@ -204,7 +229,12 @@ export function runBriefingSectionsAuditDigest(
   const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const allRows = getBriefingSectionsAuditSince(db, cutoff);
   const userFilter = parseAuditDigestUserFilter(env.BRIEFING_AUDIT_DIGEST_USERS);
-  const rows = filterAuditRowsByUsers(allRows, userFilter);
+  const userFiltered = filterAuditRowsByUsers(allRows, userFilter);
+  // Polish 8 (2026-04-30) — apply revert-filter AFTER the user-filter so the
+  // env knob has the same effect regardless of whether a user-filter is set.
+  const rows = shouldIncludeRevertsInDigest(env)
+    ? userFiltered
+    : filterAuditRowsExcludingReverts(userFiltered);
   const message = formatBriefingSectionsAuditDigest(rows, 24);
   if (message === null) {
     return { ran: false, rowCount: 0, message: null, reason: 'empty' };
