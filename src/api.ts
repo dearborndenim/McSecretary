@@ -5,13 +5,78 @@
 
 import http from 'node:http';
 import type Database from 'better-sqlite3';
+import type { BriefingPreviewCache } from './briefing/preview-cache.js';
 
 let _db: Database.Database | null = null;
 let _apiSecret: string = '';
+let _briefingPreviewCacheProvider: (() => BriefingPreviewCache | undefined) | null = null;
 
 export function initApi(db: Database.Database, apiSecret: string): void {
   _db = db;
   _apiSecret = apiSecret;
+}
+
+/**
+ * Register a provider that returns the live `/briefing-preview` cache. Wired
+ * from `src/index.ts` so the admin stats endpoint can read counters without
+ * pulling the cache module at the top of `api.ts` (avoids circular imports).
+ *
+ * The provider may return `undefined` if the cache hasn't been built yet —
+ * the endpoint reports `size:0, hits:0, misses:0` in that case.
+ */
+export function setBriefingPreviewCacheProvider(
+  provider: () => BriefingPreviewCache | undefined,
+): void {
+  _briefingPreviewCacheProvider = provider;
+}
+
+/**
+ * Render the JSON payload for `/admin/briefing-preview-cache-stats`. Pure —
+ * accepts the cache directly so unit tests don't need the HTTP layer.
+ *
+ * Shape (Polish 8 — 2026-04-30):
+ *   {
+ *     size: number,
+ *     ttl_seconds: number,
+ *     hits: number,
+ *     misses: number,
+ *     oldest_entry_age_seconds: number | null,
+ *     disabled: boolean
+ *   }
+ *
+ * `disabled:true` when the cache is the no-op shim (DISABLE=1) OR when no
+ * cache is wired yet. Counters/age default to `0` / `null` in that case.
+ */
+export function buildBriefingPreviewCacheStatsPayload(
+  cache: BriefingPreviewCache | undefined,
+): {
+  size: number;
+  ttl_seconds: number;
+  hits: number;
+  misses: number;
+  oldest_entry_age_seconds: number | null;
+  disabled: boolean;
+} {
+  if (!cache) {
+    return {
+      size: 0,
+      ttl_seconds: 0,
+      hits: 0,
+      misses: 0,
+      oldest_entry_age_seconds: null,
+      disabled: true,
+    };
+  }
+  const stats = cache.stats();
+  return {
+    size: cache.size(),
+    ttl_seconds: cache.ttlSeconds,
+    hits: stats.hits,
+    misses: stats.misses,
+    oldest_entry_age_seconds:
+      stats.oldestEntryAgeMs === null ? null : Math.floor(stats.oldestEntryAgeMs / 1000),
+    disabled: !cache.enabled,
+  };
 }
 
 interface SmsMessage {
@@ -97,6 +162,28 @@ export function startApiServer(port: number = 3000): http.Server {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    // Admin: /briefing-preview cache stats (Polish 8 — 2026-04-30).
+    // Bearer-gated using the same API_SECRET as /api/sms so we don't fork a
+    // second auth surface. Returns counters + age/size + ttl + disabled flag.
+    if (req.method === 'GET' && req.url === '/admin/briefing-preview-cache-stats') {
+      if (!_apiSecret) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'API authentication not configured' }));
+        return;
+      }
+      const authHeader = req.headers.authorization;
+      if (authHeader !== `Bearer ${_apiSecret}`) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      const cache = _briefingPreviewCacheProvider ? _briefingPreviewCacheProvider() : undefined;
+      const payload = buildBriefingPreviewCacheStatsPayload(cache);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
       return;
     }
 
