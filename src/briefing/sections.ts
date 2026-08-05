@@ -55,6 +55,17 @@ export function isValidBriefingSection(name: string): name is BriefingSectionNam
 }
 
 /**
+ * `DISABLE_OVERNIGHT_DEV_SECTION=1` skips fetching NIGHTLY_PLAN.md during
+ * triage, which drops the overnight_dev section from every briefing. Added
+ * 2026-08-05 when the nightly Foreman build was sidelined — the plan file on
+ * GitHub is stale until the nightly system is revived. Only the literal
+ * string '1' disables; anything else keeps the fetch on.
+ */
+export function overnightDevFetchDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DISABLE_OVERNIGHT_DEV_SECTION === '1';
+}
+
+/**
  * Parse a comma-separated section list. Returns `{ valid, invalid }` so the
  * caller can error on any unknown name while still seeing the full valid
  * subset. Whitespace around each entry is tolerated. Empty input returns

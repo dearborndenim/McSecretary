@@ -22,6 +22,7 @@ import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutl
 import { generateBriefing } from './briefing/generator.js';
 import type { UserBriefingContext } from './briefing/generator.js';
 import { readRepoFile } from './empire/github.js';
+import { overnightDevFetchDisabled } from './briefing/sections.js';
 import { formatPendingRequestsForBriefing } from './empire/request-sync.js';
 import { getUserById } from './db/user-queries.js';
 import { fetchOutlookCalendarEvents } from './calendar/outlook-calendar.js';
@@ -253,9 +254,13 @@ export async function runTriage(
       }
     }
 
-    // Fetch overnight dev report from NIGHTLY_PLAN.md (graceful failure)
+    // Fetch overnight dev report from NIGHTLY_PLAN.md (graceful failure).
+    // DISABLE_OVERNIGHT_DEV_SECTION=1 skips the fetch entirely — the nightly
+    // Foreman build is sidelined (2026-08-05) so the plan file is stale.
     let overnightDevSummary: string | undefined;
-    try {
+    if (overnightDevFetchDisabled()) {
+      console.log('Skipping overnight dev report: DISABLE_OVERNIGHT_DEV_SECTION=1');
+    } else try {
       console.log('Fetching overnight dev report...');
       const nightlyPlan = await readRepoFile('claude_code', 'NIGHTLY_PLAN.md');
       if (nightlyPlan && nightlyPlan.trim().length > 0) {
