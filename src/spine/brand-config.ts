@@ -36,7 +36,7 @@ export function resolveHand(
   hand: string,
   env: Record<string, string | undefined>,
 ): { url: string; bearer: string } {
-  const ref = brand.hands[hand];
+  const ref = Object.hasOwn(brand.hands, hand) ? brand.hands[hand] : undefined;
   if (!ref) throw new Error(`Unknown hand: ${hand} (brand ${brand.brand_id})`);
   const url = env[ref.url_env];
   const bearer = env[ref.key_env];

@@ -12,9 +12,11 @@ export function parseAgentKeys(raw: string | undefined, opts: { minLength?: numb
     if (idx <= 0) throw new Error(`AGENT_KEYS entry missing ':' — ${p}`);
     const agent = p.slice(0, idx).trim();
     const key = p.slice(idx + 1).trim();
+    if (!key) throw new Error(`AGENT_KEYS key for ${agent} is empty`);
     if (opts.minLength && key.length < opts.minLength) {
       throw new Error(`AGENT_KEYS key for ${agent} is shorter than ${opts.minLength} chars`);
     }
+    if (map.has(key)) throw new Error(`AGENT_KEYS duplicate key for ${agent}`);
     map.set(key, agent);
   }
   return map;

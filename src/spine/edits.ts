@@ -28,7 +28,7 @@ export function applyEdit(
 ): { ok: true; payload: ActionPayload } | { ok: false; reason: string } {
   const body: Record<string, unknown> = { ...payload.body };
   for (const [k, v] of Object.entries(fields)) {
-    if (!(k in body)) return { ok: false, reason: `Unknown field: ${k}` };
+    if (!Object.hasOwn(body, k)) return { ok: false, reason: `Unknown field: ${k}` };
     if (typeof body[k] !== typeof v) {
       return { ok: false, reason: `Field ${k} is ${typeof body[k]}, got ${typeof v}` };
     }

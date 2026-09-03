@@ -19,4 +19,13 @@ describe('agent keys', () => {
   it('refuses keys shorter than 16 chars at parse time', () => {
     expect(() => parseAgentKeys('finance:short', { minLength: 16 })).toThrow(/finance/);
   });
+
+  it('rejects an empty key regardless of minLength', () => {
+    expect(() => parseAgentKeys('finance:')).toThrow(/finance.*empty/);
+    expect(() => parseAgentKeys('finance: ')).toThrow(/finance.*empty/);
+  });
+
+  it('rejects the same key used by two agents', () => {
+    expect(() => parseAgentKeys('finance:abc,marketing-manager:abc')).toThrow(/duplicate key for marketing-manager/);
+  });
 });
