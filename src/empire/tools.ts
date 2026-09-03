@@ -103,7 +103,7 @@ export const EMPIRE_TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'get_nightly_plan',
     description:
-      'Read the NIGHTLY_PLAN.md from the claude_code repo. Shows tonight\'s prioritized task queue. Use when Rob asks about the plan or what\'s next.',
+      'Read NIGHTLY_PLAN.md from the claude_code repo. This file is a historical task queue — the automated nightly build that consumed it is deactivated, so treat its contents as stale unless Rob says otherwise.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -113,7 +113,7 @@ export const EMPIRE_TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'update_nightly_plan',
     description:
-      'Sync all approved-but-not-yet-synced team dev requests to NIGHTLY_PLAN.md in the claude_code repo under "Next Session Priority Queue". Use after /approve to make sure the Foreman sees the request in its nightly build.',
+      "Append all approved-but-unsynced team dev requests to the 'Next Session Priority Queue' section of NIGHTLY_PLAN.md and mark them synced. Nothing consumes this file automatically today; use it only when Rob explicitly asks to record approved requests there.",
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -123,7 +123,7 @@ export const EMPIRE_TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'append_to_nightly_plan',
     description:
-      'Append an arbitrary task (free-form text) to the "Next Session Priority Queue" section of NIGHTLY_PLAN.md in the claude_code repo. Use when Rob asks to add something directly to tomorrow\'s build.',
+      "Append a free-form task to the 'Next Session Priority Queue' section of NIGHTLY_PLAN.md in the claude_code repo. Nothing consumes this file automatically today (the nightly build is deactivated); use it only when Rob explicitly asks to record a task there.",
     input_schema: {
       type: 'object' as const,
       properties: {
