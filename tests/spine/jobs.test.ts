@@ -27,6 +27,16 @@ describe('spine jobs', () => {
     expect(runExpirySweep(db, NOW)).toContain('1 event undrained'); // events still stale, proposal no longer listed
   });
 
+  it('expiry sweep caps each list at 10 and says how many more', () => {
+    for (let i = 0; i < 12; i++) {
+      insertProposal(db, { agent: 'a', brand_id: 'b', action_type: 'noop', action_payload: { hand: 'h', method: 'POST', path: `/p${i}`, body: {} }, reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-08T00:00:00.000Z' }, '2026-09-06T00:00:00.000Z');
+    }
+    const report = runExpirySweep(db, NOW)!;
+    expect(report).toContain('Expired 12 proposals unanswered:');
+    expect(report.split('\n').filter((l) => l.startsWith('  #'))).toHaveLength(10);
+    expect(report).toContain('  …and 2 more');
+  });
+
   it('monthly summary groups by agent with counts and level, or null when quiet', () => {
     expect(buildTrustMonthlySummary(db, '2026-09-01T00:00:00.000Z')).toBeNull();
     const k = { agent: 'marketing-manager', brand_id: 'b', action_type: 'creative_request' };

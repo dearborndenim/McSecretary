@@ -83,3 +83,10 @@ export function trustSummarySince(db: Database.Database, sinceIso: string): Trus
     'SELECT * FROM trust_ledger WHERE last_change_at >= ? ORDER BY agent, brand_id, action_type',
   ).all(sinceIso) as TrustRow[];
 }
+
+/** Every ledger row owned by `agent`, for the /spine/trust route. */
+export function listTrustRowsForAgent(db: Database.Database, agent: string): TrustRow[] {
+  return db.prepare(
+    'SELECT * FROM trust_ledger WHERE agent = ? ORDER BY brand_id, action_type',
+  ).all(agent) as TrustRow[];
+}

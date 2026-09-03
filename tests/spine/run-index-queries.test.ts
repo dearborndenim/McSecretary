@@ -18,8 +18,9 @@ describe('run index', () => {
   });
 
   it('an upsert cannot change the owning agent', () => {
-    upsertRun(db, { run_id: 'r1', agent: 'finance', brand_id: 'b', skill_commit: 'a', model: 'm', started_at: '2026-09-07T06:00:00.000Z', finished_at: null, outcome: 'running', notes: '' });
-    upsertRun(db, { run_id: 'r1', agent: 'marketing-manager', brand_id: 'b', skill_commit: 'a', model: 'm', started_at: '2026-09-07T06:00:00.000Z', finished_at: null, outcome: 'ok', notes: '' });
+    expect(upsertRun(db, { run_id: 'r1', agent: 'finance', brand_id: 'b', skill_commit: 'a', model: 'm', started_at: '2026-09-07T06:00:00.000Z', finished_at: null, outcome: 'running', notes: '' })).toBe(true);
+    expect(upsertRun(db, { run_id: 'r1', agent: 'marketing-manager', brand_id: 'b', skill_commit: 'a', model: 'm', started_at: '2026-09-07T06:00:00.000Z', finished_at: null, outcome: 'ok', notes: '' })).toBe(false);
     expect(getRun(db, 'r1')!.agent).toBe('finance');
+    expect(getRun(db, 'r1')!.outcome).toBe('running');
   });
 });

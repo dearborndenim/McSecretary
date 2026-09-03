@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeSchema } from '../../src/db/schema.js';
 import {
-  getTrustLevel, recordTrustDecision, promoteTrust, demoteTrust, getTrustRow, trustSummarySince,
+  getTrustLevel, recordTrustDecision, promoteTrust, demoteTrust, getTrustRow, trustSummarySince, listTrustRowsForAgent,
 } from '../../src/db/trust-queries.js';
 
 const K = { agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'creative_request' };
@@ -67,6 +67,16 @@ describe('trust ledger', () => {
     recordTrustDecision(db, { ...K, action_type: 'noop' }, 'approved', '2026-08-01T00:00:00.000Z');
     const rows = trustSummarySince(db, '2026-09-01T00:00:00.000Z');
     expect(rows.map((r) => r.action_type)).toEqual(['creative_request']);
+  });
+
+  it('listTrustRowsForAgent returns only that agent\'s rows, ordered by brand then action', () => {
+    promoteTrust(db, { ...K, action_type: 'noop' }, 2, 'robert', NOW);
+    promoteTrust(db, K, 2, 'robert', NOW);
+    promoteTrust(db, { ...K, agent: 'finance' }, 2, 'robert', NOW);
+    const rows = listTrustRowsForAgent(db, K.agent);
+    expect(rows.map((r) => r.action_type)).toEqual(['creative_request', 'noop']);
+    expect(rows.every((r) => r.agent === K.agent)).toBe(true);
+    expect(listTrustRowsForAgent(db, 'nobody')).toEqual([]);
   });
 
   it('can set a pinned action to level 0 or 1, never above', () => {

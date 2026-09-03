@@ -2,9 +2,11 @@ import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
 import { loadBrandConfig } from './brand-config.js';
+import { BodyTooLarge, readBody } from '../http-util.js';
 import { insertEvent, drainEvents } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
+import { listTrustRowsForAgent } from '../db/trust-queries.js';
 import type { Routed } from './router.js';
 import type { OutcomeInput, ProposalInput, RunIndexInput, SpineEventInput } from './types.js';
 
@@ -25,22 +27,6 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-class BodyTooLarge extends Error {}
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    let size = 0;
-    req.on('data', (c: Buffer | string) => {
-      size += Buffer.byteLength(c);
-      if (size > MAX_BODY_BYTES) { reject(new BodyTooLarge('Body too large')); return; }
-      data += c.toString();
-    });
-    req.on('end', () => resolve(data));
-    req.on('error', reject);
-  });
-}
-
 function requireFields(obj: Record<string, unknown>, fields: string[]): string | null {
   for (const f of fields) if (!(f in obj)) return `Missing field: ${f}`;
   return null;
@@ -48,6 +34,14 @@ function requireFields(obj: Record<string, unknown>, fields: string[]): string |
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function isIsoString(v: unknown): v is string {
+  return typeof v === 'string' && !Number.isNaN(Date.parse(v));
+}
+
+function isFiniteNumberMap(v: unknown): v is Record<string, number> {
+  return isPlainObject(v) && Object.values(v).every((n) => typeof n === 'number' && Number.isFinite(n));
 }
 
 /** Intake shape check so a bad payload is a 400 here, not a failed execution after Robert approved it. Origin safety is enforced again in the executor (`resolveHandUrl`). */
@@ -72,7 +66,37 @@ function validateProposal(b: Record<string, unknown>): string | null {
   if (typeof b.cost_usd !== 'number' || !Number.isFinite(b.cost_usd) || b.cost_usd < 0) return 'cost_usd must be a non-negative number';
   if (typeof b.reversible !== 'boolean') return 'reversible must be a boolean';
   if (![0, 1, 2, 3].includes(b.level_required as number)) return 'level_required must be 0, 1, 2 or 3';
-  if (typeof b.expires_at !== 'string' || Number.isNaN(Date.parse(b.expires_at))) return 'expires_at must be an ISO timestamp';
+  if (!isIsoString(b.expires_at)) return 'expires_at must be an ISO timestamp';
+  return null;
+}
+
+function validateEvent(b: Record<string, unknown>): string | null {
+  if (typeof b.source_hand !== 'string' || typeof b.event_type !== 'string' || typeof b.brand_id !== 'string' || !isPlainObject(b.payload) || typeof b.urgent !== 'boolean') {
+    return 'source_hand, event_type, brand_id must be strings; payload an object; urgent a boolean';
+  }
+  return null;
+}
+
+function validateOutcome(b: Record<string, unknown>): string | null {
+  if (typeof b.artifact_id !== 'string' || b.artifact_id.length === 0) return 'artifact_id must be a non-empty string';
+  if (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id)) return 'brand_id must be a lowercase slug';
+  if (!LANES.includes(b.lane as string)) return `lane must be one of ${LANES.join('|')}`;
+  if (!isPlainObject(b.attributes)) return 'attributes must be an object';
+  if (!isFiniteNumberMap(b.metrics) || Object.keys(b.metrics).length === 0) return 'metrics must be a non-empty object of finite numbers';
+  if (b.prediction !== undefined && b.prediction !== null && !isFiniteNumberMap(b.prediction)) return 'prediction must be null or an object of finite numbers';
+  if (!isIsoString(b.observed_at)) return 'observed_at must be an ISO timestamp';
+  return null;
+}
+
+function validateRun(b: Record<string, unknown>): string | null {
+  if (typeof b.run_id !== 'string' || b.run_id.length === 0 || b.run_id.length > 128) return 'run_id must be a string of 1–128 chars';
+  if (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id)) return 'brand_id must be a lowercase slug';
+  if (typeof b.skill_commit !== 'string') return 'skill_commit must be a string';
+  if (typeof b.model !== 'string') return 'model must be a string';
+  if (!isIsoString(b.started_at)) return 'started_at must be an ISO timestamp';
+  if (b.finished_at !== undefined && b.finished_at !== null && !isIsoString(b.finished_at)) return 'finished_at must be null or an ISO timestamp';
+  if (!RUN_OUTCOMES.includes(b.outcome as string)) return `outcome must be one of ${RUN_OUTCOMES.join('|')}`;
+  if (b.notes !== undefined && (typeof b.notes !== 'string' || b.notes.length > 1000)) return 'notes must be a string of at most 1000 chars';
   return null;
 }
 
@@ -82,6 +106,17 @@ const OUTCOME_FIELDS = ['artifact_id', 'brand_id', 'lane', 'attributes', 'metric
 const RUN_FIELDS = ['run_id', 'brand_id', 'skill_commit', 'model', 'started_at', 'outcome'];
 const LANES = ['marketing', 'ops', 'product'];
 const RUN_OUTCOMES = ['ok', 'nothing_to_do', 'contract_violation', 'hand_error', 'running'];
+
+/** Errors thrown by our own intake checks in the query layer (insertProposal / insertOutcome); safe to echo as a 400. */
+const INTAKE_ERROR_RE = /^Invalid |attributes/;
+
+/** Parse a JSON object body or return the 400 message to send. */
+async function readObject(req: http.IncomingMessage, fields: string[]): Promise<{ body: Record<string, unknown> } | { error: string }> {
+  const body = JSON.parse(await readBody(req, MAX_BODY_BYTES)) as unknown;
+  if (!isPlainObject(body)) return { error: 'Body must be an object' };
+  const missing = requireFields(body, fields);
+  return missing ? { error: missing } : { body };
+}
 
 /**
  * Returns a handler that answers `/spine/*` and returns true, or returns false
@@ -100,24 +135,21 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
     try {
       if (req.method === 'POST' && pathname === '/spine/proposals') {
-        const body = JSON.parse(await readBody(req)) as unknown;
-        if (!isPlainObject(body)) { json(res, 400, { error: 'Body must be an object' }); return true; }
-        const missing = requireFields(body, PROPOSAL_FIELDS) ?? validateProposal(body);
-        if (missing) { json(res, 400, { error: missing }); return true; }
-        const input = { ...(body as unknown as ProposalInput), agent };
+        const parsed = await readObject(req, PROPOSAL_FIELDS);
+        if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+        const bad = validateProposal(parsed.body);
+        if (bad) { json(res, 400, { error: bad }); return true; }
+        const input = { ...(parsed.body as unknown as ProposalInput), agent };
         json(res, 200, await deps.file(input));
         return true;
       }
 
       if (req.method === 'POST' && pathname === '/spine/events') {
-        const body = JSON.parse(await readBody(req)) as unknown;
-        if (!isPlainObject(body)) { json(res, 400, { error: 'Body must be an object' }); return true; }
-        const missing = requireFields(body, EVENT_FIELDS);
-        if (missing) { json(res, 400, { error: missing }); return true; }
-        if (typeof body.source_hand !== 'string' || typeof body.event_type !== 'string' || typeof body.brand_id !== 'string' || !isPlainObject(body.payload) || typeof body.urgent !== 'boolean') {
-          json(res, 400, { error: 'source_hand, event_type, brand_id must be strings; payload an object; urgent a boolean' }); return true;
-        }
-        const id = insertEvent(deps.db, body as unknown as SpineEventInput, deps.now());
+        const parsed = await readObject(req, EVENT_FIELDS);
+        if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+        const bad = validateEvent(parsed.body);
+        if (bad) { json(res, 400, { error: bad }); return true; }
+        const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now());
         json(res, 200, { id });
         return true;
       }
@@ -131,44 +163,43 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       }
 
       if (req.method === 'POST' && pathname === '/spine/outcomes') {
-        const body = JSON.parse(await readBody(req)) as unknown;
-        if (!isPlainObject(body)) { json(res, 400, { error: 'Body must be an object' }); return true; }
-        const missing = requireFields(body, OUTCOME_FIELDS);
-        if (missing) { json(res, 400, { error: missing }); return true; }
-        if (!LANES.includes(body.lane as string) || !isPlainObject(body.attributes) || !isPlainObject(body.metrics) || typeof body.artifact_id !== 'string' || typeof body.brand_id !== 'string') {
-          json(res, 400, { error: 'lane must be marketing|ops|product; attributes and metrics objects; artifact_id and brand_id strings' }); return true;
-        }
-        const o = body as unknown as OutcomeInput;
+        const parsed = await readObject(req, OUTCOME_FIELDS);
+        if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+        const bad = validateOutcome(parsed.body);
+        if (bad) { json(res, 400, { error: bad }); return true; }
+        const o = parsed.body as unknown as OutcomeInput;
         const id = insertOutcome(deps.db, { ...o, prediction: o.prediction ?? null }, { requireAttributes: true });
         json(res, 200, { id });
         return true;
       }
 
       if (req.method === 'POST' && pathname === '/spine/runs') {
-        const body = JSON.parse(await readBody(req)) as unknown;
-        if (!isPlainObject(body)) { json(res, 400, { error: 'Body must be an object' }); return true; }
-        const missing = requireFields(body, RUN_FIELDS);
-        if (missing) { json(res, 400, { error: missing }); return true; }
-        if (!RUN_OUTCOMES.includes(body.outcome as string)) { json(res, 400, { error: `outcome must be one of ${RUN_OUTCOMES.join('|')}` }); return true; }
-        const r = body as unknown as RunIndexInput;
-        upsertRun(deps.db, { ...r, agent, finished_at: r.finished_at ?? null, notes: r.notes ?? '' });
+        const parsed = await readObject(req, RUN_FIELDS);
+        if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+        const bad = validateRun(parsed.body);
+        if (bad) { json(res, 400, { error: bad }); return true; }
+        const r = parsed.body as unknown as RunIndexInput;
+        const ok = upsertRun(deps.db, { ...r, agent, finished_at: r.finished_at ?? null, notes: r.notes ?? '' });
+        if (!ok) { json(res, 409, { error: 'run_id belongs to another agent' }); return true; }
         json(res, 200, { ok: true });
         return true;
       }
 
       if (req.method === 'GET' && pathname.startsWith('/spine/brands/')) {
         const brandId = pathname.slice('/spine/brands/'.length);
+        let brand;
         try {
-          json(res, 200, loadBrandConfig(deps.brandsDir, brandId));
-        } catch (err) {
-          json(res, 404, { error: err instanceof Error ? err.message : String(err) });
+          brand = loadBrandConfig(deps.brandsDir, brandId);
+        } catch {
+          json(res, 404, { error: 'Unknown brand' });
+          return true;
         }
+        json(res, 200, brand);
         return true;
       }
 
       if (req.method === 'GET' && pathname === '/spine/trust') {
-        const rows = deps.db.prepare('SELECT * FROM trust_ledger WHERE agent = ? ORDER BY brand_id, action_type').all(agent);
-        json(res, 200, { rows });
+        json(res, 200, { rows: listTrustRowsForAgent(deps.db, agent) });
         return true;
       }
 
@@ -176,7 +207,10 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       return true;
     } catch (err) {
       if (err instanceof BodyTooLarge) { json(res, 413, { error: 'Body too large' }); return true; }
-      json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      if (err instanceof SyntaxError) { json(res, 400, { error: 'Invalid JSON' }); return true; }
+      if (err instanceof Error && INTAKE_ERROR_RE.test(err.message)) { json(res, 400, { error: err.message }); return true; }
+      console.error('spine route error', err);
+      json(res, 500, { error: 'Internal error' });
       return true;
     }
   };

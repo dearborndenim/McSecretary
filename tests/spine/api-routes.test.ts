@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import { initializeSchema } from '../../src/db/schema.js';
@@ -9,15 +9,18 @@ import { getRun } from '../../src/db/run-index-queries.js';
 const NOW = '2026-09-07T12:00:00.000Z';
 const KEY = 'k'.repeat(24);
 
-function fakeReq(method: string, url: string, body?: unknown, auth?: string) {
-  const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))];
+type FakeReq = import('node:http').IncomingMessage & { destroyed: boolean };
+
+function fakeReq(method: string, url: string, body?: unknown, auth?: string, opts: { chunks?: Buffer[] } = {}): FakeReq {
+  const chunks = opts.chunks ?? (body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
   const listeners: Record<string, ((...a: unknown[]) => void)[]> = {};
   const req = {
-    method, url, headers: auth ? { authorization: auth } : {},
+    method, url, headers: auth ? { authorization: auth } : {}, destroyed: false,
     on(ev: string, fn: (...a: unknown[]) => void) { (listeners[ev] ??= []).push(fn); return req; },
+    destroy() { req.destroyed = true; return req; },
   };
   queueMicrotask(() => { for (const c of chunks) listeners.data?.forEach((f) => f(c)); listeners.end?.forEach((f) => f()); });
-  return req as unknown as import('node:http').IncomingMessage;
+  return req as unknown as FakeReq;
 }
 
 function fakeRes() {
@@ -154,6 +157,7 @@ describe('spine routes', () => {
     const { res, out } = fakeRes();
     await handle(fakeReq('GET', '/spine/brands/nope', undefined, `Bearer ${KEY}`), res);
     expect(out.status).toBe(404);
+    expect(out.body).toBe('{"error":"Unknown brand"}');
   });
 
   it('GET /spine/trust returns the ledger rows for the calling agent', async () => {
@@ -166,15 +170,119 @@ describe('spine routes', () => {
     expect(rows[0].level).toBe(2);
   });
 
-  it('rejects a body over 64 KB with 413 and malformed JSON with 400', async () => {
+  it('rejects a body over 64 KB with 413 and destroys the request', async () => {
+    const { res, out } = fakeRes();
+    const req = fakeReq('POST', '/spine/events', { source_hand: 'h', brand_id: 'b', event_type: 'e', payload: { big: 'x'.repeat(70_000) }, urgent: false }, `Bearer ${KEY}`);
+    await handle(req, res);
+    expect(out.status).toBe(413);
+    expect(req.destroyed).toBe(true);
+  });
+
+  it('rejects malformed JSON with 400 Invalid JSON', async () => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/events', undefined, `Bearer ${KEY}`, { chunks: [Buffer.from('{not json')] }), res);
+    expect(out.status).toBe(400);
+    expect(JSON.parse(out.body)).toEqual({ error: 'Invalid JSON' });
+  });
+
+  it('reassembles a multi-byte character split across chunks', async () => {
+    const proposal = {
+      brand_id: 'dearborn-denim', action_type: 'noop',
+      action_payload: { hand: 'content-engine', method: 'POST', path: '/x', body: {} },
+      reason: 'fit — best hook', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    };
+    const bytes = Buffer.from(JSON.stringify(proposal), 'utf8');
+    const cut = bytes.indexOf(Buffer.from('—', 'utf8')) + 1; // inside the 3-byte em dash
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', undefined, `Bearer ${KEY}`, { chunks: [bytes.subarray(0, cut), bytes.subarray(cut)] }), res);
+    expect(out.status).toBe(200);
+    expect((filed[0] as { reason: string }).reason).toBe('fit — best hook');
+  });
+
+  it('maps an unexpected error to 500 without leaking the message', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const deps: SpineRouterDeps = {
+        db, now: () => NOW, agentKeys: new Map([[KEY, 'marketing-manager']]),
+        brandsDir: path.join(process.cwd(), 'config', 'brands'),
+        file: async () => { throw new Error('db locked'); },
+      };
+      const { res, out } = fakeRes();
+      await createSpineRouter(deps)(fakeReq('POST', '/spine/proposals', {
+        brand_id: 'dearborn-denim', action_type: 'noop',
+        action_payload: { hand: 'content-engine', method: 'POST', path: '/x', body: {} },
+        reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+      }, `Bearer ${KEY}`), res);
+      expect(out.status).toBe(500);
+      expect(out.body).not.toContain('db locked');
+      expect(JSON.parse(out.body)).toEqual({ error: 'Internal error' });
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('POST /spine/outcomes rejects bad fields with 400 and writes nothing', async () => {
+    const good = { artifact_id: 'cr-1', brand_id: 'dearborn-denim', lane: 'marketing', attributes: { angle: 'fit' }, prediction: null, metrics: { roas: 3 }, observed_at: '2026-09-01T00:00:00.000Z' };
+    for (const [patch, re] of [
+      [{ artifact_id: '' }, /artifact_id/],
+      [{ brand_id: '../x' }, /brand_id/],
+      [{ lane: 'finance' }, /lane/],
+      [{ attributes: [] }, /attributes/],
+      [{ metrics: {} }, /metrics/],
+      [{ metrics: { roas: 'high' } }, /metrics/],
+      [{ metrics: { roas: Infinity } }, /metrics/], // JSON.stringify turns Infinity into null
+      [{ prediction: { roas: 'x' } }, /prediction/],
+      [{ prediction: [] }, /prediction/],
+      [{ observed_at: 'yesterday' }, /observed_at/],
+    ] as const) {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('POST', '/spine/outcomes', { ...good, ...patch }, `Bearer ${KEY}`), res);
+      expect(out.status, JSON.stringify(patch)).toBe(400);
+      expect(JSON.parse(out.body).error).toMatch(re);
+    }
+    expect(getFinalOutcomes(db, 'marketing', '2099-01-01T00:00:00.000Z')).toHaveLength(0);
+  });
+
+  it('POST /spine/runs rejects bad fields with 400 and writes nothing', async () => {
+    const good = { run_id: 'r1', brand_id: 'dearborn-denim', skill_commit: 'abc', model: 'fable', started_at: NOW, finished_at: null, outcome: 'running', notes: '' };
+    for (const [patch, re] of [
+      [{ run_id: '' }, /run_id/],
+      [{ run_id: 'x'.repeat(129) }, /run_id/],
+      [{ brand_id: 'Dearborn Denim' }, /brand_id/],
+      [{ skill_commit: 7 }, /skill_commit/],
+      [{ model: null }, /model/],
+      [{ started_at: 'this morning' }, /started_at/],
+      [{ finished_at: 'later' }, /finished_at/],
+      [{ outcome: 'meh' }, /outcome/],
+      [{ notes: 'n'.repeat(1001) }, /notes/],
+      [{ notes: 42 }, /notes/],
+    ] as const) {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('POST', '/spine/runs', { ...good, ...patch }, `Bearer ${KEY}`), res);
+      expect(out.status, JSON.stringify(patch)).toBe(400);
+      expect(JSON.parse(out.body).error).toMatch(re);
+    }
+    expect(getRun(db, 'r1')).toBeUndefined();
+  });
+
+  it('POST /spine/runs answers 409 when the run_id belongs to another agent', async () => {
+    const OTHER = 'f'.repeat(24);
+    const deps: SpineRouterDeps = {
+      db, now: () => NOW, agentKeys: new Map([[KEY, 'marketing-manager'], [OTHER, 'finance']]),
+      brandsDir: path.join(process.cwd(), 'config', 'brands'),
+      file: async () => { throw new Error('unused'); },
+    };
+    const h = createSpineRouter(deps);
+    const run = { run_id: 'r1', brand_id: 'dearborn-denim', skill_commit: 'abc', model: 'fable', started_at: NOW, finished_at: null, outcome: 'running', notes: '' };
     let r = fakeRes();
-    await handle(fakeReq('POST', '/spine/events', { source_hand: 'h', brand_id: 'b', event_type: 'e', payload: { big: 'x'.repeat(70_000) }, urgent: false }, `Bearer ${KEY}`), r.res);
-    expect(r.out.status).toBe(413);
+    await h(fakeReq('POST', '/spine/runs', run, `Bearer ${OTHER}`), r.res);
+    expect(r.out.status).toBe(200);
     r = fakeRes();
-    const req = fakeReq('POST', '/spine/events', undefined, `Bearer ${KEY}`);
-    // emit raw garbage
-    (req as unknown as { on: (ev: string, fn: (c: Buffer) => void) => unknown }).on('data', () => {});
-    await handle(req, r.res);
-    expect(r.out.status).toBe(400);
+    await h(fakeReq('POST', '/spine/runs', { ...run, outcome: 'ok' }, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(409);
+    expect(JSON.parse(r.out.body)).toEqual({ error: 'run_id belongs to another agent' });
+    expect(getRun(db, 'r1')!.agent).toBe('finance');
+    expect(getRun(db, 'r1')!.outcome).toBe('running');
   });
 });

@@ -4,6 +4,8 @@ import { listStaleEvents } from '../db/event-queries.js';
 import { listFailedRunsSince } from '../db/run-index-queries.js';
 import { trustSummarySince } from '../db/trust-queries.js';
 
+const LIST_CAP = 10;
+
 /**
  * 5 AM sweep: expire stale proposals, and build a short health report of
  * expired proposals, undrained events > 7d, and failed runs in the last 24h.
@@ -19,12 +21,14 @@ export function runExpirySweep(db: Database.Database, nowIso: string): string | 
   const lines: string[] = ['Spine health'];
   if (expired.length) {
     lines.push(`Expired ${expired.length} proposal${expired.length === 1 ? '' : 's'} unanswered:`);
-    for (const p of expired.slice(0, 10)) lines.push(`  #${p.id} ${p.agent} ${p.action_type}`);
+    for (const p of expired.slice(0, LIST_CAP)) lines.push(`  #${p.id} ${p.agent} ${p.action_type}`);
+    if (expired.length > LIST_CAP) lines.push(`  …and ${expired.length - LIST_CAP} more`);
   }
   if (stale.length) lines.push(`${stale.length} event${stale.length === 1 ? '' : 's'} undrained > 7d (oldest: ${stale[0]!.event_type} from ${stale[0]!.source_hand})`);
   if (failed.length) {
     lines.push(`${failed.length} failed run${failed.length === 1 ? '' : 's'} in 24h:`);
-    for (const r of failed.slice(0, 10)) lines.push(`  ${r.agent} ${r.run_id} ${r.outcome}${r.notes ? ` — ${r.notes}` : ''}`);
+    for (const r of failed.slice(0, LIST_CAP)) lines.push(`  ${r.agent} ${r.run_id} ${r.outcome}${r.notes ? ` — ${r.notes}` : ''}`);
+    if (failed.length > LIST_CAP) lines.push(`  …and ${failed.length - LIST_CAP} more`);
   }
   return lines.join('\n');
 }
