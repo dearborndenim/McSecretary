@@ -1,21 +1,69 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { RawEmail, ClassifiedEmail } from './types.js';
 
-const SYSTEM_PROMPT = `You are an email triage assistant for Robert McMillan, who owns:
+export const CLASSIFICATION_CATEGORIES = [
+  'customer_inquiry',
+  'order_related',
+  'supplier',
+  'team_internal',
+  'financial',
+  'newsletter',
+  'promotional',
+  'transactional',
+  'personal',
+  'junk',
+] as const;
+export const CLASSIFICATION_URGENCIES = ['critical', 'high', 'medium', 'low'] as const;
+export const CLASSIFICATION_ACTIONS = [
+  'reply_required',
+  'review_required',
+  'fyi_only',
+  'archive',
+  'delete',
+] as const;
+export const CLASSIFICATION_SENDER_IMPORTANCE = [
+  'returning_customer',
+  'new_customer',
+  'vendor',
+  'employee',
+  'bank',
+  'personal',
+  'unknown',
+] as const;
+
+/** MCS-5: the labels are guaranteed by the schema, not by prose in the prompt. */
+export const CLASSIFICATION_OUTPUT_FORMAT: Anthropic.Messages.JSONOutputFormat = {
+  type: 'json_schema',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'category',
+      'urgency',
+      'action_needed',
+      'confidence',
+      'summary',
+      'suggested_action',
+      'sender_importance',
+    ],
+    properties: {
+      category: { type: 'string', enum: [...CLASSIFICATION_CATEGORIES] },
+      urgency: { type: 'string', enum: [...CLASSIFICATION_URGENCIES] },
+      action_needed: { type: 'string', enum: [...CLASSIFICATION_ACTIONS] },
+      // The live API rejects minimum/maximum; the range lives in the description and is clamped in parse.
+      confidence: { type: 'number', description: 'Confidence in the classification, from 0 (guess) to 1 (certain).' },
+      summary: { type: 'string', description: 'One sentence summary of the email' },
+      suggested_action: { type: 'string', description: 'What Rob should do about this' },
+      sender_importance: { type: 'string', enum: [...CLASSIFICATION_SENDER_IMPORTANCE] },
+    },
+  },
+};
+
+export const SYSTEM_PROMPT = `You are an email triage assistant for Robert McMillan, who owns:
 - Dearborn Denim (rob@dearborndenim.com) — a denim/jeans company
 - McMillan Manufacturing (robert@mcmillan-manufacturing.com) — contract manufacturing
 
-Your job is to classify incoming emails. Respond with ONLY a JSON object (no markdown, no explanation):
-
-{
-  "category": "customer_inquiry | order_related | supplier | team_internal | financial | newsletter | promotional | transactional | personal | junk",
-  "urgency": "critical | high | medium | low",
-  "action_needed": "reply_required | review_required | fyi_only | archive | delete",
-  "confidence": 0.0-1.0,
-  "summary": "One sentence summary of the email",
-  "suggested_action": "What Rob should do about this",
-  "sender_importance": "returning_customer | new_customer | vendor | employee | bank | personal | unknown"
-}
+Your job is to classify incoming emails.
 
 Category guidance:
 - customer_inquiry: Questions about products, sizing, orders, samples. Always high priority.
@@ -50,33 +98,42 @@ export interface Classification {
   sender_importance: string;
 }
 
+const REQUIRED_KEYS: (keyof Classification)[] = [
+  'category',
+  'urgency',
+  'action_needed',
+  'confidence',
+  'summary',
+  'suggested_action',
+  'sender_importance',
+];
+
+/**
+ * Parse a structured-output response. The API already enforces the schema, so
+ * this is a plain JSON.parse plus a shape check at the boundary; it throws on
+ * anything that does not match so the caller's error handling sees it.
+ */
 export function parseClassificationResponse(raw: string): Classification {
-  const fallback: Classification = {
-    category: 'unknown',
-    urgency: 'low',
-    action_needed: 'review_required',
-    confidence: 0,
-    summary: 'Failed to classify',
-    suggested_action: 'Review manually',
-    sender_importance: 'unknown',
-  };
-
-  try {
-    const cleaned = raw.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
-    const parsed = JSON.parse(cleaned);
-
-    return {
-      category: parsed.category ?? fallback.category,
-      urgency: parsed.urgency ?? fallback.urgency,
-      action_needed: parsed.action_needed ?? fallback.action_needed,
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
-      summary: parsed.summary ?? fallback.summary,
-      suggested_action: parsed.suggested_action ?? fallback.suggested_action,
-      sender_importance: parsed.sender_importance ?? fallback.sender_importance,
-    };
-  } catch {
-    return fallback;
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Classification response is not an object');
   }
+  const obj = parsed as Record<string, unknown>;
+  for (const key of REQUIRED_KEYS) {
+    if (!(key in obj)) throw new Error(`Classification response missing "${key}"`);
+  }
+  if (typeof obj.confidence !== 'number' || Number.isNaN(obj.confidence)) {
+    throw new Error('Classification response "confidence" is not a number');
+  }
+  return {
+    category: String(obj.category),
+    urgency: String(obj.urgency),
+    action_needed: String(obj.action_needed),
+    confidence: Math.min(1, Math.max(0, obj.confidence)),
+    summary: String(obj.summary),
+    suggested_action: String(obj.suggested_action),
+    sender_importance: String(obj.sender_importance),
+  };
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -89,9 +146,13 @@ export async function classifyEmail(email: RawEmail): Promise<ClassifiedEmail> {
   const client = anthropicClient;
   const prompt = buildClassificationPrompt(email);
 
+  // No regex/fence repair and no silent 'unknown' fallback: the schema guarantees
+  // the shape, and API/parse errors propagate to the caller's per-email catch
+  // (triage skips the email this round and retries next run).
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 300,
+    output_config: { format: CLASSIFICATION_OUTPUT_FORMAT },
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: prompt }],
   });
