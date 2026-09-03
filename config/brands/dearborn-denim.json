@@ -1,0 +1,19 @@
+{
+  "brand_id": "dearborn-denim",
+  "display_name": "Dearborn Denim",
+  "inbox_user_id": "robert-mcmillan",
+  "shopify_store": "dearborn-denim-apparel.myshopify.com",
+  "meta_ad_account": "1560973277494547",
+  "silent_budget_usd": 500,
+  "exploration_share": 0.2,
+  "proposal_expiry_hours": 48,
+  "hands": {
+    "ad-manager":              { "url_env": "AD_MANAGER_URL",     "key_env": "AD_MANAGER_KEY" },
+    "content-engine":          { "url_env": "CONTENT_ENGINE_URL", "key_env": "CONTENT_ENGINE_KEY" },
+    "product-dev":             { "url_env": "PRODUCT_DEV_URL",    "key_env": "PRODUCT_DEV_KEY" },
+    "piece-work-scanner":      { "url_env": "PIECE_WORK_SCANNER_URL", "key_env": "PIECE_WORK_SCANNER_API_KEY" },
+    "purchase-order-receiver": { "url_env": "PO_RECEIVER_URL",    "key_env": "PO_RECEIVER_API_KEY" },
+    "kanban-purchaser":        { "url_env": "KANBAN_PURCHASER_URL", "key_env": "KANBAN_PURCHASER_KEY" },
+    "quickbooks-sync":         { "url_env": "QUICKBOOKS_SYNC_URL", "key_env": "QUICKBOOKS_SYNC_KEY" }
+  }
+}

@@ -48,6 +48,11 @@ export const config = {
     url: optional('PO_RECEIVER_URL', ''),
     apiKey: optional('PO_RECEIVER_API_KEY', ''),
   },
+  spine: {
+    brandsDir: optional('SPINE_BRANDS_DIR', 'config/brands'),
+    agentKeys: optional('AGENT_KEYS', ''),
+    monthlySummaryUserId: optional('SPINE_SUMMARY_USER_ID', 'robert-mcmillan'),
+  },
 } as const;
 
 if (!config.api.secret) {

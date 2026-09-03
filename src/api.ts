@@ -11,6 +11,14 @@ let _db: Database.Database | null = null;
 let _apiSecret: string = '';
 let _briefingPreviewCacheProvider: (() => BriefingPreviewCache | undefined) | null = null;
 
+type SpineHttp = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean>;
+let _spineHttp: SpineHttp | null = null;
+
+/** Wired from src/index.ts. Handles /spine/* before the legacy routes. */
+export function setSpineHttpHandler(handler: SpineHttp): void {
+  _spineHttp = handler;
+}
+
 export function initApi(db: Database.Database, apiSecret: string): void {
   _db = db;
   _apiSecret = apiSecret;
@@ -158,6 +166,10 @@ export function getRecentSmsMessages(db: Database.Database, hours: number = 24, 
 
 export function startApiServer(port: number = 3000): http.Server {
   const server = http.createServer(async (req, res) => {
+    if (_spineHttp && (req.url ?? '').startsWith('/spine/')) {
+      if (await _spineHttp(req, res)) return;
+    }
+
     // CORS + health check
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
