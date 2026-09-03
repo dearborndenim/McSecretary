@@ -76,6 +76,13 @@ import { shouldUserCheckInNow, shouldUserEodNow } from './scheduler-windows.js';
 import { getTomorrowEventsPreview } from './calendar/tomorrow-preview.js';
 import { setEmpireDb, executeEmpireTool } from './empire/tools.js';
 import { buildChatSystemBlocks } from './chat-prompt.js';
+import {
+  EMAIL_SCAN_OUTPUT_FORMAT,
+  parseEmailScanResponse,
+  CLEANUP_OUTPUT_FORMAT,
+  CLEANUP_SYSTEM_PROMPT,
+  parseCleanupResponse,
+} from './email/scan-schemas.js';
 
 let db: Database.Database;
 let anthropic: Anthropic;
@@ -382,11 +389,9 @@ async function handleEmailScan(): Promise<void> {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
+      output_config: { effort: 'low', format: EMAIL_SCAN_OUTPUT_FORMAT },
       system: `You are an email triage assistant for Rob McMillan, owner of Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com).
-
-For each email, decide: is it spam or not? Return ONLY a JSON array where each item has:
-- "index": the email number (1-based)
-- "spam": true or false
+For each email decide whether it is spam.
 
 Mark as spam (true) if the email is:
 - Marketing, promotional, newsletters, product announcements, sales pitches
@@ -405,9 +410,7 @@ Mark as NOT spam (false) if the email is:
 - From an employee or contractor
 - A reply to something Rob sent
 
-When in doubt, mark as NOT spam. Better to let a real email through than miss it.
-
-Respond with ONLY the JSON array. No explanation.`,
+When in doubt, mark as NOT spam. Better to let a real email through than miss it.`,
       messages: [{
         role: 'user',
         content: `Classify these emails:\n\n${emailList}`,
@@ -419,13 +422,7 @@ Respond with ONLY the JSON array. No explanation.`,
       .map((block) => block.text)
       .join('');
 
-    const match = responseText.match(/\[[\s\S]*\]/);
-    if (!match) {
-      console.error('Email scan: failed to parse classification response');
-      return;
-    }
-
-    const classifications: { index: number; spam: boolean }[] = JSON.parse(match[0]);
+    const classifications = parseEmailScanResponse(responseText);
 
     // Collect spam email IDs grouped by account
     const spamByAccount = new Map<string, string[]>();
@@ -547,7 +544,8 @@ async function handleEmailCleanup(userId: string): Promise<string> {
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1000,
-    system: `You are an email triage assistant. Identify emails that are junk, newsletters, promotional, or transactional (not needing attention). Return ONLY a JSON array of the email numbers that should be archived. Example: [1, 3, 5, 8]. If none should be archived, return [].`,
+    output_config: { format: CLEANUP_OUTPUT_FORMAT },
+    system: CLEANUP_SYSTEM_PROMPT,
     messages: [{
       role: 'user',
       content: `Which of these emails are junk, newsletters, promotional, or transactional that can be safely archived?\n\n${emailList}`,
@@ -559,13 +557,7 @@ async function handleEmailCleanup(userId: string): Promise<string> {
     .map((block) => block.text)
     .join('');
 
-  // Parse the numbers
-  const match = responseText.match(/\[[\d,\s]*\]/);
-  if (!match) {
-    return 'Could not identify emails to archive. Try asking me about specific emails.';
-  }
-
-  const indices: number[] = JSON.parse(match[0]);
+  const indices = parseCleanupResponse(responseText);
   if (indices.length === 0) {
     return 'All your recent emails look important. Nothing to archive.';
   }
