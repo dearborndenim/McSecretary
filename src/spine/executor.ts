@@ -22,15 +22,17 @@ const STORED_BODY_CAP = 16384;
 /**
  * Resolve a hand-relative path against the hand's base URL; refuse anything
  * that leaves the hand's origin and base path. `path` is agent-supplied, so
- * it is never concatenated raw — `@`, `//`, `:port`, `?`, `#` and `..` would
- * otherwise move the request (and the hand's bearer) off-origin.
+ * it is never concatenated raw — `@`, `//`, `:port`, `?`, `#`, `\\` and `..`
+ * would otherwise move the request (and the hand's bearer) off-origin.
  */
 export function resolveHandUrl(baseUrl: string, path: string): { ok: true; href: string } | { ok: false; error: string } {
   if (typeof path !== 'string' || !/^\/(?!\/)/.test(path)) {
     return { ok: false, error: `Invalid path: must start with a single '/'` };
   }
-  if (/[@?#\s]/.test(path)) {
-    return { ok: false, error: `Invalid path: '@', '?', '#' and whitespace are not allowed` };
+  // RFC 3986 pchar allowlist (unreserved + sub-delims + ':' + '/' + pct-encoding).
+  // Positive match, so '@', '?', '#', '\\', whitespace and control chars are all refused.
+  if (!/^\/[A-Za-z0-9._~%!$&'()*+,;=:\/-]*$/.test(path)) {
+    return { ok: false, error: 'Invalid path: only unreserved and sub-delim characters are allowed' };
   }
   let base: URL;
   let u: URL;

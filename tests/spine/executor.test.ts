@@ -111,6 +111,7 @@ describe('executeProposal', () => {
       ['/x?y=1', /Invalid path/],
       ['/x#frag', /Invalid path/],
       ['/x y', /Invalid path/],
+      ['/\\evil.com/x', /Invalid path|escapes hand origin/],
       ['x', /Invalid path/],
     ])('path %s', async (path, pattern) => {
       await expectRefused(insertWith({ path }), pattern);
@@ -177,6 +178,11 @@ describe('resolveHandUrl', () => {
     expect(resolveHandUrl('https://am.example/api', '/../admin').ok).toBe(false);
     expect(resolveHandUrl('https://am.example/api', '/x/../../admin').ok).toBe(false);
     expect(resolveHandUrl('https://am.example/api', '/x/../y')).toEqual({ ok: true, href: 'https://am.example/api/y' });
+  });
+
+  it('refuses a sibling-prefix escape and whitespace', () => {
+    expect(resolveHandUrl('https://am.example/a/b', '/../bx').ok).toBe(false);
+    expect(resolveHandUrl('https://am.example/a/b', '/x y').ok).toBe(false);
   });
 
   it('refuses a malformed base URL', () => {
