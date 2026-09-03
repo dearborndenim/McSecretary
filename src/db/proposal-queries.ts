@@ -1,0 +1,109 @@
+import type Database from 'better-sqlite3';
+import { hashPayload } from '../spine/payload-hash.js';
+import type { ProposalInput, ProposalRow, ProposalStatus } from '../spine/types.js';
+
+const LIVE_STATUSES = "('pending','approved','approved_with_edit','executed')";
+
+/**
+ * Insert a proposal. If an identical live proposal (same agent, brand,
+ * action_type, payload hash; status live; not yet expired) exists, return its
+ * id with `deduped: true` and insert nothing.
+ */
+export function insertProposal(
+  db: Database.Database,
+  input: ProposalInput,
+  nowIso: string,
+): { id: number; deduped: boolean } {
+  const payload_hash = hashPayload(input.action_payload);
+  const existing = db.prepare(`
+    SELECT id FROM proposals
+    WHERE agent = ? AND brand_id = ? AND action_type = ? AND payload_hash = ?
+      AND status IN ${LIVE_STATUSES} AND expires_at > ?
+    ORDER BY id DESC LIMIT 1
+  `).get(input.agent, input.brand_id, input.action_type, payload_hash, nowIso) as { id: number } | undefined;
+  if (existing) return { id: existing.id, deduped: true };
+
+  const result = db.prepare(`
+    INSERT INTO proposals
+      (agent, brand_id, action_type, action_payload, payload_hash, reason, evidence,
+       cost_usd, reversible, level_required, status, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+  `).run(
+    input.agent, input.brand_id, input.action_type, JSON.stringify(input.action_payload), payload_hash,
+    input.reason, JSON.stringify(input.evidence), input.cost_usd, input.reversible ? 1 : 0,
+    input.level_required, nowIso, input.expires_at,
+  );
+  return { id: Number(result.lastInsertRowid), deduped: false };
+}
+
+export function getProposalById(db: Database.Database, id: number): ProposalRow | undefined {
+  return db.prepare('SELECT * FROM proposals WHERE id = ?').get(id) as ProposalRow | undefined;
+}
+
+export function listPendingProposals(db: Database.Database): ProposalRow[] {
+  return db.prepare("SELECT * FROM proposals WHERE status = 'pending' ORDER BY created_at ASC").all() as ProposalRow[];
+}
+
+export function decideProposal(
+  db: Database.Database,
+  id: number,
+  status: Extract<ProposalStatus, 'approved' | 'approved_with_edit' | 'rejected'>,
+  decidedBy: string,
+  nowIso: string,
+): void {
+  db.prepare(`
+    UPDATE proposals SET status = ?, decided_by = ?, decided_at = ?, edit_requested_at = NULL
+    WHERE id = ?
+  `).run(status, decidedBy, nowIso, id);
+}
+
+export function recordExecution(
+  db: Database.Database,
+  id: number,
+  status: Extract<ProposalStatus, 'executed' | 'failed'>,
+  result: Record<string, unknown>,
+): void {
+  db.prepare('UPDATE proposals SET status = ?, execution_result = ? WHERE id = ?')
+    .run(status, JSON.stringify(result), id);
+}
+
+/** Expire pending proposals past their expiry. Returns the rows that were expired. */
+export function expireProposals(db: Database.Database, nowIso: string): ProposalRow[] {
+  const rows = db.prepare(
+    "SELECT * FROM proposals WHERE status = 'pending' AND expires_at <= ? ORDER BY id ASC",
+  ).all(nowIso) as ProposalRow[];
+  if (rows.length === 0) return [];
+  const stmt = db.prepare("UPDATE proposals SET status = 'expired' WHERE id = ?");
+  for (const r of rows) stmt.run(r.id);
+  return rows.map((r) => ({ ...r, status: 'expired' as const }));
+}
+
+export function setTelegramRef(db: Database.Database, id: number, chatId: string, messageId: number): void {
+  db.prepare('UPDATE proposals SET telegram_chat_id = ?, telegram_message_id = ? WHERE id = ?')
+    .run(chatId, messageId, id);
+}
+
+export function setEditRequested(db: Database.Database, id: number, nowIso: string): void {
+  db.prepare('UPDATE proposals SET edit_requested_at = ? WHERE id = ?').run(nowIso, id);
+}
+
+/** The most recent pending proposal in this chat awaiting an edit reply, if any. */
+export function findEditRequestedForChat(db: Database.Database, chatId: string): ProposalRow | undefined {
+  return db.prepare(`
+    SELECT * FROM proposals
+    WHERE telegram_chat_id = ? AND status = 'pending' AND edit_requested_at IS NOT NULL
+    ORDER BY edit_requested_at DESC LIMIT 1
+  `).get(chatId) as ProposalRow | undefined;
+}
+
+export function appendEdit(db: Database.Database, id: number, edit: { at: string; note: string }): void {
+  const row = getProposalById(db, id);
+  if (!row) return;
+  const edits = row.edits ? (JSON.parse(row.edits) as unknown[]) : [];
+  edits.push(edit);
+  db.prepare('UPDATE proposals SET edits = ? WHERE id = ?').run(JSON.stringify(edits), id);
+}
+
+export function updateActionPayload(db: Database.Database, id: number, payload: unknown): void {
+  db.prepare('UPDATE proposals SET action_payload = ? WHERE id = ?').run(JSON.stringify(payload), id);
+}
