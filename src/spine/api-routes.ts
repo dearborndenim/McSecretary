@@ -70,10 +70,22 @@ function validateProposal(b: Record<string, unknown>): string | null {
   return null;
 }
 
+/** The brand must have a config file and the hand must be registered in it, or Robert would approve a card that can only fail. */
+function validateBrandAndHand(brandsDir: string, brandId: string, hand: string): string | null {
+  let brand;
+  try { brand = loadBrandConfig(brandsDir, brandId); } catch { return `Unknown brand: ${brandId}`; }
+  if (!Object.hasOwn(brand.hands, hand)) return `Unknown hand for ${brandId}: ${hand}`;
+  return null;
+}
+
+const NAME_MAX = 128;
+
 function validateEvent(b: Record<string, unknown>): string | null {
-  if (typeof b.source_hand !== 'string' || typeof b.event_type !== 'string' || typeof b.brand_id !== 'string' || !isPlainObject(b.payload) || typeof b.urgent !== 'boolean') {
-    return 'source_hand, event_type, brand_id must be strings; payload an object; urgent a boolean';
-  }
+  if (typeof b.source_hand !== 'string' || b.source_hand.length === 0 || b.source_hand.length > NAME_MAX) return `source_hand must be a string of 1–${NAME_MAX} chars`;
+  if (typeof b.event_type !== 'string' || b.event_type.length === 0 || b.event_type.length > NAME_MAX) return `event_type must be a string of 1–${NAME_MAX} chars`;
+  if (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id)) return 'brand_id must be a lowercase slug';
+  if (!isPlainObject(b.payload)) return 'payload must be an object';
+  if (typeof b.urgent !== 'boolean') return 'urgent must be a boolean';
   return null;
 }
 
@@ -140,7 +152,8 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       if (req.method === 'POST' && pathname === '/spine/proposals') {
         const parsed = await readObject(req, PROPOSAL_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
-        const bad = validateProposal(parsed.body);
+        const bad = validateProposal(parsed.body)
+          ?? validateBrandAndHand(deps.brandsDir, parsed.body.brand_id as string, (parsed.body.action_payload as { hand: string }).hand);
         if (bad) { json(res, 400, { error: bad }); return true; }
         const input = { ...(parsed.body as unknown as ProposalInput), agent };
         json(res, 200, await deps.file(input));

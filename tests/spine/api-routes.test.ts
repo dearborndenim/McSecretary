@@ -117,6 +117,32 @@ describe('spine routes', () => {
     expect(filed).toHaveLength(0);
   });
 
+  it('POST /spine/proposals refuses an unknown brand or an unregistered hand', async () => {
+    const good = { action_type: 'noop', action_payload: { hand: 'content-engine', method: 'POST', path: '/x', body: {} }, reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z' };
+    let r = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', { ...good, brand_id: 'no-such-brand' }, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(400);
+    expect(JSON.parse(r.out.body).error).toMatch(/Unknown brand/);
+    r = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', { ...good, brand_id: 'dearborn-denim', action_payload: { ...good.action_payload, hand: 'no-such-hand' } }, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(400);
+    expect(JSON.parse(r.out.body).error).toMatch(/Unknown hand/);
+    expect(filed).toHaveLength(0);
+  });
+
+  it('POST /spine/events caps names and slug-checks brand_id', async () => {
+    for (const [patch, re] of [
+      [{ event_type: 'x'.repeat(129) }, /event_type/],
+      [{ source_hand: '' }, /source_hand/],
+      [{ brand_id: '../x' }, /brand_id/],
+    ] as const) {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('POST', '/spine/events', { source_hand: 'h', brand_id: 'dearborn-denim', event_type: 'e', payload: {}, urgent: false, ...patch }, `Bearer ${KEY}`), res);
+      expect(out.status, JSON.stringify(patch)).toBe(400);
+      expect(JSON.parse(out.body).error).toMatch(re);
+    }
+  });
+
   it('POST /spine/events then GET /spine/events/drain round-trips', async () => {
     let r = fakeRes();
     await handle(fakeReq('POST', '/spine/events', { source_hand: 'purchase-order-receiver', brand_id: 'dearborn-denim', event_type: 'po_received', payload: { po: 9 }, urgent: true }, `Bearer ${KEY}`), r.res);
