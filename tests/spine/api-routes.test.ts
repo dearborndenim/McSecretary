@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import path from 'node:path';
+import http from 'node:http';
 import { initializeSchema } from '../../src/db/schema.js';
 import { createSpineRouter, type SpineRouterDeps } from '../../src/spine/api-routes.js';
 import { getFinalOutcomes } from '../../src/db/outcome-queries.js';
@@ -18,6 +19,7 @@ function fakeReq(method: string, url: string, body?: unknown, auth?: string, opt
     method, url, headers: auth ? { authorization: auth } : {}, destroyed: false,
     on(ev: string, fn: (...a: unknown[]) => void) { (listeners[ev] ??= []).push(fn); return req; },
     destroy() { req.destroyed = true; return req; },
+    pause() { return req; },
   };
   queueMicrotask(() => { for (const c of chunks) listeners.data?.forEach((f) => f(c)); listeners.end?.forEach((f) => f()); });
   return req as unknown as FakeReq;
@@ -27,7 +29,7 @@ function fakeRes() {
   const out = { status: 0, body: '' };
   const res = {
     writeHead(s: number) { out.status = s; return res; },
-    end(b?: string) { out.body = b ?? ''; },
+    end(b?: string, cb?: () => void) { out.body = b ?? ''; cb?.(); },
   };
   return { res: res as unknown as import('node:http').ServerResponse, out };
 }
@@ -135,6 +137,21 @@ describe('spine routes', () => {
     r = fakeRes();
     await handle(fakeReq('POST', '/spine/outcomes', { artifact_id: 'cr-2', brand_id: 'dearborn-denim', lane: 'marketing', attributes: {}, prediction: null, metrics: { roas: 3 }, observed_at: '2026-09-01T00:00:00.000Z' }, `Bearer ${KEY}`), r.res);
     expect(r.out.status).toBe(400);
+    expect(JSON.parse(r.out.body).error).toBe('attributes must be a non-empty object');
+  });
+
+  it('GET /spine/events/drain answers 500 when a stored payload is corrupt', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      db.prepare("INSERT INTO spine_events (source_hand, brand_id, event_type, payload, urgent, received_at) VALUES ('h','dearborn-denim','po_received','{bad',0,?)").run(NOW);
+      const { res, out } = fakeRes();
+      await handle(fakeReq('GET', '/spine/events/drain?types=po_received', undefined, `Bearer ${KEY}`), res);
+      expect(out.status).toBe(500);
+      expect(JSON.parse(out.body)).toEqual({ error: 'Internal error' });
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('POST /spine/runs upserts with the agent from the key', async () => {
@@ -176,6 +193,24 @@ describe('spine routes', () => {
     await handle(req, res);
     expect(out.status).toBe(413);
     expect(req.destroyed).toBe(true);
+  });
+
+  it('delivers the 413 to a real client before closing the socket', async () => {
+    const server = http.createServer(async (req, res) => {
+      if (!(await handle(req, res))) { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as { port: number };
+      const body = JSON.stringify({ source_hand: 'h', brand_id: 'b', event_type: 'e', payload: { big: 'x'.repeat(70_000) }, urgent: false });
+      const response = await fetch(`http://127.0.0.1:${port}/spine/events`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEY}` }, body,
+      });
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ error: 'Body too large' });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it('rejects malformed JSON with 400 Invalid JSON', async () => {

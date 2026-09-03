@@ -81,7 +81,7 @@ function validateOutcome(b: Record<string, unknown>): string | null {
   if (typeof b.artifact_id !== 'string' || b.artifact_id.length === 0) return 'artifact_id must be a non-empty string';
   if (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id)) return 'brand_id must be a lowercase slug';
   if (!LANES.includes(b.lane as string)) return `lane must be one of ${LANES.join('|')}`;
-  if (!isPlainObject(b.attributes)) return 'attributes must be an object';
+  if (!isPlainObject(b.attributes) || Object.keys(b.attributes).length === 0) return 'attributes must be a non-empty object';
   if (!isFiniteNumberMap(b.metrics) || Object.keys(b.metrics).length === 0) return 'metrics must be a non-empty object of finite numbers';
   if (b.prediction !== undefined && b.prediction !== null && !isFiniteNumberMap(b.prediction)) return 'prediction must be null or an object of finite numbers';
   if (!isIsoString(b.observed_at)) return 'observed_at must be an ISO timestamp';
@@ -107,12 +107,15 @@ const RUN_FIELDS = ['run_id', 'brand_id', 'skill_commit', 'model', 'started_at',
 const LANES = ['marketing', 'ops', 'product'];
 const RUN_OUTCOMES = ['ok', 'nothing_to_do', 'contract_violation', 'hand_error', 'running'];
 
-/** Errors thrown by our own intake checks in the query layer (insertProposal / insertOutcome); safe to echo as a 400. */
-const INTAKE_ERROR_RE = /^Invalid |attributes/;
-
-/** Parse a JSON object body or return the 400 message to send. */
+/** Parse a JSON object body or return the 400 message to send. Only the request body's own parse maps to 400; a SyntaxError from anywhere else is a 500. */
 async function readObject(req: http.IncomingMessage, fields: string[]): Promise<{ body: Record<string, unknown> } | { error: string }> {
-  const body = JSON.parse(await readBody(req, MAX_BODY_BYTES)) as unknown;
+  const raw = await readBody(req, MAX_BODY_BYTES);
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return { error: 'Invalid JSON' };
+  }
   if (!isPlainObject(body)) return { error: 'Body must be an object' };
   const missing = requireFields(body, fields);
   return missing ? { error: missing } : { body };
@@ -190,7 +193,8 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         let brand;
         try {
           brand = loadBrandConfig(deps.brandsDir, brandId);
-        } catch {
+        } catch (err) {
+          console.error('spine: brand config load failed', brandId, err);
           json(res, 404, { error: 'Unknown brand' });
           return true;
         }
@@ -206,9 +210,12 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       json(res, 404, { error: 'Not found' });
       return true;
     } catch (err) {
-      if (err instanceof BodyTooLarge) { json(res, 413, { error: 'Body too large' }); return true; }
-      if (err instanceof SyntaxError) { json(res, 400, { error: 'Invalid JSON' }); return true; }
-      if (err instanceof Error && INTAKE_ERROR_RE.test(err.message)) { json(res, 400, { error: err.message }); return true; }
+      if (err instanceof BodyTooLarge) {
+        // Flush the 413 before dropping the socket so the client sees it rather than a reset.
+        res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' });
+        res.end(JSON.stringify({ error: 'Body too large' }), () => req.destroy());
+        return true;
+      }
       console.error('spine route error', err);
       json(res, 500, { error: 'Internal error' });
       return true;
