@@ -4,7 +4,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 
 ## Tech
 - TypeScript (strict), Node.js, SQLite (better-sqlite3)
-- Anthropic SDK: Haiku for classification, Sonnet for briefings
+- Anthropic SDK (`@anthropic-ai/sdk`): model IDs are hardcoded per call site — Haiku for the per-email classifier and cleanup scan, Sonnet for the chat agent, email scan, briefing, reflection, and synthesis. Search for `model:` to find every pin.
 - Microsoft Graph API for Outlook email (single Azure AD app, client credentials)
 - Grammy (Telegram bot) — single bot, per-user routing by chat_id
 - Runs on Railway as persistent service with cron scheduling
@@ -34,8 +34,9 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `src/email/actions.ts` — label, archive, move emails
 - `src/briefing/generator.ts` — morning briefing (Sonnet, per-user context)
 - `src/telegram/bot.ts` — per-user message sending (sendMessageToUser, sendBriefingToUser)
-- `src/tools.ts` — 40+ Claude tools (user-scoped)
-- `src/empire/request-sync.ts` — export approved dev requests for nightly plan
+- `src/tools.ts` — core Claude tools (email, calendar, To Do, schedule, journal) plus the empire tools re-exported from `src/empire/tools.ts`; `TOOL_DEFINITIONS` is the source of truth for the count.
+- `src/chat-prompt.ts` — per-user chat system prompt builder (stable cached block + volatile context block)
+- `src/empire/request-sync.ts` — export approved dev requests to NIGHTLY_PLAN.md (file is a queue only; nightly build deactivated)
 - `src/admin.ts` — CLI for user management
 - `src/triage.ts` — per-user email triage pipeline
 - `src/index.ts` — main entry, Telegram routing, scheduler
@@ -56,7 +57,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 
 ## Telegram Commands (all users)
 - `briefing` — full email/calendar briefing
-- `/request <description>` — submit dev request for nightly plan
+- `/request <description>` — submit a dev request to the admin review queue (approved requests can be exported to NIGHTLY_PLAN.md, which no automated build currently consumes)
 - `/myrequests` — see your submitted requests
 - `journal: <thoughts>` — log journal entry
 - `/log <activity>` — log time
