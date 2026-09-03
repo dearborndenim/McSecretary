@@ -20,16 +20,23 @@ export interface SpineBuildDeps {
   brandsDir: string;
   agentKeys: Map<string, string>;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
+  /** Abort a hand call after this long so a hung hand can't wedge a callback. Default 20 s. */
+  handTimeoutMs?: number;
 }
 
+const DEFAULT_HAND_TIMEOUT_MS = 20_000;
+
 export function buildSpine(d: SpineBuildDeps) {
+  const handTimeoutMs = d.handTimeoutMs ?? DEFAULT_HAND_TIMEOUT_MS;
+  const fetchWithTimeout = (url: string, init: RequestInit) =>
+    d.fetch(url, { ...init, signal: AbortSignal.timeout(handTimeoutMs) });
   const loadBrand = (brandId: string) => loadBrandConfig(d.brandsDir, brandId);
   const chatFor = (brandId: string): string => {
     const user = getUserById(d.db, loadBrand(brandId).inbox_user_id);
     if (!user?.telegram_chat_id) throw new Error(`No Telegram chat for inbox user of ${brandId}`);
     return user.telegram_chat_id;
   };
-  const execute = (id: number) => executeProposal(d.db, id, { fetch: d.fetch, env: d.env, loadBrand, now: d.now });
+  const execute = (id: number) => executeProposal(d.db, id, { fetch: fetchWithTimeout, env: d.env, loadBrand, now: d.now });
   const replyTo = (chatId: string) => async (text: string) => { await d.transport.sendText(chatId, text); };
 
   const file = (input: ProposalInput) => fileProposal(d.db, input, {
@@ -60,8 +67,14 @@ export function buildSpine(d: SpineBuildDeps) {
     if (await handleEditReply(d.db, chatId, text, by, cardDeps(chatId))) return true;
     const cmd = parsePromoteCommand(text);
     if (!cmd) return false;
-    const defaultBrand = listBrandIds(d.brandsDir)[0] ?? 'dearborn-denim';
-    await d.transport.sendText(chatId, runPromoteCommand(d.db, cmd, defaultBrand, by, d.now()));
+    const brands = listBrandIds(d.brandsDir);
+    if (cmd.brand_id === undefined && brands.length > 1) {
+      await d.transport.sendText(chatId, 'Several brands configured — add brand=<id>.');
+      return true;
+    }
+    const defaultBrand = brands[0] ?? 'dearborn-denim';
+    const brandExists = (id: string) => brands.includes(id);
+    await d.transport.sendText(chatId, runPromoteCommand(d.db, cmd, defaultBrand, brandExists, by, d.now()));
     return true;
   };
 

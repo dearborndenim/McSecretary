@@ -1675,6 +1675,9 @@ async function main() {
 
   const bot = await initBot();
 
+  // grammY's default error handler STOPS the bot on any handler throw. Never let that happen.
+  bot.catch((err) => { console.error('Telegram handler error', err.ctx?.update?.update_id, err.error); });
+
   const spine = buildSpine({
     db,
     transport: createTelegramTransport(bot.api),
@@ -1690,9 +1693,16 @@ async function main() {
     const data = ctx.callbackQuery.data;
     if (!data.startsWith('prop:')) return;
     const chatId = ctx.chat?.id.toString() ?? '';
-    const by = getUserByTelegramChatId(db, chatId)?.id ?? chatId;
-    const toast = await spine.onCallback(data, chatId, by);
-    await ctx.answerCallbackQuery({ text: toast.slice(0, 200) });
+    const by = getUserByTelegramChatId(db, chatId)?.id;
+    if (!by) { await ctx.answerCallbackQuery({ text: 'Not registered' }).catch(() => {}); return; }
+    let toast: string;
+    try {
+      toast = await spine.onCallback(data, chatId, by);
+    } catch (err) {
+      console.error('spine: callback failed', data, err);
+      toast = 'Something went wrong — tap again.';
+    }
+    await ctx.answerCallbackQuery({ text: toast.slice(0, 200) }).catch(() => {});
   });
 
   bot.on('message:text', async (ctx) => {
@@ -1700,7 +1710,14 @@ async function main() {
     const text = ctx.message.text;
 
     // Spine: an Edit reply or promote command for the inbox is consumed here, before anything else.
-    if (await spine.onText(chatId, text, getUserByTelegramChatId(db, chatId)?.id ?? chatId)) return;
+    const by = getUserByTelegramChatId(db, chatId)?.id ?? chatId;
+    try {
+      if (await spine.onText(chatId, text, by)) return;
+    } catch (err) {
+      console.error('spine: text intercept failed', err);
+      await ctx.reply("Couldn't process that for the inbox — try again.").catch(() => {});
+      return;
+    }
 
     // Handle /start <invite_code> — account linking (no user lookup needed)
     if (text.startsWith('/start ') && text.trim().length > 7) {

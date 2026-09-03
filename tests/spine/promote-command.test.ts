@@ -20,21 +20,29 @@ describe('promote command', () => {
 
   it('runs against the ledger and reports', () => {
     db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert','R','r@dd.com','admin')").run();
-    const msg = runPromoteCommand(db, { agent: 'a', action_type: 'creative_request', level: 2, brand_id: undefined }, 'dearborn-denim', 'robert', NOW);
+    const msg = runPromoteCommand(db, { agent: 'a', action_type: 'creative_request', level: 2, brand_id: undefined }, 'dearborn-denim', () => true, 'robert', NOW);
     expect(msg).toBe('a creative_request → level 2 (dearborn-denim).');
     expect(getTrustLevel(db, { agent: 'a', brand_id: 'dearborn-denim', action_type: 'creative_request' })).toBe(2);
   });
 
   it('refuses pinned actions with a reason', () => {
     db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert','R','r@dd.com','admin')").run();
-    const msg = runPromoteCommand(db, { agent: 'a', action_type: 'ad_launch', level: 2, brand_id: undefined }, 'dearborn-denim', 'robert', NOW);
+    const msg = runPromoteCommand(db, { agent: 'a', action_type: 'ad_launch', level: 2, brand_id: undefined }, 'dearborn-denim', () => true, 'robert', NOW);
     expect(msg).toMatch(/pinned/);
+  });
+
+  it('refuses an unknown brand and writes nothing', () => {
+    db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert','R','r@dd.com','admin')").run();
+    const known = new Set(['dearborn-denim']);
+    const msg = runPromoteCommand(db, { agent: 'a', action_type: 'x', level: 2, brand_id: 'nope' }, 'dearborn-denim', (id) => known.has(id), 'robert', NOW);
+    expect(msg).toBe('Unknown brand: nope.');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM trust_ledger').get()).toEqual({ n: 0 });
   });
 
   it('only admins may promote; unknown users are refused too', () => {
     db.prepare("INSERT INTO users (id, name, email, role) VALUES ('m','M','m@dd.com','member')").run();
-    expect(runPromoteCommand(db, { agent: 'a', action_type: 'x', level: 2, brand_id: undefined }, 'dearborn-denim', 'm', NOW)).toMatch(/admin/);
-    expect(runPromoteCommand(db, { agent: 'a', action_type: 'x', level: 2, brand_id: undefined }, 'dearborn-denim', 'ghost', NOW)).toMatch(/admin/);
+    expect(runPromoteCommand(db, { agent: 'a', action_type: 'x', level: 2, brand_id: undefined }, 'dearborn-denim', () => true, 'm', NOW)).toMatch(/admin/);
+    expect(runPromoteCommand(db, { agent: 'a', action_type: 'x', level: 2, brand_id: undefined }, 'dearborn-denim', () => true, 'ghost', NOW)).toMatch(/admin/);
     expect(getTrustLevel(db, { agent: 'a', brand_id: 'dearborn-denim', action_type: 'x' })).toBe(1);
   });
 });

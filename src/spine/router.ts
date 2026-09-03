@@ -57,10 +57,15 @@ export async function fileProposal(
     const unrecorded = r.ok && r.recorded === false;
     if (silent && r.ok && !unrecorded) return { id, routed: 'executed_silent' };
     const p = getProposalById(db, id)!;
-    await deps.report(
-      unrecorded ? `Executed #${id} ${p.agent} ${p.action_type} on the hand but the result was NOT recorded (row status changed mid-flight). Check the hand.`
-      : r.ok ? `Executed #${id} ${p.agent} ${p.action_type} (level ${level}, ${r.http_status}).`
-      : `Auto-execution of #${id} ${p.agent} ${p.action_type} failed${r.http_status ? ` (${r.http_status})` : ''}.`);
+    // The hand has already been called and the row recorded; a lost report must not turn that into a throw.
+    try {
+      await deps.report(
+        unrecorded ? `Executed #${id} ${p.agent} ${p.action_type} on the hand but the result was NOT recorded (row status changed mid-flight). Check the hand.`
+        : r.ok ? `Executed #${id} ${p.agent} ${p.action_type} (level ${level}, ${r.http_status}).`
+        : `Auto-execution of #${id} ${p.agent} ${p.action_type} failed${r.http_status ? ` (${r.http_status})` : ''}.`);
+    } catch (err) {
+      console.error('spine: report failed', id, err);
+    }
     return { id, routed: r.ok ? 'executed' : 'execution_failed' };
   }
 
