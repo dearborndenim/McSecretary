@@ -228,3 +228,29 @@ describe('EMPIRE_TOOL_DEFINITIONS', () => {
     }
   });
 });
+
+// ---------- MCS-11: nightly-plan tool descriptions ----------
+
+describe('nightly-plan tool descriptions (nightly build deactivated 2026-08-05)', () => {
+  const desc = (name: string) => EMPIRE_TOOL_DEFINITIONS.find((t) => t.name === name)?.description ?? '';
+
+  it('keeps all three tools registered', () => {
+    const names = EMPIRE_TOOL_DEFINITIONS.map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(['get_nightly_plan', 'update_nightly_plan', 'append_to_nightly_plan']));
+  });
+
+  it('get_nightly_plan says the file is a stale historical queue', () => {
+    expect(desc('get_nightly_plan')).toContain('deactivated');
+    expect(desc('get_nightly_plan')).toContain('stale');
+    expect(desc('get_nightly_plan')).not.toContain("tonight's");
+  });
+
+  it('update_nightly_plan and append_to_nightly_plan say nothing consumes the file and require an explicit ask', () => {
+    for (const name of ['update_nightly_plan', 'append_to_nightly_plan']) {
+      expect(desc(name), name).toContain('Nothing consumes this file automatically');
+      expect(desc(name), name).toContain('explicitly asks');
+      expect(desc(name), name).not.toContain('Foreman sees');
+      expect(desc(name), name).not.toContain("tomorrow's build");
+    }
+  });
+});
