@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { initializeCalendarSchema } from './calendar-schema.js';
 import { initializeUserSchema } from './user-schema.js';
+import { initializeSpineSchema } from './spine-schema.js';
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
@@ -61,4 +62,5 @@ export function initializeSchema(db: Database.Database): void {
 
   initializeCalendarSchema(db);
   initializeUserSchema(db);
+  initializeSpineSchema(db);
 }
