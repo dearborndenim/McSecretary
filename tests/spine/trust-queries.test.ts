@@ -68,4 +68,11 @@ describe('trust ledger', () => {
     const rows = trustSummarySince(db, '2026-09-01T00:00:00.000Z');
     expect(rows.map((r) => r.action_type)).toEqual(['creative_request']);
   });
+
+  it('can set a pinned action to level 0 or 1, never above', () => {
+    const pinned = { ...K, action_type: 'ad_launch' };
+    expect(promoteTrust(db, pinned, 0, 'robert', NOW)).toEqual({ ok: true, level: 0 });
+    expect(promoteTrust(db, pinned, 1, 'robert', NOW)).toEqual({ ok: true, level: 1 });
+    expect(promoteTrust(db, pinned, 2, 'robert', NOW).ok).toBe(false);
+  });
 });

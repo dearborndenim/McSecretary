@@ -3,6 +3,7 @@ import type { ActionPayload } from './types.js';
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (typeof (value as { toJSON?: unknown }).toJSON === 'function') return canonical((value as { toJSON: () => unknown }).toJSON());
   if (Array.isArray(value)) return `[${value.map((v) => canonical(v === undefined ? null : v)).join(',')}]`;
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();

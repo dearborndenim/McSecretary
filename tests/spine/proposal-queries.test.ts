@@ -4,7 +4,7 @@ import { initializeSchema } from '../../src/db/schema.js';
 import {
   insertProposal, getProposalById, listPendingProposals, decideProposal,
   recordExecution, expireProposals, setTelegramRef, appendEdit, setEditRequested,
-  findEditRequestedForChat,
+  findEditRequestedForChat, updateActionPayload,
 } from '../../src/db/proposal-queries.js';
 import type { ProposalInput } from '../../src/spine/types.js';
 
@@ -103,5 +103,34 @@ describe('proposal queries', () => {
     const row = getProposalById(db, id)!;
     expect(row.telegram_message_id).toBe(987);
     expect(JSON.parse(row.edits!)).toHaveLength(2);
+  });
+
+  it('normalises expires_at to ISO UTC and rejects garbage', () => {
+    const { id } = insertProposal(db, input({ expires_at: '2026-09-09T14:00:00+02:00' }), NOW);
+    expect(getProposalById(db, id)!.expires_at).toBe('2026-09-09T12:00:00.000Z');
+    expect(() => insertProposal(db, input({ expires_at: 'next tuesday' }), NOW)).toThrow(/Invalid expires_at/);
+  });
+
+  it('an approved or executed row still de-duplicates until it expires', () => {
+    const a = insertProposal(db, input(), NOW);
+    decideProposal(db, a.id, 'approved', 'robert', NOW);
+    expect(insertProposal(db, input(), NOW)).toEqual({ id: a.id, deduped: true });
+    recordExecution(db, a.id, 'executed', {});
+    expect(insertProposal(db, input(), NOW)).toEqual({ id: a.id, deduped: true });
+  });
+
+  it('decide, setEditRequested and recordExecution are no-ops on ineligible rows', () => {
+    const { id } = insertProposal(db, input(), NOW);
+    expect(decideProposal(db, id, 'rejected', 'robert', NOW)).toBe(true);
+    expect(decideProposal(db, id, 'approved', 'robert', NOW)).toBe(false);
+    expect(setEditRequested(db, id, NOW)).toBe(false);
+    expect(recordExecution(db, id, 'executed', {})).toBe(false);
+    expect(getProposalById(db, id)!.status).toBe('rejected');
+  });
+
+  it('updateActionPayload replaces the stored payload', () => {
+    const { id } = insertProposal(db, input(), NOW);
+    updateActionPayload(db, id, { hand: 'content-engine', method: 'POST', path: '/api/briefs', body: { angle: 'x' } });
+    expect(JSON.parse(getProposalById(db, id)!.action_payload).body.angle).toBe('x');
   });
 });

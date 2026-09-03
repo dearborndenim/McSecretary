@@ -2,6 +2,9 @@ import type Database from 'better-sqlite3';
 import { hashPayload } from '../spine/payload-hash.js';
 import type { ProposalInput, ProposalRow, ProposalStatus } from '../spine/types.js';
 
+// Timestamps are compared as strings; every stored timestamp must be Date#toISOString() format.
+// insertProposal normalises expires_at; nowIso callers must pass toISOString() output.
+
 const LIVE_STATUSES = "('pending','approved','approved_with_edit','executed')";
 
 /**
@@ -14,6 +17,10 @@ export function insertProposal(
   input: ProposalInput,
   nowIso: string,
 ): { id: number; deduped: boolean } {
+  const expiresMs = Date.parse(input.expires_at);
+  if (Number.isNaN(expiresMs)) throw new Error(`Invalid expires_at: ${input.expires_at}`);
+  const expiresAt = new Date(expiresMs).toISOString();
+
   const payload_hash = hashPayload(input.action_payload);
   const existing = db.prepare(`
     SELECT id FROM proposals
@@ -31,7 +38,7 @@ export function insertProposal(
   `).run(
     input.agent, input.brand_id, input.action_type, JSON.stringify(input.action_payload), payload_hash,
     input.reason, JSON.stringify(input.evidence), input.cost_usd, input.reversible ? 1 : 0,
-    input.level_required, nowIso, input.expires_at,
+    input.level_required, nowIso, expiresAt,
   );
   return { id: Number(result.lastInsertRowid), deduped: false };
 }
@@ -41,30 +48,44 @@ export function getProposalById(db: Database.Database, id: number): ProposalRow 
 }
 
 export function listPendingProposals(db: Database.Database): ProposalRow[] {
-  return db.prepare("SELECT * FROM proposals WHERE status = 'pending' ORDER BY created_at ASC").all() as ProposalRow[];
+  return db.prepare(
+    "SELECT * FROM proposals WHERE status = 'pending' ORDER BY created_at ASC, id ASC",
+  ).all() as ProposalRow[];
 }
 
+/**
+ * Record a human decision. Only a `pending` row can be decided; returns false
+ * (no-op) when the row is missing or not pending.
+ */
 export function decideProposal(
   db: Database.Database,
   id: number,
   status: Extract<ProposalStatus, 'approved' | 'approved_with_edit' | 'rejected'>,
   decidedBy: string,
   nowIso: string,
-): void {
-  db.prepare(`
+): boolean {
+  const result = db.prepare(`
     UPDATE proposals SET status = ?, decided_by = ?, decided_at = ?, edit_requested_at = NULL
-    WHERE id = ?
+    WHERE id = ? AND status = 'pending'
   `).run(status, decidedBy, nowIso, id);
+  return result.changes === 1;
 }
 
+/**
+ * Record the outcome of calling the hand. Only a pending/approved/
+ * approved_with_edit row can be executed; returns false (no-op) otherwise.
+ */
 export function recordExecution(
   db: Database.Database,
   id: number,
   status: Extract<ProposalStatus, 'executed' | 'failed'>,
   result: Record<string, unknown>,
-): void {
-  db.prepare('UPDATE proposals SET status = ?, execution_result = ? WHERE id = ?')
-    .run(status, JSON.stringify(result), id);
+): boolean {
+  const r = db.prepare(`
+    UPDATE proposals SET status = ?, execution_result = ?
+    WHERE id = ? AND status IN ('pending','approved','approved_with_edit')
+  `).run(status, JSON.stringify(result), id);
+  return r.changes === 1;
 }
 
 /** Expire pending proposals past their expiry. Returns the rows that were expired. */
@@ -83,8 +104,15 @@ export function setTelegramRef(db: Database.Database, id: number, chatId: string
     .run(chatId, messageId, id);
 }
 
-export function setEditRequested(db: Database.Database, id: number, nowIso: string): void {
-  db.prepare('UPDATE proposals SET edit_requested_at = ? WHERE id = ?').run(nowIso, id);
+/**
+ * Mark a pending row as awaiting an edit reply. Returns false (no-op) when the
+ * row is missing or not pending.
+ */
+export function setEditRequested(db: Database.Database, id: number, nowIso: string): boolean {
+  const result = db.prepare(
+    "UPDATE proposals SET edit_requested_at = ? WHERE id = ? AND status = 'pending'",
+  ).run(nowIso, id);
+  return result.changes === 1;
 }
 
 /** The most recent pending proposal in this chat awaiting an edit reply, if any. */
@@ -92,7 +120,7 @@ export function findEditRequestedForChat(db: Database.Database, chatId: string):
   return db.prepare(`
     SELECT * FROM proposals
     WHERE telegram_chat_id = ? AND status = 'pending' AND edit_requested_at IS NOT NULL
-    ORDER BY edit_requested_at DESC LIMIT 1
+    ORDER BY edit_requested_at DESC, id DESC LIMIT 1
   `).get(chatId) as ProposalRow | undefined;
 }
 

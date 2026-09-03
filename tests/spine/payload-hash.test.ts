@@ -28,4 +28,10 @@ describe('hashPayload', () => {
     expect(hashPayload({ ...base, body: { a: 1, b: undefined } })).toBe(hashPayload({ ...base, body: { a: 1 } }));
     expect(hashPayload({ ...base, body: { l: [1, undefined] } })).toBe(hashPayload({ ...base, body: { l: [1, null] } }));
   });
+
+  it('hashes toJSON objects like JSON.stringify', () => {
+    const base = { hand: 'x', method: 'POST' as const, path: '/a' };
+    const d = new Date('2026-09-07T00:00:00.000Z');
+    expect(hashPayload({ ...base, body: { at: d } })).toBe(hashPayload({ ...base, body: { at: d.toISOString() } }));
+  });
 });
