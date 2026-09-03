@@ -85,7 +85,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (rob@dearborndenim.com or robert@mcmillan-manufacturing.com)' },
+        account: { type: 'string', description: "One of the calling user's linked email addresses — use the Account: value shown with the email in the RECENT EMAILS context." },
         email_id: { type: 'string', description: 'The email message ID' },
       },
       required: ['account', 'email_id'],
@@ -97,7 +97,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account' },
+        account: { type: 'string', description: "One of the calling user's linked email addresses — use the Account: value shown with the email in the RECENT EMAILS context." },
         email_id: { type: 'string', description: 'The email message ID' },
         category: { type: 'string', description: 'Category name to apply (e.g., "spam", "customer", "supplier", "follow-up")' },
       },
@@ -106,11 +106,11 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   {
     name: 'mark_email_read',
-    description: 'Mark an email as read in Outlook.',
+    description: "Mark a single email as read in Outlook without moving or tagging it. Use when the user wants an item cleared from unread without archiving. Returns a confirmation; does not return the email.",
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account' },
+        account: { type: 'string', description: "One of the calling user's linked email addresses — use the Account: value shown with the email in the RECENT EMAILS context." },
         email_id: { type: 'string', description: 'The email message ID' },
       },
       required: ['account', 'email_id'],
@@ -118,11 +118,11 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   {
     name: 'send_email',
-    description: 'Send an email from one of Rob\'s Outlook accounts. ALWAYS ask Rob for approval before sending. Use when Rob asks you to draft and send an email or reply.',
+    description: "Send a new email or a reply from one of the calling user's Outlook accounts. Sending is irreversible, so call this only after the user has approved the exact recipient, subject, and body in this conversation. When reply_to_id is given, Outlook threads the message as a reply and the subject is ignored. Returns a confirmation string or the Graph error.",
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Send from this account (rob@dearborndenim.com or robert@mcmillan-manufacturing.com)' },
+        account: { type: 'string', description: "Send from this account: one of the calling user's linked email addresses — use the Account: value shown with the email in the RECENT EMAILS context." },
         to: { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses' },
         subject: { type: 'string', description: 'Email subject line' },
         body: { type: 'string', description: 'Email body text' },
@@ -137,7 +137,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional, defaults to rob@dearborndenim.com)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool uses the user's first linked account." },
         search: { type: 'string', description: 'Search term — name, email, or company (optional, lists all if omitted)' },
         limit: { type: 'number', description: 'Max results (default 20)' },
       },
@@ -161,19 +161,19 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   {
     name: 'complete_todo_task',
-    description: 'Mark a task as completed in Microsoft To Do.',
+    description: "Mark one task complete in Microsoft To Do. task_title is matched case-insensitively as a substring against the list's incomplete tasks and the first match is completed — use list_todo_tasks first when the title is ambiguous. list_name must already exist; a name that does not match an existing list creates a new empty list.",
     input_schema: {
       type: 'object' as const,
       properties: {
         list_name: { type: 'string', description: 'Task list name' },
-        task_title: { type: 'string', description: 'Title of the task to complete (will match closest)' },
+        task_title: { type: 'string', description: 'Title (or a distinctive substring) of the task to complete; first case-insensitive substring match wins' },
       },
       required: ['list_name', 'task_title'],
     },
   },
   {
     name: 'list_todo_tasks',
-    description: 'List incomplete tasks from Microsoft To Do.',
+    description: "List incomplete tasks. With list_name, returns that list's open tasks (a nonexistent list_name creates an empty list — use the exact names from the MICROSOFT TO DO TASKS context); without it, returns every list with its open tasks.",
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -200,7 +200,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account' },
+        account: { type: 'string', description: "One of the calling user's linked email addresses — use the Account: value shown with the email in the RECENT EMAILS context." },
         email_ids: { type: 'array', items: { type: 'string' }, description: 'Array of email message IDs to archive' },
       },
       required: ['account', 'email_ids'],
@@ -212,7 +212,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account' },
+        account: { type: 'string', description: "One of the calling user's linked email addresses — use the Account: value shown with the email in the RECENT EMAILS context." },
         email_ids: { type: 'array', items: { type: 'string' }, description: 'Array of email message IDs to categorize' },
         category: { type: 'string', description: 'Category name to apply to all (e.g., "spam", "customer", "follow-up")' },
       },
@@ -225,7 +225,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional, processes both if omitted)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool runs against all of the user's linked accounts." },
         category: { type: 'string', description: 'Category name to search for (e.g., "spam", "newsletter")' },
       },
       required: ['category'],
@@ -238,7 +238,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional, defaults to rob@dearborndenim.com)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool uses the user's first linked account." },
       },
       required: [],
     },
@@ -249,7 +249,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool uses the user's first linked account." },
         name: { type: 'string', description: 'Category display name (e.g., "Apollo Response", "Follow Up", "VIP Customer")' },
         color: { type: 'string', description: 'Color preset (preset0-preset24, or "none"). Optional.' },
       },
@@ -263,7 +263,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional, fetches from both if omitted)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool runs against all of the user's linked accounts." },
         start_date: { type: 'string', description: 'Start date YYYY-MM-DD (defaults to today)' },
         end_date: { type: 'string', description: 'End date YYYY-MM-DD (defaults to tomorrow)' },
       },
@@ -276,7 +276,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional, defaults to rob@dearborndenim.com)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool uses the user's first linked account." },
         subject: { type: 'string', description: 'Event title/subject' },
         start: { type: 'string', description: 'Start time in YYYY-MM-DDTHH:MM:SS format (Chicago time)' },
         end: { type: 'string', description: 'End time in YYYY-MM-DDTHH:MM:SS format (Chicago time)' },
@@ -294,7 +294,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool uses the user's first linked account." },
         event_id: { type: 'string', description: 'The event ID to update' },
         subject: { type: 'string', description: 'New title (optional)' },
         start: { type: 'string', description: 'New start time YYYY-MM-DDTHH:MM:SS (optional)' },
@@ -310,7 +310,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        account: { type: 'string', description: 'Email account (optional)' },
+        account: { type: 'string', description: "Optional. One of the calling user's linked email addresses; when omitted the tool uses the user's first linked account." },
         event_id: { type: 'string', description: 'The event ID to delete' },
       },
       required: ['event_id'],
@@ -323,7 +323,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        task_name: { type: 'string', description: 'Task name: "Morning Briefing", "Hourly Check-In", "Evening Summary", or "Weekly Synthesis"' },
+        task_name: { type: 'string', description: 'Exact job name as listed by view_schedule (e.g. "Morning Briefing", "Email Scan"); unknown names are rejected' },
         cron_expression: { type: 'string', description: 'New cron expression (e.g., "0 5 * * 1-5" for 5 AM weekdays)' },
         description: { type: 'string', description: 'Updated description (optional)' },
       },
@@ -332,11 +332,11 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   {
     name: 'toggle_schedule',
-    description: 'Enable or disable a scheduled task. Use when Rob wants to pause or resume a recurring task.',
+    description: 'Enable or disable one recurring job. Use when the user wants to pause or resume a job; call view_schedule first to get the exact name.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        task_name: { type: 'string', description: 'Task name' },
+        task_name: { type: 'string', description: 'Exact job name as listed by view_schedule (e.g. "Morning Briefing", "Email Scan"); unknown names are rejected' },
         enabled: { type: 'boolean', description: 'true to enable, false to disable' },
       },
       required: ['task_name', 'enabled'],
@@ -344,7 +344,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   {
     name: 'view_schedule',
-    description: 'Show the current schedule of all recurring tasks with their cron expressions and status.',
+    description: "Return every recurring job with its cron expression, enabled flag, and description. Use before update_schedule or toggle_schedule, and whenever the user asks when something runs.",
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -353,7 +353,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   },
   {
     name: 'check_journal_health',
-    description: 'Check the health of the self-improvement journal system. Shows last 7 days of reflection file status, master knowledge file info, and next synthesis date.',
+    description: "Report which of the last 7 days have reflection/improvement/learnings files, master-learnings and master-patterns sizes and last-modified dates, and the next weekly synthesis date. Read-only.",
     input_schema: {
       type: 'object' as const,
       properties: {},
