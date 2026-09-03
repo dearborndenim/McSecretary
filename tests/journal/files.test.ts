@@ -11,7 +11,7 @@ import {
   readRobJournal,
 } from '../../src/journal/files.js';
 
-const TEST_BASE = path.join(process.cwd(), 'data', 'journal');
+const TEST_BASE = process.env['JOURNAL_PATH']!; // set by vitest.config.ts to a temp dir
 
 describe('journal files', () => {
   it('creates directories', () => {

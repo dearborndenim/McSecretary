@@ -11,7 +11,7 @@ import {
   readMasterPatterns,
 } from '../../src/journal/files.js';
 
-const JOURNAL_DIR = path.join(process.cwd(), 'data', 'journal', 'secretary');
+const JOURNAL_DIR = path.join(process.env['JOURNAL_PATH']!, 'secretary');
 
 function mockAnthropic() {
   return {

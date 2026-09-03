@@ -7,7 +7,7 @@ import { initializeSchema } from '../../src/db/schema.js';
 import { insertConversationMessage } from '../../src/db/conversation-queries.js';
 import { ensureJournalDirs } from '../../src/journal/files.js';
 
-const JOURNAL_DIR = path.join(process.cwd(), 'data', 'journal', 'secretary');
+const JOURNAL_DIR = path.join(process.env['JOURNAL_PATH']!, 'secretary');
 
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');

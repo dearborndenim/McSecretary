@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeRobJournal, readRobJournal, ensureJournalDirs } from '../../src/journal/files.js';
 
-const BASE = path.join(process.cwd(), 'data', 'journal', 'rob');
+const BASE = path.join(process.env['JOURNAL_PATH']!, 'rob');
 
 describe('EOD reflection capture', () => {
   beforeEach(() => {
