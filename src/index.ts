@@ -44,7 +44,12 @@ import {
   startApiServer,
   getRecentSmsMessages,
   setBriefingPreviewCacheProvider,
+  setSpineHttpHandler,
 } from './api.js';
+import { buildSpine } from './spine/wiring.js';
+import { createTelegramTransport } from './spine/telegram-card.js';
+import { parseAgentKeys } from './spine/agent-keys.js';
+import { runExpirySweep, buildTrustMonthlySummary } from './spine/jobs.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
 import { seedTeam } from './db/seed-team.js';
 import {
@@ -417,6 +422,21 @@ async function handleBriefingSectionsAuditDigest(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Briefing-audit digest failed:', msg);
   }
+}
+
+async function handleSpineSweep(): Promise<void> {
+  const report = runExpirySweep(db, new Date().toISOString());
+  if (!report) return;
+  try { await sendMessageToUser(config.spine.monthlySummaryUserId, report, false); }
+  catch (err) { console.error('Spine sweep report failed:', err); }
+}
+
+async function handleTrustMonthlySummary(): Promise<void> {
+  const since = new Date(); since.setUTCMonth(since.getUTCMonth() - 1);
+  const summary = buildTrustMonthlySummary(db, since.toISOString());
+  if (!summary) return;
+  try { await sendMessageToUser(config.spine.monthlySummaryUserId, summary, false); }
+  catch (err) { console.error('Trust summary failed:', err); }
 }
 
 async function handleInviteReminders(): Promise<void> {
@@ -1655,9 +1675,32 @@ async function main() {
 
   const bot = await initBot();
 
+  const spine = buildSpine({
+    db,
+    transport: createTelegramTransport(bot.api),
+    now: () => new Date().toISOString(),
+    env: process.env,
+    brandsDir: config.spine.brandsDir,
+    agentKeys: parseAgentKeys(config.spine.agentKeys, { minLength: 16 }),
+    fetch: (url, init) => fetch(url, init),
+  });
+  setSpineHttpHandler(spine.handleHttp);
+
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    if (!data.startsWith('prop:')) return;
+    const chatId = ctx.chat?.id.toString() ?? '';
+    const by = getUserByTelegramChatId(db, chatId)?.id ?? chatId;
+    const toast = await spine.onCallback(data, chatId, by);
+    await ctx.answerCallbackQuery({ text: toast.slice(0, 200) });
+  });
+
   bot.on('message:text', async (ctx) => {
     const chatId = ctx.chat.id.toString();
     const text = ctx.message.text;
+
+    // Spine: an Edit reply or promote command for the inbox is consumed here, before anything else.
+    if (await spine.onText(chatId, text, getUserByTelegramChatId(db, chatId)?.id ?? chatId)) return;
 
     // Handle /start <invite_code> — account linking (no user lookup needed)
     if (text.startsWith('/start ') && text.trim().length > 7) {
@@ -1725,6 +1768,8 @@ async function main() {
     { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },
     { name: 'Invite Reminders', schedule: '0 9 * * *', handler: handleInviteReminders, description: 'Daily 9 AM — resend invite to entries >48h old with no /start' },
     { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
+    { name: 'Spine Sweep', schedule: '0 5 * * *', handler: handleSpineSweep, description: 'Daily 5 AM CT — expire stale proposals, report undrained events and failed runs' },
+    { name: 'Trust Monthly Summary', schedule: '0 7 1 * *', handler: handleTrustMonthlySummary, description: '1st of month 7 AM CT — per-agent trust ledger summary for promotion decisions' },
   ]);
   startSchedulerFromDb(db);
 
