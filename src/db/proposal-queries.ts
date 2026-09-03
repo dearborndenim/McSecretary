@@ -115,6 +115,16 @@ export function setEditRequested(db: Database.Database, id: number, nowIso: stri
   return result.changes === 1;
 }
 
+/**
+ * Drop the edit-requested flag on every other pending proposal in this chat,
+ * so a chat is never waiting on two edit replies at once.
+ */
+export function clearEditRequestedForChat(db: Database.Database, chatId: string, exceptId: number): void {
+  db.prepare(
+    "UPDATE proposals SET edit_requested_at = NULL WHERE telegram_chat_id = ? AND status = 'pending' AND id != ?",
+  ).run(chatId, exceptId);
+}
+
 /** The most recent pending proposal in this chat awaiting an edit reply, if any. */
 export function findEditRequestedForChat(db: Database.Database, chatId: string): ProposalRow | undefined {
   return db.prepare(`
