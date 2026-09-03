@@ -133,4 +133,14 @@ describe('proposal queries', () => {
     updateActionPayload(db, id, { hand: 'content-engine', method: 'POST', path: '/api/briefs', body: { angle: 'x' } });
     expect(JSON.parse(getProposalById(db, id)!.action_payload).body.angle).toBe('x');
   });
+
+  it('updateActionPayload is a no-op on a decided row', () => {
+    const { id } = insertProposal(db, input(), NOW);
+    decideProposal(db, id, 'rejected', 'robert', NOW);
+    const before = getProposalById(db, id)!;
+    expect(updateActionPayload(db, id, { hand: 'content-engine', method: 'POST', path: '/api/briefs', body: { angle: 'x' } })).toBe(false);
+    const after = getProposalById(db, id)!;
+    expect(after.action_payload).toBe(before.action_payload);
+    expect(after.payload_hash).toBe(before.payload_hash);
+  });
 });

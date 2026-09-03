@@ -147,8 +147,14 @@ export function appendEdit(db: Database.Database, id: number, edit: { at: string
   db.prepare('UPDATE proposals SET edits = ? WHERE id = ?').run(JSON.stringify(edits), id);
 }
 
-/** Replace the payload and keep `payload_hash` in step so dedupe sees the edited action. */
-export function updateActionPayload(db: Database.Database, id: number, payload: ActionPayload): void {
-  db.prepare('UPDATE proposals SET action_payload = ?, payload_hash = ? WHERE id = ?')
-    .run(JSON.stringify(payload), hashPayload(payload), id);
+/**
+ * Replace the payload and keep `payload_hash` in step so dedupe sees the
+ * edited action. Only a `pending` row can be edited; returns false (no-op)
+ * when the row is missing or already decided.
+ */
+export function updateActionPayload(db: Database.Database, id: number, payload: ActionPayload): boolean {
+  const result = db.prepare(
+    "UPDATE proposals SET action_payload = ?, payload_hash = ? WHERE id = ? AND status = 'pending'",
+  ).run(JSON.stringify(payload), hashPayload(payload), id);
+  return result.changes === 1;
 }

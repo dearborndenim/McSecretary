@@ -189,7 +189,10 @@ export async function handleEditReply(
   if (!parsed.ok) { await safeReply(deps, `Still editing #${p.id}. ${parsed.reason}`); return true; }
   const applied = applyEdit(JSON.parse(p.action_payload) as ActionPayload, parsed.fields);
   if (!applied.ok) { await safeReply(deps, `Still editing #${p.id}. ${applied.reason}`); return true; }
-  updateActionPayload(db, p.id, applied.payload);
+  if (!updateActionPayload(db, p.id, applied.payload)) {
+    await safeReply(deps, `#${p.id} was already decided.`);
+    return true;
+  }
   appendEdit(db, p.id, { at: deps.now(), note: text.trim() });
   await approveAndExecute(db, { ...p, action_payload: JSON.stringify(applied.payload) }, 'approved_with_edit', by, deps);
   return true;
