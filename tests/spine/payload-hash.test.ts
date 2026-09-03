@@ -22,4 +22,10 @@ describe('hashPayload', () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
   });
+
+  it('treats undefined like JSON.stringify: dropped in objects, null in arrays', () => {
+    const base = { hand: 'x', method: 'POST' as const, path: '/a' };
+    expect(hashPayload({ ...base, body: { a: 1, b: undefined } })).toBe(hashPayload({ ...base, body: { a: 1 } }));
+    expect(hashPayload({ ...base, body: { l: [1, undefined] } })).toBe(hashPayload({ ...base, body: { l: [1, null] } }));
+  });
 });

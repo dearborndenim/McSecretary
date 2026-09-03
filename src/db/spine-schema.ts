@@ -86,6 +86,7 @@ export function initializeSpineSchema(db: Database.Database): void {
       PRIMARY KEY (lane, metric)
     );
 
+    -- agent_run_index: business-agent runs (spine); unrelated to the older agent_runs table used by the email triage loop.
     CREATE TABLE IF NOT EXISTS agent_run_index (
       run_id TEXT PRIMARY KEY,
       agent TEXT NOT NULL,
