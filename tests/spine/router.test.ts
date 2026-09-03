@@ -103,6 +103,32 @@ describe('fileProposal', () => {
     const r = await fileProposal(db, input(), d);
     expect(r.routed).toBe('card_failed');
     expect(getProposalById(db, r.id)!.status).toBe('pending');
+    expect(getProposalById(db, r.id)!.telegram_chat_id).toBeNull();
+  });
+
+  it('re-filing a pending duplicate whose card never landed re-sends the card', async () => {
+    const d = deps();
+    const good = d.sendCard;
+    d.sendCard = async () => { throw new Error('telegram down'); };
+    const a = await fileProposal(db, input(), d);
+    expect(a.routed).toBe('card_failed');
+    d.sendCard = good;
+    const b = await fileProposal(db, input(), d);
+    expect(b.id).toBe(a.id);
+    expect(b.routed).toBe('card');
+    expect(d.cards).toEqual([a.id]);
+    const row = getProposalById(db, a.id)!;
+    expect(row.telegram_chat_id).toBe('555');
+    expect(row.telegram_message_id).toBe(42);
+  });
+
+  it('a failed auto-execution routes as execution_failed and reports', async () => {
+    promoteTrust(db, K, 2, 'robert', NOW);
+    const d = deps();
+    d.execute = async () => ({ ok: false, http_status: 503 });
+    const r = await fileProposal(db, input(), d);
+    expect(r.routed).toBe('execution_failed');
+    expect(d.reports[0]).toMatch(/failed \(503\)/);
   });
 
   it('a level-2 execution that the hand accepted but the row did not record is reported loudly', async () => {

@@ -13,7 +13,18 @@ export interface RouterDeps {
   silentBudgetUsd: (brandId: string) => number;
 }
 
-export type Routed = 'card' | 'card_failed' | 'executed' | 'executed_silent' | 'deduped';
+export type Routed = 'card' | 'card_failed' | 'executed' | 'executed_silent' | 'execution_failed' | 'deduped';
+
+async function sendCardAndRef(db: Database.Database, id: number, deps: RouterDeps): Promise<boolean> {
+  try {
+    const ref = await deps.sendCard(id);
+    setTelegramRef(db, id, ref.chatId, ref.messageId);
+    return true;
+  } catch (err) {
+    console.error('spine: card send failed', id, err);
+    return false;
+  }
+}
 
 /**
  * File a proposal and route it (spec §4.1 flow):
@@ -21,6 +32,7 @@ export type Routed = 'card' | 'card_failed' | 'executed' | 'executed_silent' | '
  *     level 3 + reversible + cost <= silent budget → silent
  *     otherwise → execute and report
  *   else → Telegram card, wait for a human
+ * A duplicate of a pending row whose card never landed gets the card re-sent.
  */
 export async function fileProposal(
   db: Database.Database,
@@ -28,7 +40,13 @@ export async function fileProposal(
   deps: RouterDeps,
 ): Promise<{ id: number; routed: Routed }> {
   const { id, deduped } = insertProposal(db, input, deps.now());
-  if (deduped) return { id, routed: 'deduped' };
+  if (deduped) {
+    const existing = getProposalById(db, id);
+    if (existing?.status === 'pending' && existing.telegram_chat_id === null && await sendCardAndRef(db, id, deps)) {
+      return { id, routed: 'card' };
+    }
+    return { id, routed: 'deduped' };
+  }
 
   const level = getTrustLevel(db, input);
   const auto = !isPinned(input.action_type) && level >= input.level_required && level >= 2;
@@ -43,14 +61,8 @@ export async function fileProposal(
       unrecorded ? `Executed #${id} ${p.agent} ${p.action_type} on the hand but the result was NOT recorded (row status changed mid-flight). Check the hand.`
       : r.ok ? `Executed #${id} ${p.agent} ${p.action_type} (level ${level}, ${r.http_status}).`
       : `Auto-execution of #${id} ${p.agent} ${p.action_type} failed${r.http_status ? ` (${r.http_status})` : ''}.`);
-    return { id, routed: 'executed' };
+    return { id, routed: r.ok ? 'executed' : 'execution_failed' };
   }
 
-  try {
-    const ref = await deps.sendCard(id);
-    setTelegramRef(db, id, ref.chatId, ref.messageId);
-    return { id, routed: 'card' };
-  } catch {
-    return { id, routed: 'card_failed' };
-  }
+  return { id, routed: await sendCardAndRef(db, id, deps) ? 'card' : 'card_failed' };
 }

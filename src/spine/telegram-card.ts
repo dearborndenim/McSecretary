@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { InlineKeyboard } from 'grammy';
 import {
-  getProposalById, decideProposal, setEditRequested, clearEditRequestedForChat,
+  getProposalById, decideProposal, setEditRequested, clearEditRequested, clearEditRequestedForChat,
   findEditRequestedForChat, appendEdit, updateActionPayload,
 } from '../db/proposal-queries.js';
 import { recordTrustDecision } from '../db/trust-queries.js';
@@ -16,6 +16,12 @@ export interface CardDeps {
 }
 
 export type CallbackAction = 'approve' | 'edit' | 'reject';
+
+/** An edit request older than this is dropped; the next message goes to the assistant. */
+export const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+const REASON_CAP = 500;
+const EVIDENCE_VALUE_CAP = 80;
 
 /**
  * The inbox transport. Everything Telegram-specific lives behind this, so a
@@ -46,19 +52,35 @@ export function createTelegramTransport(api: TelegramApiLike): InboxTransport {
   };
 }
 
+/** A reply is a courtesy; the ledger and executor must never depend on it landing. */
+async function safeReply(deps: CardDeps, text: string): Promise<void> {
+  try {
+    await deps.reply(text);
+  } catch (err) {
+    console.error('spine: reply failed', err);
+  }
+}
+
 function money(n: number): string {
   return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+
+function cap(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 /** Five-ish lines, phone-readable (spec §4.2). */
 export function renderProposalCard(p: ProposalRow): string {
   const payload = JSON.parse(p.action_payload) as ActionPayload;
-  const evidence = JSON.parse(p.evidence) as Record<string, unknown>;
-  const evLines = Object.entries(evidence).slice(0, 3).map(([k, v]) => `  ${k}: ${String(v)}`);
+  const evidence: unknown = JSON.parse(p.evidence);
+  const evLines = typeof evidence !== 'object' || evidence === null
+    ? []
+    : Object.entries(evidence as Record<string, unknown>).slice(0, 3)
+      .map(([k, v]) => `  ${k}: ${cap(String(v), EVIDENCE_VALUE_CAP)}`);
   const lines = [
     `#${p.id} ${p.agent} · ${p.brand_id}`,
     `${p.action_type} → ${payload.hand}${payload.path}`,
-    p.reason,
+    cap(p.reason, REASON_CAP),
     ...evLines,
     `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
     `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
@@ -83,51 +105,66 @@ function trustKey(p: ProposalRow) {
   return { agent: p.agent, brand_id: p.brand_id, action_type: p.action_type };
 }
 
+type CallbackResult = { ok: boolean; message: string };
+
+/**
+ * The status-guarded UPDATE in decideProposal is the claim: whichever tap
+ * lands it first owns the trust count and the execution; the other is refused.
+ */
 async function approveAndExecute(
   db: Database.Database,
   p: ProposalRow,
   status: 'approved' | 'approved_with_edit',
   by: string,
   deps: CardDeps,
-): Promise<void> {
-  decideProposal(db, p.id, status, by, deps.now());
+): Promise<CallbackResult> {
+  if (!decideProposal(db, p.id, status, by, deps.now())) {
+    await safeReply(deps, `#${p.id} was already decided.`);
+    return { ok: false, message: `#${p.id} was already decided` };
+  }
   recordTrustDecision(db, trustKey(p), status, deps.now());
   const r = await deps.execute(p.id);
-  await deps.reply(r.ok
+  await safeReply(deps, r.ok
     ? `Approved #${p.id} — executed (${r.http_status}).`
     : `Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${r.error ? `: ${r.error}` : ''}.`);
+  return { ok: true, message: status };
 }
 
 export async function handleProposalCallback(
   db: Database.Database,
   cb: { action: CallbackAction; id: number },
+  chatId: string,
   by: string,
   deps: CardDeps,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<CallbackResult> {
   const p = getProposalById(db, cb.id);
   if (!p) return { ok: false, message: `No proposal #${cb.id}` };
+  if (p.telegram_chat_id !== chatId) return { ok: false, message: 'Not your proposal' };
   if (p.status !== 'pending') return { ok: false, message: `#${cb.id} is already ${p.status}` };
 
   if (cb.action === 'approve') {
-    await approveAndExecute(db, p, 'approved', by, deps);
-    return { ok: true, message: 'approved' };
+    return approveAndExecute(db, p, 'approved', by, deps);
   }
   if (cb.action === 'reject') {
-    decideProposal(db, p.id, 'rejected', by, deps.now());
+    if (!decideProposal(db, p.id, 'rejected', by, deps.now())) {
+      await safeReply(deps, `#${p.id} was already decided.`);
+      return { ok: false, message: `#${p.id} was already decided` };
+    }
     const t = recordTrustDecision(db, trustKey(p), 'rejected', deps.now());
-    await deps.reply(`Rejected #${p.id}.${t.demoted ? ' Trust for this action reset to level 1.' : ''}`);
+    await safeReply(deps, `Rejected #${p.id}.${t.demoted ? ' Trust for this action reset to level 1.' : ''}`);
     return { ok: true, message: 'rejected' };
   }
   // A chat waits on at most one edit reply: the newest request wins.
-  clearEditRequestedForChat(db, p.telegram_chat_id ?? '', p.id);
+  clearEditRequestedForChat(db, chatId, p.id);
   setEditRequested(db, p.id, deps.now());
-  await deps.reply(`Editing #${p.id}. Reply with key=value pairs, e.g. monthly_usd=10000`);
+  await safeReply(deps, `Editing #${p.id}. Reply with key=value pairs, e.g. monthly_usd=10000 — or "cancel".`);
   return { ok: true, message: 'edit_requested' };
 }
 
 /**
  * Called for every text message before the normal assistant flow. Returns true
- * when the text was consumed as an edit reply.
+ * when the text was consumed as an edit reply. An edit request older than
+ * EDIT_WINDOW_MS is dropped and the message falls through to the assistant.
  */
 export async function handleEditReply(
   db: Database.Database,
@@ -138,10 +175,20 @@ export async function handleEditReply(
 ): Promise<boolean> {
   const p = findEditRequestedForChat(db, chatId);
   if (!p) return false;
+  const requestedAt = Date.parse(p.edit_requested_at ?? '');
+  if (Number.isNaN(requestedAt) || Date.parse(deps.now()) - requestedAt > EDIT_WINDOW_MS) {
+    clearEditRequested(db, p.id);
+    return false;
+  }
+  if (text.trim().toLowerCase() === 'cancel') {
+    clearEditRequested(db, p.id);
+    await safeReply(deps, `Edit cancelled. #${p.id} is still pending.`);
+    return true;
+  }
   const parsed = parseEdit(text);
-  if (!parsed.ok) { await deps.reply(`Still editing #${p.id}. ${parsed.reason}`); return true; }
+  if (!parsed.ok) { await safeReply(deps, `Still editing #${p.id}. ${parsed.reason}`); return true; }
   const applied = applyEdit(JSON.parse(p.action_payload) as ActionPayload, parsed.fields);
-  if (!applied.ok) { await deps.reply(`Still editing #${p.id}. ${applied.reason}`); return true; }
+  if (!applied.ok) { await safeReply(deps, `Still editing #${p.id}. ${applied.reason}`); return true; }
   updateActionPayload(db, p.id, applied.payload);
   appendEdit(db, p.id, { at: deps.now(), note: text.trim() });
   await approveAndExecute(db, { ...p, action_payload: JSON.stringify(applied.payload) }, 'approved_with_edit', by, deps);

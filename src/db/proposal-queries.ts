@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { hashPayload } from '../spine/payload-hash.js';
-import type { ProposalInput, ProposalRow, ProposalStatus } from '../spine/types.js';
+import type { ActionPayload, ProposalInput, ProposalRow, ProposalStatus } from '../spine/types.js';
 
 // Timestamps are compared as strings; every stored timestamp must be Date#toISOString() format.
 // insertProposal normalises expires_at; nowIso callers must pass toISOString() output.
@@ -115,6 +115,11 @@ export function setEditRequested(db: Database.Database, id: number, nowIso: stri
   return result.changes === 1;
 }
 
+/** Drop the edit-requested flag on a pending row (cancel / stale window). */
+export function clearEditRequested(db: Database.Database, id: number): void {
+  db.prepare("UPDATE proposals SET edit_requested_at = NULL WHERE id = ? AND status = 'pending'").run(id);
+}
+
 /**
  * Drop the edit-requested flag on every other pending proposal in this chat,
  * so a chat is never waiting on two edit replies at once.
@@ -142,6 +147,8 @@ export function appendEdit(db: Database.Database, id: number, edit: { at: string
   db.prepare('UPDATE proposals SET edits = ? WHERE id = ?').run(JSON.stringify(edits), id);
 }
 
-export function updateActionPayload(db: Database.Database, id: number, payload: unknown): void {
-  db.prepare('UPDATE proposals SET action_payload = ? WHERE id = ?').run(JSON.stringify(payload), id);
+/** Replace the payload and keep `payload_hash` in step so dedupe sees the edited action. */
+export function updateActionPayload(db: Database.Database, id: number, payload: ActionPayload): void {
+  db.prepare('UPDATE proposals SET action_payload = ?, payload_hash = ? WHERE id = ?')
+    .run(JSON.stringify(payload), hashPayload(payload), id);
 }
