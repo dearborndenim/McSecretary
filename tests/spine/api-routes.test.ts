@@ -6,6 +6,7 @@ import { initializeSchema } from '../../src/db/schema.js';
 import { createSpineRouter, type SpineRouterDeps } from '../../src/spine/api-routes.js';
 import { getFinalOutcomes } from '../../src/db/outcome-queries.js';
 import { getRun } from '../../src/db/run-index-queries.js';
+import { insertEvent } from '../../src/db/event-queries.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 const KEY = 'k'.repeat(24);
@@ -45,6 +46,7 @@ describe('spine routes', () => {
       agentKeys: new Map([[KEY, 'marketing-manager']]),
       brandsDir: path.join(process.cwd(), 'config', 'brands'),
       file: async (input) => { filed.push(input); return { id: 1, routed: 'card' }; },
+      handFetch: async () => new Response('{}'), env: {},
     };
     handle = createSpineRouter(deps);
   });
@@ -141,6 +143,54 @@ describe('spine routes', () => {
       expect(out.status, JSON.stringify(patch)).toBe(400);
       expect(JSON.parse(out.body).error).toMatch(re);
     }
+  });
+
+  it('GET /spine/events/pending counts undrained events per type without draining', async () => {
+    const e = (t: string, u: boolean) => ({ source_hand: 'h', brand_id: 'dearborn-denim', event_type: t, payload: {}, urgent: u });
+    insertEvent(db, e('po_received', true), NOW);
+    insertEvent(db, e('po_received', false), NOW);
+    let r = fakeRes();
+    await handle(fakeReq('GET', '/spine/events/pending?types=po_received,%20other', undefined, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(200);
+    expect(JSON.parse(r.out.body)).toEqual({ counts: { po_received: { pending: 2, urgent: 1 }, other: { pending: 0, urgent: 0 } } });
+    r = fakeRes();
+    await handle(fakeReq('GET', '/spine/events/pending?types=po_received', undefined, `Bearer ${KEY}`), r.res);
+    expect(JSON.parse(r.out.body).counts.po_received.pending).toBe(2);
+    r = fakeRes();
+    await handle(fakeReq('GET', '/spine/events/pending', undefined, `Bearer ${KEY}`), r.res);
+    expect(JSON.parse(r.out.body)).toEqual({ counts: {} });
+  });
+
+  it('GET /spine/events/pending rejects oversized type lists with 400', async () => {
+    let r = fakeRes();
+    await handle(fakeReq('GET', `/spine/events/pending?types=${Array.from({ length: 51 }, (_, i) => `t${i}`).join(',')}`, undefined, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(400);
+    r = fakeRes();
+    await handle(fakeReq('GET', `/spine/events/pending?types=${'x'.repeat(129)}`, undefined, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(400);
+  });
+
+  it('POST /spine/proposals round-trips an optional run_id and rejects an empty one', async () => {
+    const proposal = {
+      brand_id: 'dearborn-denim', action_type: 'noop',
+      action_payload: { hand: 'content-engine', method: 'POST', path: '/x', body: {} },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    };
+    let r = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', { ...proposal, run_id: 'run-abc' }, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(200);
+    expect((filed[0] as { run_id?: string }).run_id).toBe('run-abc');
+    r = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', proposal, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(200);
+    expect((filed[1] as { run_id?: string }).run_id).toBeUndefined();
+    for (const bad of ['', 'x'.repeat(129), 42]) {
+      r = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', { ...proposal, run_id: bad }, `Bearer ${KEY}`), r.res);
+      expect(r.out.status, JSON.stringify(bad)).toBe(400);
+      expect(JSON.parse(r.out.body).error).toMatch(/run_id/);
+    }
+    expect(filed).toHaveLength(2);
   });
 
   it('POST /spine/events then GET /spine/events/drain round-trips', async () => {
@@ -267,6 +317,7 @@ describe('spine routes', () => {
         db, now: () => NOW, agentKeys: new Map([[KEY, 'marketing-manager']]),
         brandsDir: path.join(process.cwd(), 'config', 'brands'),
         file: async () => { throw new Error('db locked'); },
+        handFetch: async () => new Response('{}'), env: {},
       };
       const { res, out } = fakeRes();
       await createSpineRouter(deps)(fakeReq('POST', '/spine/proposals', {
@@ -333,6 +384,7 @@ describe('spine routes', () => {
       db, now: () => NOW, agentKeys: new Map([[KEY, 'marketing-manager'], [OTHER, 'finance']]),
       brandsDir: path.join(process.cwd(), 'config', 'brands'),
       file: async () => { throw new Error('unused'); },
+      handFetch: async () => new Response('{}'), env: {},
     };
     const h = createSpineRouter(deps);
     const run = { run_id: 'r1', brand_id: 'dearborn-denim', skill_commit: 'abc', model: 'fable', started_at: NOW, finished_at: null, outcome: 'running', notes: '' };

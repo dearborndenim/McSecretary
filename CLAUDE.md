@@ -80,6 +80,9 @@ McSecretary is the human inbox for the business agents. Agents (Claude Code sess
 
 - Code: `src/spine/` (router, executor, telegram-card + `InboxTransport`, api-routes, jobs, promote-command, wiring, gates, edits, brand-config, agent-keys), `src/db/*-queries.ts` for proposals/trust/events/outcomes/run-index, `src/db/spine-schema.ts`.
 - Endpoints: `/spine/proposals`, `/spine/events`, `/spine/events/drain`, `/spine/outcomes`, `/spine/runs`, `/spine/brands/:id`, `/spine/trust`. Auth: `Authorization: Bearer <key>` where the key is listed in `AGENT_KEYS=agent:key,…` — the agent name comes from the key, never from the body.
+- Read-only hand proxy: `GET /spine/hands/:hand/<path>?brand=<id>&…` forwards the GET to the hand with the hand's bearer (agent never holds it); other query params pass through; non-GET → 405, unknown brand/hand or missing env → 404, path leaving the hand origin (incl. `%2f`/`%2e`) → 400, non-2xx upstream → 502 `{hand_status}`; body capped at 1 MiB, 20 s timeout.
+- Pending counts: `GET /spine/events/pending?types=a,b` → `{ counts: { a: { pending, urgent }, … } }` — non-mutating (unlike `/spine/events/drain`); max 50 types of ≤128 chars.
+- Proposals accept optional `run_id` (1–128 chars) linking to `agent_run_index.run_id`; stored in `proposals.run_id` (nullable, PRAGMA-gated additive migration in `spine-schema.ts`).
 - Human gates in `src/spine/gates.ts` are pinned at level 1 forever. Add an action type there before an agent may use it as a gate.
 - Adding a hand: add `{ "url_env", "key_env" }` under `hands` in the brand file and set those env vars on Railway. The executor refuses any path that leaves the hand's origin.
 - Adding a brand: add `config/brands/<brand_id>.json` (lowercase slug filename = `brand_id`), a user row for its `inbox_user_id` with a linked Telegram chat.

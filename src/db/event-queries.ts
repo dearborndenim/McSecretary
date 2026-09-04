@@ -36,3 +36,14 @@ export function countUndrainedUrgent(db: Database.Database, brandId: string): nu
     'SELECT COUNT(*) AS n FROM spine_events WHERE drained_at IS NULL AND urgent = 1 AND brand_id = ?',
   ).get(brandId) as { n: number }).n;
 }
+
+/** Non-mutating counts for the runner's urgent poll. */
+export function countPendingByType(db: Database.Database, types: string[]): Record<string, { pending: number; urgent: number }> {
+  const stmt = db.prepare('SELECT COUNT(*) AS pending, COALESCE(SUM(urgent), 0) AS urgent FROM spine_events WHERE drained_at IS NULL AND event_type = ?');
+  const out: Record<string, { pending: number; urgent: number }> = {};
+  for (const t of types) {
+    const r = stmt.get(t) as { pending: number; urgent: number };
+    out[t] = { pending: r.pending, urgent: r.urgent };
+  }
+  return out;
+}
