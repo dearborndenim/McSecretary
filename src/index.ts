@@ -23,7 +23,8 @@ import {
   sendEveningSummary,
   sendEveningSummaryToUser,
 } from './telegram/bot.js';
-import { initializeDefaultSchedule, startSchedulerFromDb, registerHandler } from './scheduler.js';
+import { initializeDefaultSchedule, startSchedulerFromDb, stopAllJobs, registerHandler } from './scheduler.js';
+import { createShutdown } from './shutdown.js';
 import { TIMEZONE } from './calendar/types.js';
 import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
 import {
@@ -1544,7 +1545,7 @@ async function main() {
   // Returns `undefined` until the cache is lazy-built on first /briefing-preview;
   // the endpoint reflects `disabled:true` in that pre-warm state.
   setBriefingPreviewCacheProvider(() => _briefingPreviewCache);
-  startApiServer(config.api.port);
+  const apiServer = startApiServer(config.api.port);
 
   const bot = await initBot();
 
@@ -1671,15 +1672,22 @@ async function main() {
     },
   });
 
-  const shutdown = () => {
-    console.log('Shutting down...');
-    bot.stop();
-    db.close();
-    process.exit(0);
-  };
+  const shutdown = createShutdown({
+    stopBot: async () => {
+      stopAllJobs();
+      await bot.stop();
+    },
+    stopServer: () =>
+      new Promise<void>((resolve) => {
+        apiServer.close(() => resolve());
+        db.close();
+      }),
+    exit: (code) => process.exit(code),
+    setTimer: (callback, ms) => setTimeout(callback, ms),
+  });
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 main().catch((err) => {
