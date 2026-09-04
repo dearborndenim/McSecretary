@@ -184,13 +184,17 @@ describe('spine routes', () => {
     await handle(fakeReq('POST', '/spine/proposals', proposal, `Bearer ${KEY}`), r.res);
     expect(r.out.status).toBe(200);
     expect((filed[1] as { run_id?: string }).run_id).toBeUndefined();
+    r = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', { ...proposal, run_id: null }, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(200);
+    expect((filed[2] as { run_id?: string | null }).run_id).toBeNull();
     for (const bad of ['', 'x'.repeat(129), 42]) {
       r = fakeRes();
       await handle(fakeReq('POST', '/spine/proposals', { ...proposal, run_id: bad }, `Bearer ${KEY}`), r.res);
       expect(r.out.status, JSON.stringify(bad)).toBe(400);
       expect(JSON.parse(r.out.body).error).toMatch(/run_id/);
     }
-    expect(filed).toHaveLength(2);
+    expect(filed).toHaveLength(3);
   });
 
   it('POST /spine/events then GET /spine/events/drain round-trips', async () => {

@@ -37,3 +37,29 @@ export function readBody(req: http.IncomingMessage, maxBytes: number): Promise<s
     });
   });
 }
+
+/**
+ * Read a fetch Response body with a hard byte cap. Refuses up front when
+ * Content-Length exceeds the cap (body never read); otherwise streams and
+ * cancels the reader the moment the running byte total passes the cap. Never
+ * truncates: the caller gets the whole body or `{ ok: false }`.
+ */
+export async function readCapped(res: Response, maxBytes: number): Promise<{ ok: true; text: string } | { ok: false }> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) return { ok: false };
+  if (!res.body) return { ok: true, text: '' };
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      return { ok: false };
+    }
+    chunks.push(value);
+  }
+  return { ok: true, text: Buffer.concat(chunks).toString('utf8') };
+}

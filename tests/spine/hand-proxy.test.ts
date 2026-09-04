@@ -48,6 +48,40 @@ describe('GET /spine/hands/:hand/*', () => {
     expect(url).toBe('https://ce.example/api/scoreboard?days=7');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer hk');
     expect(init.method).toBe('GET');
+    expect(init.signal).toBeUndefined(); // deps.handFetch owns the timeout
+  });
+
+  it('re-encodes query values as application/x-www-form-urlencoded (space → +, literal + → %2B)', async () => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?q=a%20b&x=1%2B2&brand=dearborn-denim', `Bearer ${KEY}`), res);
+    expect(out.status).toBe(200);
+    expect((fetchMock.mock.calls[0]! as unknown as [string])[0]).toBe('https://ce.example/api/x?q=a+b&x=1%2B2');
+    // A raw '+' in the incoming query already means a space, so it round-trips as '+'.
+    await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?x=1+2&brand=dearborn-denim', `Bearer ${KEY}`), fakeRes().res);
+    expect((fetchMock.mock.calls[1]! as unknown as [string])[0]).toBe('https://ce.example/api/x?x=1+2');
+  });
+
+  it('answers 502 when the streamed body exceeds 1 MiB, never truncating', async () => {
+    const chunk = new Uint8Array(1_048_576).fill(0x61);
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({ pull(c) { if (pulls++ < 3) c.enqueue(chunk); else c.close(); } }, { highWaterMark: 0 });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } }));
+    const { res, out } = fakeRes();
+    await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?brand=dearborn-denim', `Bearer ${KEY}`), res);
+    expect(out.status).toBe(502);
+    expect(JSON.parse(out.body)).toEqual({ error: 'Hand response too large', hand_status: 200 });
+    expect(pulls).toBeLessThan(3);
+  });
+
+  it('answers 502 on an oversize Content-Length without reading the body', async () => {
+    let pulled = false;
+    const body = new ReadableStream<Uint8Array>({ pull(c) { pulled = true; c.enqueue(new Uint8Array(1)); c.close(); } }, { highWaterMark: 0 });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'Content-Length': '5000000' } }));
+    const { res, out } = fakeRes();
+    await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?brand=dearborn-denim', `Bearer ${KEY}`), res);
+    expect(out.status).toBe(502);
+    expect(JSON.parse(out.body)).toEqual({ error: 'Hand response too large', hand_status: 200 });
+    expect(pulled).toBe(false);
   });
 
   it('requires brand=, refuses unknown hand, and refuses non-GET', async () => {
@@ -57,6 +91,10 @@ describe('GET /spine/hands/:hand/*', () => {
     r = fakeRes();
     await handle(fakeReq('GET', '/spine/hands/nope/api/x?brand=dearborn-denim', `Bearer ${KEY}`), r.res);
     expect(r.out.status).toBe(404);
+    r = fakeRes();
+    await handle(fakeReq('GET', `/spine/hands/${'h'.repeat(300)}/api/x?brand=dearborn-denim`, `Bearer ${KEY}`), r.res);
+    expect(r.out.status).toBe(404);
+    expect(JSON.parse(r.out.body).error).toBe(`Unknown hand: ${'h'.repeat(64)}`);
     r = fakeRes();
     await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?brand=no-such-brand', `Bearer ${KEY}`), r.res);
     expect(r.out.status).toBe(404);

@@ -18,8 +18,10 @@ describe('proposal run_id', () => {
   it('stores run_id when given and null otherwise', () => {
     const a = insertProposal(db, { ...base, run_id: 'run-1' }, NOW).id;
     const b = insertProposal(db, { ...base, action_type: 'other' }, NOW).id;
+    const c = insertProposal(db, { ...base, action_type: 'third', run_id: null }, NOW).id;
     expect(getProposalById(db, a)!.run_id).toBe('run-1');
     expect(getProposalById(db, b)!.run_id).toBeNull();
+    expect(getProposalById(db, c)!.run_id).toBeNull();
   });
 
   it('adds the column to a pre-existing proposals table without run_id', () => {

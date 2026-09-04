@@ -34,6 +34,10 @@ export function resolveHandUrl(baseUrl: string, path: string): { ok: true; href:
   if (!/^\/[A-Za-z0-9._~%!$&'()*+,;=:\/-]*$/.test(path)) {
     return { ok: false, error: 'Invalid path: only unreserved and sub-delim characters are allowed' };
   }
+  // The URL parser keeps '%2f'/'%2e' literal (so the origin check passes), but an upstream that decodes them could be walked.
+  if (/%2[fe]/i.test(path)) {
+    return { ok: false, error: 'Invalid path: percent-encoded slash or dot' };
+  }
   let base: URL;
   let u: URL;
   try {
