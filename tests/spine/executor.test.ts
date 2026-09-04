@@ -185,6 +185,12 @@ describe('resolveHandUrl', () => {
     expect(resolveHandUrl('https://am.example/a/b', '/x y').ok).toBe(false);
   });
 
+  it('refuses percent-encoded slash and dot so an upstream that decodes them cannot be walked', () => {
+    expect(resolveHandUrl('https://am.example/api', '/x%2Fy')).toEqual({ ok: false, error: 'Invalid path: percent-encoded slash or dot' });
+    expect(resolveHandUrl('https://am.example/api', '/%2e%2e/admin')).toEqual({ ok: false, error: 'Invalid path: percent-encoded slash or dot' });
+    expect(resolveHandUrl('https://am.example/api', '/x%20y')).toEqual({ ok: true, href: 'https://am.example/api/x%20y' });
+  });
+
   it('refuses a malformed base URL', () => {
     expect(resolveHandUrl('not a url', '/x').ok).toBe(false);
   });

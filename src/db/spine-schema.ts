@@ -35,7 +35,8 @@ export function initializeSpineSchema(db: Database.Database): void {
       edit_requested_at TEXT,
       execution_result TEXT,
       telegram_chat_id TEXT,
-      telegram_message_id INTEGER
+      telegram_message_id INTEGER,
+      run_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_proposals_dedupe ON proposals(agent, brand_id, action_type, payload_hash);
@@ -100,6 +101,10 @@ export function initializeSpineSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_run_index_outcome ON agent_run_index(outcome, started_at);
   `);
+
+  // Additive migration: proposals.run_id (Stage 0B provenance link). PRAGMA-gated like user-schema.ts.
+  const cols = (db.prepare('PRAGMA table_info(proposals)').all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes('run_id')) db.exec('ALTER TABLE proposals ADD COLUMN run_id TEXT');
 
   const seed = db.prepare(
     'INSERT OR IGNORE INTO outcome_maturity (lane, metric, lag_days) VALUES (?, ?, ?)',

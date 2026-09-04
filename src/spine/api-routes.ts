@@ -1,9 +1,10 @@
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
-import { loadBrandConfig } from './brand-config.js';
-import { BodyTooLarge, readBody } from '../http-util.js';
-import { insertEvent, drainEvents } from '../db/event-queries.js';
+import { loadBrandConfig, resolveHand } from './brand-config.js';
+import { resolveHandUrl } from './executor.js';
+import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
+import { insertEvent, drainEvents, countPendingByType } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
 import { listTrustRowsForAgent } from '../db/trust-queries.js';
@@ -16,11 +17,17 @@ export interface SpineRouterDeps {
   agentKeys: Map<string, string>;
   brandsDir: string;
   file: (input: ProposalInput) => Promise<{ id: number; routed: Routed }>;
+  /** Used only by the read-only hand proxy; the executor has its own fetch. */
+  handFetch: (url: string, init: RequestInit) => Promise<Response>;
+  env: Record<string, string | undefined>;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
 const BRAND_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+const NAME_MAX = 128;
+const MAX_PENDING_TYPES = 50;
+const HAND_PROXY_BODY_CAP = 1_048_576;
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -67,6 +74,7 @@ function validateProposal(b: Record<string, unknown>): string | null {
   if (typeof b.reversible !== 'boolean') return 'reversible must be a boolean';
   if (![0, 1, 2, 3].includes(b.level_required as number)) return 'level_required must be 0, 1, 2 or 3';
   if (!isIsoString(b.expires_at)) return 'expires_at must be an ISO timestamp';
+  if (b.run_id !== undefined && b.run_id !== null && (typeof b.run_id !== 'string' || b.run_id.length === 0 || b.run_id.length > NAME_MAX)) return `run_id must be a string of 1–${NAME_MAX} chars`;
   return null;
 }
 
@@ -77,8 +85,6 @@ function validateBrandAndHand(brandsDir: string, brandId: string, hand: string):
   if (!Object.hasOwn(brand.hands, hand)) return `Unknown hand for ${brandId}: ${hand}`;
   return null;
 }
-
-const NAME_MAX = 128;
 
 function validateEvent(b: Record<string, unknown>): string | null {
   if (typeof b.source_hand !== 'string' || b.source_hand.length === 0 || b.source_hand.length > NAME_MAX) return `source_hand must be a string of 1–${NAME_MAX} chars`;
@@ -178,6 +184,16 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         return true;
       }
 
+      if (req.method === 'GET' && pathname === '/spine/events/pending') {
+        const types = (params.get('types') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (types.length > MAX_PENDING_TYPES || types.some((t) => t.length > NAME_MAX)) {
+          json(res, 400, { error: `types must be at most ${MAX_PENDING_TYPES} names of at most ${NAME_MAX} chars` });
+          return true;
+        }
+        json(res, 200, { counts: countPendingByType(deps.db, types) });
+        return true;
+      }
+
       if (req.method === 'POST' && pathname === '/spine/outcomes') {
         const parsed = await readObject(req, OUTCOME_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
@@ -217,6 +233,50 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       if (req.method === 'GET' && pathname === '/spine/trust') {
         json(res, 200, { rows: listTrustRowsForAgent(deps.db, agent) });
+        return true;
+      }
+
+      // Read-only proxy so an agent can read a hand's data without holding the hand's bearer.
+      if (pathname.startsWith('/spine/hands/')) {
+        if (req.method !== 'GET') { json(res, 405, { error: 'Only GET is proxied' }); return true; }
+        const rest = pathname.slice('/spine/hands/'.length);
+        const slash = rest.indexOf('/');
+        const hand = slash === -1 ? rest : rest.slice(0, slash);
+        const handPath = slash === -1 ? '/' : rest.slice(slash);
+        const brandId = params.get('brand') ?? '';
+        params.delete('brand');
+        if (!BRAND_ID_RE.test(brandId)) { json(res, 400, { error: 'brand= is required' }); return true; }
+        let target: { url: string; bearer: string };
+        try {
+          const brand = loadBrandConfig(deps.brandsDir, brandId);
+          if (!Object.hasOwn(brand.hands, hand)) { json(res, 404, { error: `Unknown hand: ${hand.slice(0, 64)}` }); return true; }
+          target = resolveHand(brand, hand, deps.env);
+        } catch (err) {
+          console.error('spine: hand proxy config', hand, err);
+          json(res, 404, { error: 'Unknown brand or hand' });
+          return true;
+        }
+        const resolved = resolveHandUrl(target.url, handPath);
+        if (!resolved.ok) { json(res, 400, { error: resolved.error }); return true; }
+        const qs = params.toString();
+        // No signal here: deps.handFetch owns the timeout (wiring's fetchWithTimeout).
+        // params.toString() re-encodes as application/x-www-form-urlencoded (space → '+', literal '+' → '%2B').
+        const upstream = await deps.handFetch(`${resolved.href}${qs ? `?${qs}` : ''}`, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${target.bearer}`, Accept: 'application/json' },
+        });
+        if (upstream.status < 200 || upstream.status >= 300) {
+          void upstream.body?.cancel().catch(() => {});
+          json(res, 502, { error: 'Hand returned an error', hand_status: upstream.status });
+          return true;
+        }
+        const body = await readCapped(upstream, HAND_PROXY_BODY_CAP);
+        if (!body.ok) {
+          json(res, 502, { error: 'Hand response too large', hand_status: upstream.status });
+          return true;
+        }
+        res.writeHead(200, { 'Content-Type': upstream.headers.get('content-type') ?? 'application/json' });
+        res.end(body.text);
         return true;
       }
 

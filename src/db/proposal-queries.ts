@@ -33,12 +33,12 @@ export function insertProposal(
   const result = db.prepare(`
     INSERT INTO proposals
       (agent, brand_id, action_type, action_payload, payload_hash, reason, evidence,
-       cost_usd, reversible, level_required, status, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+       cost_usd, reversible, level_required, status, created_at, expires_at, run_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
   `).run(
     input.agent, input.brand_id, input.action_type, JSON.stringify(input.action_payload), payload_hash,
     input.reason, JSON.stringify(input.evidence), input.cost_usd, input.reversible ? 1 : 0,
-    input.level_required, nowIso, expiresAt,
+    input.level_required, nowIso, expiresAt, input.run_id ?? null,
   );
   return { id: Number(result.lastInsertRowid), deduped: false };
 }

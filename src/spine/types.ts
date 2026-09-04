@@ -28,6 +28,8 @@ export interface ProposalInput {
   reversible: boolean;
   level_required: TrustLevel;
   expires_at: string; // ISO
+  /** Optional provenance link to agent_run_index.run_id (Stage 0B). */
+  run_id?: string | null;
 }
 
 export interface ProposalRow {
@@ -52,6 +54,7 @@ export interface ProposalRow {
   execution_result: string | null; // JSON
   telegram_chat_id: string | null;
   telegram_message_id: number | null;
+  run_id: string | null;
 }
 
 export interface SpineEventInput {

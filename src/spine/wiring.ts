@@ -78,7 +78,9 @@ export function buildSpine(d: SpineBuildDeps) {
     return true;
   };
 
-  const handleHttp = createSpineRouter({ db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file });
+  const handleHttp = createSpineRouter({
+    db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file, handFetch: fetchWithTimeout, env: d.env,
+  });
 
   return { file, onCallback, onText, handleHttp, execute };
 }
