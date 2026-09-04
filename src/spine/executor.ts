@@ -18,6 +18,25 @@ const EXECUTABLE = new Set(['pending', 'approved', 'approved_with_edit']);
 const METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /** Max chars of a hand's response body persisted on the proposal row. */
 const STORED_BODY_CAP = 16384;
+/** Max chars of a hand's `notify` field surfaced in a report/reply message. */
+const NOTIFY_CAP = 600;
+
+/**
+ * Pull an optional `notify` string out of a successful execution's response
+ * body, sanitized for direct inclusion in a Telegram message: control
+ * characters stripped, trimmed, and capped to NOTIFY_CAP chars. Anything
+ * other than a non-empty string field (missing, wrong type, empty/whitespace)
+ * is ignored — callers get undefined and add no suffix.
+ */
+export function extractNotify(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+  const notify = (body as Record<string, unknown>).notify;
+  if (typeof notify !== 'string') return undefined;
+  // eslint-disable-next-line no-control-regex -- deliberately stripping control chars
+  const cleaned = notify.replace(/[\x00-\x1F\x7F]/g, '').trim();
+  if (!cleaned) return undefined;
+  return cleaned.length > NOTIFY_CAP ? cleaned.slice(0, NOTIFY_CAP) : cleaned;
+}
 
 /**
  * Resolve a hand-relative path against the hand's base URL; refuse anything

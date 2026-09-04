@@ -6,7 +6,7 @@ import {
 } from '../db/proposal-queries.js';
 import { recordTrustDecision } from '../db/trust-queries.js';
 import { parseEdit, applyEdit } from './edits.js';
-import type { ExecutionResult } from './executor.js';
+import { extractNotify, type ExecutionResult } from './executor.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface CardDeps {
@@ -107,6 +107,13 @@ function trustKey(p: ProposalRow) {
 
 type CallbackResult = { ok: boolean; message: string };
 
+/** ` <notify>` when a successful execution's response body carries one, else ''. */
+function notifySuffix(r: ExecutionResult): string {
+  if (!r.ok) return '';
+  const notify = extractNotify(r.body);
+  return notify ? ` ${notify}` : '';
+}
+
 /**
  * The status-guarded UPDATE in decideProposal is the claim: whichever tap
  * lands it first owns the trust count and the execution; the other is refused.
@@ -125,7 +132,7 @@ async function approveAndExecute(
   recordTrustDecision(db, trustKey(p), status, deps.now());
   const r = await deps.execute(p.id);
   await safeReply(deps, r.ok
-    ? `Approved #${p.id} — executed (${r.http_status}).`
+    ? `Approved #${p.id} — executed (${r.http_status}).${notifySuffix(r)}`
     : `Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${r.error ? `: ${r.error}` : ''}.`);
   return { ok: true, message: status };
 }

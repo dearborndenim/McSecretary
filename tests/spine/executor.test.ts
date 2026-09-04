@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeSchema } from '../../src/db/schema.js';
 import { insertProposal, getProposalById } from '../../src/db/proposal-queries.js';
-import { executeProposal, resolveHandUrl, type ExecutorDeps } from '../../src/spine/executor.js';
+import { executeProposal, resolveHandUrl, extractNotify, type ExecutorDeps } from '../../src/spine/executor.js';
 import type { BrandConfig } from '../../src/spine/brand-config.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
@@ -193,5 +193,42 @@ describe('resolveHandUrl', () => {
 
   it('refuses a malformed base URL', () => {
     expect(resolveHandUrl('not a url', '/x').ok).toBe(false);
+  });
+});
+
+describe('extractNotify', () => {
+  it('returns the trimmed notify string when present', () => {
+    expect(extractNotify({ notify: '  Spend raised to $12k.  ' })).toBe('Spend raised to $12k.');
+  });
+
+  it('returns undefined when notify is absent', () => {
+    expect(extractNotify({ ok: true })).toBeUndefined();
+    expect(extractNotify({})).toBeUndefined();
+  });
+
+  it('truncates to 600 chars', () => {
+    const long = 'x'.repeat(700);
+    const r = extractNotify({ notify: long });
+    expect(r).toHaveLength(600);
+    expect(r).toBe('x'.repeat(600));
+  });
+
+  it('ignores a non-string notify field', () => {
+    expect(extractNotify({ notify: 42 })).toBeUndefined();
+    expect(extractNotify({ notify: { a: 1 } })).toBeUndefined();
+    expect(extractNotify({ notify: null })).toBeUndefined();
+    expect(extractNotify({ notify: ['x'] })).toBeUndefined();
+  });
+
+  it('strips control characters and treats a whitespace-only notify as absent', () => {
+    expect(extractNotify({ notify: 'line1\nline2\tend' })).toBe('line1line2end');
+    expect(extractNotify({ notify: '   \n\t  ' })).toBeUndefined();
+  });
+
+  it('ignores a non-object or array body', () => {
+    expect(extractNotify(null)).toBeUndefined();
+    expect(extractNotify('a string')).toBeUndefined();
+    expect(extractNotify(['notify'])).toBeUndefined();
+    expect(extractNotify(undefined)).toBeUndefined();
   });
 });

@@ -72,6 +72,46 @@ describe('telegram card', () => {
     expect(d.replies[0]).toMatch(/Approved #\d+ — executed/);
   });
 
+  it('approve: appends the hand\'s notify field to the reply', async () => {
+    const d = deps(db, {
+      execute: async (pid) => {
+        recordExecution(db, pid, 'executed', { http_status: 200 });
+        return { ok: true, http_status: 200, body: { notify: 'Spend live at $20k/mo.' } };
+      },
+    });
+    await handleProposalCallback(db, { action: 'approve', id }, '555', 'robert', d);
+    expect(d.replies[0]).toBe(`Approved #${id} — executed (200). Spend live at $20k/mo.`);
+  });
+
+  it('approve: leaves the reply unchanged when notify is absent', async () => {
+    const d = deps(db);
+    await handleProposalCallback(db, { action: 'approve', id }, '555', 'robert', d);
+    expect(d.replies[0]).toBe(`Approved #${id} — executed (200).`);
+  });
+
+  it('approve: truncates an over-long notify field to 600 chars', async () => {
+    const long = 'z'.repeat(700);
+    const d = deps(db, {
+      execute: async (pid) => {
+        recordExecution(db, pid, 'executed', { http_status: 200 });
+        return { ok: true, http_status: 200, body: { notify: long } };
+      },
+    });
+    await handleProposalCallback(db, { action: 'approve', id }, '555', 'robert', d);
+    expect(d.replies[0]).toBe(`Approved #${id} — executed (200). ${'z'.repeat(600)}`);
+  });
+
+  it('approve: ignores a non-string notify field', async () => {
+    const d = deps(db, {
+      execute: async (pid) => {
+        recordExecution(db, pid, 'executed', { http_status: 200 });
+        return { ok: true, http_status: 200, body: { notify: { nested: true } } };
+      },
+    });
+    await handleProposalCallback(db, { action: 'approve', id }, '555', 'robert', d);
+    expect(d.replies[0]).toBe(`Approved #${id} — executed (200).`);
+  });
+
   it('reject: decides, records trust, does not execute', async () => {
     const d = deps(db);
     await handleProposalCallback(db, { action: 'reject', id }, '555', 'robert', d);
