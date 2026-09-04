@@ -138,4 +138,39 @@ describe('fileProposal', () => {
     await fileProposal(db, input(), d);
     expect(d.reports[0]).toMatch(/NOT recorded/);
   });
+
+  it('appends the hand\'s notify field to the executed report', async () => {
+    promoteTrust(db, K, 2, 'robert', NOW);
+    const d = deps();
+    d.execute = async () => ({ ok: true, http_status: 200, body: { notify: 'Budget raised to $12k.' } });
+    const r = await fileProposal(db, input(), d);
+    expect(r.routed).toBe('executed');
+    expect(d.reports[0]).toBe(`Executed #${r.id} marketing-manager creative_request (level 2, 200). Budget raised to $12k.`);
+  });
+
+  it('leaves the executed report unchanged when notify is absent', async () => {
+    promoteTrust(db, K, 2, 'robert', NOW);
+    const d = deps();
+    // deps() default execute already returns body: {} with no notify.
+    const r = await fileProposal(db, input(), d);
+    expect(d.reports[0]).toBe(`Executed #${r.id} marketing-manager creative_request (level 2, 200).`);
+  });
+
+  it('truncates an over-long notify field to 600 chars', async () => {
+    promoteTrust(db, K, 2, 'robert', NOW);
+    const d = deps();
+    const long = 'y'.repeat(700);
+    d.execute = async () => ({ ok: true, http_status: 200, body: { notify: long } });
+    await fileProposal(db, input(), d);
+    expect(d.reports[0]).toContain('y'.repeat(600));
+    expect(d.reports[0]).not.toContain('y'.repeat(601));
+  });
+
+  it('ignores a non-string notify field on the executed report', async () => {
+    promoteTrust(db, K, 2, 'robert', NOW);
+    const d = deps();
+    d.execute = async () => ({ ok: true, http_status: 200, body: { notify: 12345 } });
+    const r = await fileProposal(db, input(), d);
+    expect(d.reports[0]).toBe(`Executed #${r.id} marketing-manager creative_request (level 2, 200).`);
+  });
 });
