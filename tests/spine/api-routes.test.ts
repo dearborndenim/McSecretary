@@ -132,6 +132,67 @@ describe('spine routes', () => {
     expect(filed).toHaveLength(0);
   });
 
+  it('POST /spine/proposals still refuses notes for an unknown brand', async () => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', {
+      brand_id: 'no-such-brand', action_type: 'capacity_warning',
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, `Bearer ${KEY}`), res);
+    expect(out.status).toBe(400);
+    expect(JSON.parse(out.body).error).toMatch(/Unknown brand/);
+    expect(filed).toHaveLength(0);
+  });
+
+  it('POST /spine/proposals accepts a notes proposal for a brand with no notes hand registered', async () => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', {
+      brand_id: 'dearborn-denim', action_type: 'capacity_warning',
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, `Bearer ${KEY}`), res);
+    expect(out.status).toBe(200);
+    expect(filed).toHaveLength(1);
+  });
+
+  it('POST /spine/proposals rejects a malformed notes payload', async () => {
+    const good = {
+      brand_id: 'dearborn-denim', action_type: 'capacity_warning', reason: 'r', evidence: {},
+      cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    };
+    for (const [payload, re] of [
+      [{ hand: 'notes', method: 'PUT', path: '/note', body: { title: 't', summary: 's' } }, /method must be POST/],
+      [{ hand: 'notes', method: 'POST', path: '/notes', body: { title: 't', summary: 's' } }, /path must be '\/note'/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { summary: 's' } }, /title/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { title: '', summary: 's' } }, /title/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { title: 'x'.repeat(121), summary: 's' } }, /title/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { title: 't' } }, /summary/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 'x'.repeat(2001) } }, /summary/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's', notify: 'x'.repeat(601) } }, /notify/],
+      [{ hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's', details: 'not an object' } }, /details/],
+    ] as const) {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', { ...good, action_payload: payload }, `Bearer ${KEY}`), res);
+      expect(out.status, JSON.stringify(payload)).toBe(400);
+      expect(JSON.parse(out.body).error).toMatch(re);
+    }
+    expect(filed).toHaveLength(0);
+  });
+
+  it('POST /spine/proposals accepts a notes proposal with optional notify and details', async () => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', {
+      brand_id: 'dearborn-denim', action_type: 'restock_flag',
+      action_payload: {
+        hand: 'notes', method: 'POST', path: '/note',
+        body: { title: 'Reorder denim', summary: 'On hand below 30 days of cover.', notify: 'Reorder denim now.', details: { sku: 'DD-1234', on_hand: 40 } },
+      },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, `Bearer ${KEY}`), res);
+    expect(out.status).toBe(200);
+    expect(filed).toHaveLength(1);
+  });
+
   it('POST /spine/events caps names and slug-checks brand_id', async () => {
     for (const [patch, re] of [
       [{ event_type: 'x'.repeat(129) }, /event_type/],

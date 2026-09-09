@@ -50,6 +50,22 @@ describe('telegram card', () => {
     expect(text.split('\n').length).toBeLessThanOrEqual(9);
   });
 
+  it('renders a notes proposal with title as headline and summary as body', () => {
+    const notesId = insertProposal(db, {
+      agent: 'ops-agent', brand_id: 'dearborn-denim', action_type: 'capacity_warning',
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.' } },
+      reason: 'irrelevant technical reason', evidence: { should_not: 'appear' },
+      cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    const text = renderProposalCard(getProposalById(db, notesId)!);
+    expect(text).toContain(`#${notesId}`);
+    expect(text).toContain('Line 2 at capacity');
+    expect(text).toContain('Utilization hit 92% this week.');
+    expect(text).toContain('Cost: $0');
+    expect(text).not.toContain('capacity_warning →');
+    expect(text).not.toContain('should_not');
+  });
+
   it('keyboard carries approve/edit/reject callback data for the id', () => {
     const kb = buildProposalKeyboard(id);
     const data = kb.inline_keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
