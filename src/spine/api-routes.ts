@@ -28,6 +28,9 @@ const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 const NAME_MAX = 128;
 const MAX_PENDING_TYPES = 50;
 const HAND_PROXY_BODY_CAP = 1_048_576;
+const NOTES_TITLE_MAX = 120;
+const NOTES_SUMMARY_MAX = 2000;
+const NOTES_NOTIFY_MAX = 600;
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -63,11 +66,39 @@ function validateActionPayload(p: unknown): string | null {
   return null;
 }
 
+/**
+ * The built-in `notes` hand (card-only decisions with no hand to call): POST
+ * to `/note` with a title/summary the executor short-circuits on and the
+ * Telegram card renders directly. Only called once validateActionPayload has
+ * already confirmed the generic shape.
+ */
+function validateNotesPayload(p: { method: unknown; path: unknown; body: Record<string, unknown> }): string | null {
+  if (p.method !== 'POST') return "action_payload.method must be POST for hand 'notes'";
+  if (p.path !== '/note') return "action_payload.path must be '/note' for hand 'notes'";
+  const { body } = p;
+  if (typeof body.title !== 'string' || body.title.length === 0 || body.title.length > NOTES_TITLE_MAX) {
+    return `action_payload.body.title must be a string of 1–${NOTES_TITLE_MAX} chars`;
+  }
+  if (typeof body.summary !== 'string' || body.summary.length === 0 || body.summary.length > NOTES_SUMMARY_MAX) {
+    return `action_payload.body.summary must be a string of 1–${NOTES_SUMMARY_MAX} chars`;
+  }
+  if (body.notify !== undefined && (typeof body.notify !== 'string' || body.notify.length > NOTES_NOTIFY_MAX)) {
+    return `action_payload.body.notify must be a string of at most ${NOTES_NOTIFY_MAX} chars`;
+  }
+  if (body.details !== undefined && !isPlainObject(body.details)) return 'action_payload.body.details must be an object';
+  return null;
+}
+
 function validateProposal(b: Record<string, unknown>): string | null {
   if (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id)) return 'brand_id must be a lowercase slug';
   if (typeof b.action_type !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(b.action_type)) return 'action_type must be a snake_case identifier';
   const shape = validateActionPayload(b.action_payload);
   if (shape) return shape;
+  const payload = b.action_payload as { hand: string; method: unknown; path: unknown; body: Record<string, unknown> };
+  if (payload.hand === 'notes') {
+    const notesBad = validateNotesPayload(payload);
+    if (notesBad) return notesBad;
+  }
   if (typeof b.reason !== 'string' || b.reason.length === 0 || b.reason.length > 2000) return 'reason must be a string of 1–2000 chars';
   if (!isPlainObject(b.evidence)) return 'evidence must be an object';
   if (typeof b.cost_usd !== 'number' || !Number.isFinite(b.cost_usd) || b.cost_usd < 0) return 'cost_usd must be a non-negative number';
@@ -78,10 +109,16 @@ function validateProposal(b: Record<string, unknown>): string | null {
   return null;
 }
 
-/** The brand must have a config file and the hand must be registered in it, or Robert would approve a card that can only fail. */
+/**
+ * The brand must have a config file and the hand must be registered in it, or
+ * Robert would approve a card that can only fail. Exception: `notes` is a
+ * built-in hand available to every brand that hasn't registered its own hand
+ * of that name — it never makes an HTTP call, so it needs no config entry.
+ */
 function validateBrandAndHand(brandsDir: string, brandId: string, hand: string): string | null {
   let brand;
   try { brand = loadBrandConfig(brandsDir, brandId); } catch { return `Unknown brand: ${brandId}`; }
+  if (hand === 'notes' && !Object.hasOwn(brand.hands, 'notes')) return null;
   if (!Object.hasOwn(brand.hands, hand)) return `Unknown hand for ${brandId}: ${hand}`;
   return null;
 }

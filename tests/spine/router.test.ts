@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeSchema } from '../../src/db/schema.js';
 import { getProposalById } from '../../src/db/proposal-queries.js';
 import { promoteTrust } from '../../src/db/trust-queries.js';
 import { fileProposal, type RouterDeps } from '../../src/spine/router.js';
+import { executeProposal } from '../../src/spine/executor.js';
 import type { ProposalInput } from '../../src/spine/types.js';
+import type { BrandConfig } from '../../src/spine/brand-config.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 const K = { agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'creative_request' };
@@ -56,12 +58,69 @@ describe('fileProposal', () => {
     expect(d.reports[0]).toMatch(/Executed #\d+/);
   });
 
+  it('level 2 notes: auto-executes via the built-in hand short-circuit and reports the title/summary fallback', async () => {
+    const notesK = { agent: 'ops-agent', brand_id: 'dearborn-denim', action_type: 'capacity_warning' };
+    promoteTrust(db, notesK, 2, 'robert', NOW);
+    const noHandsBrand: BrandConfig = {
+      brand_id: 'dearborn-denim', display_name: 'DD', inbox_user_id: 'robert-mcmillan',
+      shopify_store: 's', meta_ad_account: 'm', silent_budget_usd: 500, exploration_share: 0.2,
+      proposal_expiry_hours: 48, hands: {},
+    };
+    const d = deps();
+    d.execute = (id) => executeProposal(db, id, { fetch: vi.fn(), env: {}, loadBrand: () => noHandsBrand, now: () => NOW });
+    const r = await fileProposal(db, input({
+      ...notesK,
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.' } },
+    }), d);
+    expect(r.routed).toBe('executed');
+    expect(getProposalById(db, r.id)!.status).toBe('executed');
+    expect(d.reports[0]).toContain('Line 2 at capacity: Utilization hit 92% this week.');
+  });
+
+  it('level 2 notes: reports an explicit notify over the title/summary fallback', async () => {
+    const notesK = { agent: 'ops-agent', brand_id: 'dearborn-denim', action_type: 'schedule_change' };
+    promoteTrust(db, notesK, 2, 'robert', NOW);
+    const noHandsBrand: BrandConfig = {
+      brand_id: 'dearborn-denim', display_name: 'DD', inbox_user_id: 'robert-mcmillan',
+      shopify_store: 's', meta_ad_account: 'm', silent_budget_usd: 500, exploration_share: 0.2,
+      proposal_expiry_hours: 48, hands: {},
+    };
+    const d = deps();
+    d.execute = (id) => executeProposal(db, id, { fetch: vi.fn(), env: {}, loadBrand: () => noHandsBrand, now: () => NOW });
+    const r = await fileProposal(db, input({
+      ...notesK,
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's', notify: 'Schedule moved to Thursday.' } },
+    }), d);
+    expect(r.routed).toBe('executed');
+    expect(d.reports[0]).toContain('Schedule moved to Thursday.');
+  });
+
   it('level 3: executes silently when reversible and under budget', async () => {
     promoteTrust(db, K, 3, 'robert', NOW);
     const d = deps();
     const r = await fileProposal(db, input({ cost_usd: 100 }), d);
     expect(r.routed).toBe('executed_silent');
     expect(d.reports).toEqual([]);
+  });
+
+  it('level 3 notes: a note is inherently reversible at $0 cost, so promotion makes it silent', async () => {
+    const notesK = { agent: 'ops-agent', brand_id: 'dearborn-denim', action_type: 'variance_report' };
+    promoteTrust(db, notesK, 3, 'robert', NOW);
+    const noHandsBrand: BrandConfig = {
+      brand_id: 'dearborn-denim', display_name: 'DD', inbox_user_id: 'robert-mcmillan',
+      shopify_store: 's', meta_ad_account: 'm', silent_budget_usd: 500, exploration_share: 0.2,
+      proposal_expiry_hours: 48, hands: {},
+    };
+    const d = deps();
+    d.execute = (id) => executeProposal(db, id, { fetch: vi.fn(), env: {}, loadBrand: () => noHandsBrand, now: () => NOW });
+    const r = await fileProposal(db, input({
+      ...notesK, cost_usd: 0, reversible: true,
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } },
+    }), d);
+    expect(r.routed).toBe('executed_silent');
+    expect(d.cards).toEqual([]);
+    expect(d.reports).toEqual([]);
+    expect(getProposalById(db, r.id)!.status).toBe('executed');
   });
 
   it('level 3 falls back to level-2 behaviour when over budget or not reversible', async () => {

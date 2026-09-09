@@ -167,6 +167,57 @@ describe('executeProposal', () => {
   });
 });
 
+describe('executeProposal: built-in notes hand', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  function insertNotes(over: Partial<{ title: string; summary: string; notify: string; details: unknown }> = {}): number {
+    return insertProposal(db, {
+      agent: 'ops-agent', brand_id: 'dearborn-denim', action_type: 'capacity_warning',
+      action_payload: {
+        hand: 'notes', method: 'POST', path: '/note',
+        body: { title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.', ...over },
+      },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+  }
+
+  it('short-circuits: no HTTP call, records a 200 with the body as the response, returns ok', async () => {
+    const fetchMock = vi.fn();
+    const id = insertNotes();
+    const r = await executeProposal(db, id, deps(fetchMock));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r).toEqual({
+      ok: true, http_status: 200,
+      body: { title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.' },
+      recorded: true,
+    });
+    const row = getProposalById(db, id)!;
+    expect(row.status).toBe('executed');
+    const stored = JSON.parse(row.execution_result!) as { http_status: number; body: unknown };
+    expect(stored.http_status).toBe(200);
+    expect(stored.body).toEqual({ title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.' });
+  });
+
+  it('falls through to a real HTTP call when the brand registers its own notes hand', async () => {
+    const fetchMock = vi.fn(async () => new Response('{"ok":true}', { status: 200 }));
+    const id = insertNotes();
+    const overriding: BrandConfig = { ...brand, hands: { ...brand.hands, notes: { url_env: 'NOTES_URL', key_env: 'NOTES_KEY' } } };
+    const d: ExecutorDeps = { ...deps(fetchMock), loadBrand: () => overriding, env: { NOTES_URL: 'https://notes.example', NOTES_KEY: 'k' } };
+    const r = await executeProposal(db, id, d);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(r.ok).toBe(true);
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://notes.example/note');
+  });
+
+  it('never records the hand bearer even though it short-circuits', async () => {
+    const id = insertNotes({ details: { secret: 'not-a-real-secret' } });
+    await executeProposal(db, id, deps(vi.fn()));
+    expect(getProposalById(db, id)!.execution_result).not.toContain('AM_KEY');
+  });
+});
+
 describe('resolveHandUrl', () => {
   it('stays under the base path and origin', () => {
     expect(resolveHandUrl('https://am.example', '/x')).toEqual({ ok: true, href: 'https://am.example/x' });
@@ -230,5 +281,29 @@ describe('extractNotify', () => {
     expect(extractNotify('a string')).toBeUndefined();
     expect(extractNotify(['notify'])).toBeUndefined();
     expect(extractNotify(undefined)).toBeUndefined();
+  });
+
+  it('falls back to "title: summary" when notify is absent (the notes hand shape)', () => {
+    expect(extractNotify({ title: 'Line 2 at capacity', summary: 'Utilization hit 92% this week.' }))
+      .toBe('Line 2 at capacity: Utilization hit 92% this week.');
+  });
+
+  it('prefers an explicit notify over the title/summary fallback', () => {
+    expect(extractNotify({ title: 't', summary: 's', notify: 'Custom notify wins.' })).toBe('Custom notify wins.');
+  });
+
+  it('falls back to title/summary when notify is present but empty', () => {
+    expect(extractNotify({ title: 't', summary: 's', notify: '   ' })).toBe('t: s');
+  });
+
+  it('truncates the title/summary fallback to 600 chars', () => {
+    const r = extractNotify({ title: 't', summary: 'x'.repeat(700) });
+    expect(r).toHaveLength(600);
+  });
+
+  it('does not fall back when only one of title/summary is a string', () => {
+    expect(extractNotify({ title: 't' })).toBeUndefined();
+    expect(extractNotify({ summary: 's' })).toBeUndefined();
+    expect(extractNotify({ title: 1, summary: 's' })).toBeUndefined();
   });
 });

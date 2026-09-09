@@ -21,21 +21,39 @@ const STORED_BODY_CAP = 16384;
 /** Max chars of a hand's `notify` field surfaced in a report/reply message. */
 const NOTIFY_CAP = 600;
 
+// eslint-disable-next-line no-control-regex -- deliberately stripping control chars
+const CONTROL_CHARS = /[\x00-\x1F\x7F]/g;
+
+function cleanNotify(s: string): string | undefined {
+  const cleaned = s.replace(CONTROL_CHARS, '').trim();
+  if (!cleaned) return undefined;
+  return cleaned.length > NOTIFY_CAP ? cleaned.slice(0, NOTIFY_CAP) : cleaned;
+}
+
 /**
  * Pull an optional `notify` string out of a successful execution's response
  * body, sanitized for direct inclusion in a Telegram message: control
  * characters stripped, trimmed, and capped to NOTIFY_CAP chars. Anything
  * other than a non-empty string field (missing, wrong type, empty/whitespace)
- * is ignored — callers get undefined and add no suffix.
+ * is ignored.
+ *
+ * Falls back to `title + ": " + summary` (also cleaned and capped) when
+ * `notify` is absent but the body carries both as strings — the shape the
+ * built-in `notes` hand's response takes, so a card-only proposal auto-executed
+ * at level 3 still gets a sensible one-line report without every notes caller
+ * having to set `notify` explicitly.
  */
 export function extractNotify(body: unknown): string | undefined {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
-  const notify = (body as Record<string, unknown>).notify;
-  if (typeof notify !== 'string') return undefined;
-  // eslint-disable-next-line no-control-regex -- deliberately stripping control chars
-  const cleaned = notify.replace(/[\x00-\x1F\x7F]/g, '').trim();
-  if (!cleaned) return undefined;
-  return cleaned.length > NOTIFY_CAP ? cleaned.slice(0, NOTIFY_CAP) : cleaned;
+  const rec = body as Record<string, unknown>;
+  if (typeof rec.notify === 'string') {
+    const cleaned = cleanNotify(rec.notify);
+    if (cleaned) return cleaned;
+  }
+  if (typeof rec.title === 'string' && typeof rec.summary === 'string') {
+    return cleanNotify(`${rec.title}: ${rec.summary}`);
+  }
+  return undefined;
 }
 
 /**
@@ -100,16 +118,34 @@ export async function executeProposal(
   };
 
   let payload: ActionPayload;
-  let target: { url: string; bearer: string };
+  let brand: BrandConfig;
   try {
     payload = JSON.parse(row.action_payload) as ActionPayload;
-    target = resolveHand(deps.loadBrand(row.brand_id), payload.hand, deps.env);
+    brand = deps.loadBrand(row.brand_id);
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
 
   const invalid = validatePayload(payload);
   if (invalid) return fail(invalid);
+
+  // Built-in "notes" hand: card-only decisions (capacity warnings, schedule
+  // changes, ...) that have no hand to call. No HTTP request — the body is
+  // the response, recorded like a real hand call would be. A brand may
+  // register its own `notes` hand in config to override this.
+  if (payload.hand === 'notes' && !Object.hasOwn(brand.hands, 'notes')) {
+    const result = { http_status: 200, body: payload.body, at: deps.now() };
+    const recorded = recordExecution(db, id, 'executed', result);
+    return { ok: true, http_status: 200, body: payload.body, recorded };
+  }
+
+  let target: { url: string; bearer: string };
+  try {
+    target = resolveHand(brand, payload.hand, deps.env);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+
   const resolved = resolveHandUrl(target.url, payload.path);
   if (!resolved.ok) return fail(resolved.error);
 

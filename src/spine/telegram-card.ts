@@ -72,6 +72,24 @@ function cap(s: string, max: number): string {
 /** Five-ish lines, phone-readable (spec §4.2). */
 export function renderProposalCard(p: ProposalRow): string {
   const payload = JSON.parse(p.action_payload) as ActionPayload;
+
+  // notes proposals carry the human-readable text in the payload body
+  // (title/summary), not in `reason`/`evidence` — render those directly
+  // instead of the technical `action_type → hand/path` line.
+  if (payload.hand === 'notes') {
+    const body = payload.body as { title?: unknown; summary?: unknown };
+    const title = typeof body.title === 'string' ? body.title : '(untitled note)';
+    const summary = typeof body.summary === 'string' ? body.summary : '';
+    const lines = [
+      `#${p.id} ${p.agent} · ${p.brand_id}`,
+      cap(title, REASON_CAP),
+      cap(summary, REASON_CAP),
+      `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
+      `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
+    ];
+    return lines.join('\n');
+  }
+
   const evidence: unknown = JSON.parse(p.evidence);
   const evLines = typeof evidence !== 'object' || evidence === null
     ? []
