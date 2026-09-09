@@ -249,6 +249,7 @@ describe('executeProposal: executed-event emission', () => {
     expect(JSON.parse(events[0]!.payload)).toEqual({
       proposal_id: id, agent: 'technical-designer', action_type: 'design_sheet',
       hand: 'ad-manager', path: '/api/x', response: { ok: true, ref: 'abc' },
+      ok: true, ref: 'abc',
     });
   });
 
@@ -306,6 +307,78 @@ describe('executeProposal: executed-event emission', () => {
     const r = await executeProposal(db, id, deps(async () => new Response('{}', { status: 200 })));
     expect(r.ok).toBe(true);
     expect(getProposalById(db, id)!.status).toBe('executed');
+  });
+});
+
+describe('executeProposal: flattening the hand response onto the event payload', () => {
+  let db: Database.Database;
+  let id: number;
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db);
+    id = insertProposal(db, {
+      agent: 'technical-designer', brand_id: 'dearborn-denim', action_type: 'design_sheet',
+      action_payload: { hand: 'ad-manager', method: 'POST', path: '/api/x', body: { n: 1 } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+  });
+  afterEach(() => db.close());
+
+  it('copies top-level scalar response fields onto the payload; arrays stay nested only under response', async () => {
+    const responseBody = {
+      slug: 'rail-capsule-2', revision: 3, brand: 'dearborn-denim',
+      json_url: 'https://x.example/y.json', designsheet_urls: ['a', 'b'],
+    };
+    await executeProposal(db, id, deps(async () => new Response(JSON.stringify(responseBody), { status: 200 })));
+    const payload = JSON.parse(selectEvents(db)[0]!.payload) as Record<string, unknown>;
+    expect(payload.slug).toBe('rail-capsule-2');
+    expect(payload.revision).toBe(3);
+    expect(payload.brand).toBe('dearborn-denim');
+    expect(payload.json_url).toBe('https://x.example/y.json');
+    expect(payload).not.toHaveProperty('designsheet_urls');
+    expect(payload.response).toEqual(responseBody);
+  });
+
+  it('does not let a response key named path or agent overwrite the fixed event keys', async () => {
+    const responseBody = { path: '/should-not-win', agent: 'not-the-real-agent', slug: 'x' };
+    await executeProposal(db, id, deps(async () => new Response(JSON.stringify(responseBody), { status: 200 })));
+    const payload = JSON.parse(selectEvents(db)[0]!.payload) as Record<string, unknown>;
+    expect(payload.path).toBe('/api/x');
+    expect(payload.agent).toBe('technical-designer');
+    expect(payload.slug).toBe('x');
+    expect(payload.response).toEqual(responseBody);
+  });
+
+  it('flattens nothing when the response was byte-truncated to a string', async () => {
+    const big = JSON.stringify({ slug: 'should-not-appear', blob: 'x'.repeat(10000) });
+    await executeProposal(db, id, deps(async () => new Response(big, { status: 200 })));
+    const payload = JSON.parse(selectEvents(db)[0]!.payload) as Record<string, unknown>;
+    expect(typeof payload.response).toBe('string');
+    expect(payload).not.toHaveProperty('slug');
+  });
+
+  it('falls back to action_payload.body for slug/revision/id/techpack_id when the response omits them', async () => {
+    const pid = insertProposal(db, {
+      agent: 'pattern-maker', brand_id: 'dearborn-denim', action_type: 'pattern_file',
+      action_payload: { hand: 'ad-manager', method: 'POST', path: '/api/z', body: { techpack_id: 42, revision: 2, extra: 'nope' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    await executeProposal(db, pid, deps(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+    const payload = JSON.parse(selectEvents(db)[0]!.payload) as Record<string, unknown>;
+    expect(payload.techpack_id).toBe(42);
+    expect(payload.revision).toBe(2);
+    expect(payload).not.toHaveProperty('extra');
+    expect(payload.ok).toBe(true);
+  });
+
+  it('prefers the response value over the body fallback when both carry the same identifier key', async () => {
+    const pid = insertProposal(db, {
+      agent: 'sourcing-agent', brand_id: 'dearborn-denim', action_type: 'design_sheet',
+      action_payload: { hand: 'ad-manager', method: 'POST', path: '/api/z', body: { id: 'body-id' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    await executeProposal(db, pid, deps(async () => new Response(JSON.stringify({ id: 'response-id' }), { status: 200 })));
+    const payload = JSON.parse(selectEvents(db)[0]!.payload) as Record<string, unknown>;
+    expect(payload.id).toBe('response-id');
   });
 });
 

@@ -120,6 +120,16 @@ function truncateResponseForEvent(body: unknown): unknown {
   return `${sliced}…[truncated]`;
 }
 
+/** Fixed top-level keys on an `*_executed` event payload that flattening must never overwrite. */
+const FIXED_EVENT_KEYS = new Set(['proposal_id', 'agent', 'action_type', 'hand', 'path', 'response']);
+
+/** Identifier fields event-driven skills read at the payload top level, used as a body-fallback when the hand's response omits them. */
+const BODY_FALLBACK_KEYS = ['slug', 'revision', 'id', 'techpack_id'] as const;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 /**
  * Best-effort: after a proposal executes successfully, insert `<action_type>_executed`
  * (plus `sourcing_options_executed` for `sourcing_option`) so a downstream agent's
@@ -127,6 +137,16 @@ function truncateResponseForEvent(body: unknown): unknown {
  * emitted for a failed execution, for a row the DB refused to record (a race with a
  * concurrent decision), or for a pure-card `notes` proposal (report/warning/alert/flag).
  * A DB error here is logged and swallowed — it must never fail the execution itself.
+ *
+ * Event-driven skills read identifiers (`slug`, `revision`, `id`, `techpack_id`, ...) at
+ * the event payload's top level, not nested under `response`. So every top-level key of
+ * the hand's response whose value is a string, number or boolean is copied onto the event
+ * payload's top level too — skipping any key that would overwrite a fixed key above.
+ * Nested objects/arrays stay only under `response`. Nothing is flattened when the response
+ * was too big and got byte-truncated to a string (`truncateResponseForEvent`), or wasn't an
+ * object to begin with. As a further fallback, when `action_payload.body` carries one of
+ * `slug`/`revision`/`id`/`techpack_id` and the response lacks it, that value is copied from
+ * the body — so a hand that just answers `{ok:true}` still yields a usable event.
  */
 function emitExecutedEvent(
   db: Database.Database,
@@ -136,8 +156,9 @@ function emitExecutedEvent(
   deps: ExecutorDeps,
 ): void {
   if (isSuppressedNotesCard(payload.hand, row.action_type)) return;
-  const response = payload.hand === 'notes' ? {} : truncateResponseForEvent(responseBody);
-  const eventPayload = {
+  const truncated = truncateResponseForEvent(responseBody);
+  const response = payload.hand === 'notes' ? {} : truncated;
+  const eventPayload: Record<string, unknown> = {
     proposal_id: row.id,
     agent: row.agent,
     action_type: row.action_type,
@@ -145,6 +166,26 @@ function emitExecutedEvent(
     path: payload.path,
     response,
   };
+
+  if (isPlainObject(truncated)) {
+    for (const [key, value] of Object.entries(truncated)) {
+      if (FIXED_EVENT_KEYS.has(key)) continue;
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        eventPayload[key] = value;
+      }
+    }
+  }
+
+  if (isPlainObject(payload.body)) {
+    for (const key of BODY_FALLBACK_KEYS) {
+      if (FIXED_EVENT_KEYS.has(key) || key in eventPayload) continue;
+      const value = payload.body[key];
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        eventPayload[key] = value;
+      }
+    }
+  }
+
   try {
     insertEvent(db, {
       source_hand: 'spine',
