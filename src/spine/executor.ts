@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
 import { getProposalById, recordExecution } from '../db/proposal-queries.js';
+import { insertEvent } from '../db/event-queries.js';
 import { resolveHand, type BrandConfig } from './brand-config.js';
-import type { ActionPayload } from './types.js';
+import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
   fetch: (url: string, init: RequestInit) => Promise<Response>;
@@ -98,6 +99,74 @@ function validatePayload(payload: ActionPayload): string | null {
   return null;
 }
 
+/** Max bytes of a hand's response body carried on the `*_executed` spine event. */
+const EVENT_RESPONSE_TRUNCATE_BYTES = 4096;
+
+/** Pure-card notes proposals (a report/warning/alert/flag with no downstream agent to wake) never emit. */
+const SUPPRESSED_NOTES_SUFFIXES = ['_report', '_warning', '_alert', '_flag'];
+
+function isSuppressedNotesCard(hand: string, actionType: string): boolean {
+  return hand === 'notes' && SUPPRESSED_NOTES_SUFFIXES.some((s) => actionType.endsWith(s));
+}
+
+/** JSON body too big to carry on the event verbatim is stringified and byte-truncated instead. */
+function truncateResponseForEvent(body: unknown): unknown {
+  const json = JSON.stringify(body ?? null) ?? 'null';
+  if (Buffer.byteLength(json, 'utf8') <= EVENT_RESPONSE_TRUNCATE_BYTES) return body;
+  let sliced = json;
+  while (sliced.length > 0 && Buffer.byteLength(sliced, 'utf8') > EVENT_RESPONSE_TRUNCATE_BYTES) {
+    sliced = sliced.slice(0, -1);
+  }
+  return `${sliced}…[truncated]`;
+}
+
+/**
+ * Best-effort: after a proposal executes successfully, insert `<action_type>_executed`
+ * (plus `sourcing_options_executed` for `sourcing_option`) so a downstream agent's
+ * urgent poll wakes on the chain, instead of waiting for the daily catch-up. Never
+ * emitted for a failed execution, for a row the DB refused to record (a race with a
+ * concurrent decision), or for a pure-card `notes` proposal (report/warning/alert/flag).
+ * A DB error here is logged and swallowed — it must never fail the execution itself.
+ */
+function emitExecutedEvent(
+  db: Database.Database,
+  row: ProposalRow,
+  payload: ActionPayload,
+  responseBody: unknown,
+  deps: ExecutorDeps,
+): void {
+  if (isSuppressedNotesCard(payload.hand, row.action_type)) return;
+  const response = payload.hand === 'notes' ? {} : truncateResponseForEvent(responseBody);
+  const eventPayload = {
+    proposal_id: row.id,
+    agent: row.agent,
+    action_type: row.action_type,
+    hand: payload.hand,
+    path: payload.path,
+    response,
+  };
+  try {
+    insertEvent(db, {
+      source_hand: 'spine',
+      brand_id: row.brand_id,
+      event_type: `${row.action_type}_executed`,
+      payload: eventPayload,
+      urgent: true,
+    }, deps.now());
+    if (row.action_type === 'sourcing_option') {
+      insertEvent(db, {
+        source_hand: 'spine',
+        brand_id: row.brand_id,
+        event_type: 'sourcing_options_executed',
+        payload: eventPayload,
+        urgent: true,
+      }, deps.now());
+    }
+  } catch (err) {
+    console.error('spine: executed-event emit failed', row.id, err);
+  }
+}
+
 /**
  * Call the hand named in `action_payload` with the payload verbatim, record
  * the result on the proposal, and never throw. Nothing about the hand's
@@ -136,6 +205,7 @@ export async function executeProposal(
   if (payload.hand === 'notes' && !Object.hasOwn(brand.hands, 'notes')) {
     const result = { http_status: 200, body: payload.body, at: deps.now() };
     const recorded = recordExecution(db, id, 'executed', result);
+    if (recorded) emitExecutedEvent(db, row, payload, payload.body, deps);
     return { ok: true, http_status: 200, body: payload.body, recorded };
   }
 
@@ -164,6 +234,7 @@ export async function executeProposal(
     const result = { http_status: res.status, body: storedBody, at: deps.now() };
     if (res.status >= 200 && res.status < 300) {
       const recorded = recordExecution(db, id, 'executed', result);
+      if (recorded) emitExecutedEvent(db, row, payload, body, deps);
       return { ok: true, http_status: res.status, body, recorded };
     }
     const recorded = recordExecution(db, id, 'failed', result);

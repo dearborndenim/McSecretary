@@ -218,6 +218,130 @@ describe('executeProposal: built-in notes hand', () => {
   });
 });
 
+function selectEvents(db: Database.Database): { event_type: string; source_hand: string; brand_id: string; urgent: number; payload: string }[] {
+  return db.prepare('SELECT * FROM spine_events ORDER BY id ASC').all() as {
+    event_type: string; source_hand: string; brand_id: string; urgent: number; payload: string;
+  }[];
+}
+
+describe('executeProposal: executed-event emission', () => {
+  let db: Database.Database;
+  let id: number;
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db);
+    id = insertProposal(db, {
+      agent: 'technical-designer', brand_id: 'dearborn-denim', action_type: 'design_sheet',
+      action_payload: { hand: 'ad-manager', method: 'POST', path: '/api/x', body: { n: 1 } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+  });
+  afterEach(() => db.close());
+
+  it('emits <action_type>_executed with the right type/payload/urgent on success', async () => {
+    const r = await executeProposal(db, id, deps(async () => new Response(JSON.stringify({ ok: true, ref: 'abc' }), { status: 200 })));
+    expect(r.ok).toBe(true);
+    const events = selectEvents(db);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event_type).toBe('design_sheet_executed');
+    expect(events[0]!.source_hand).toBe('spine');
+    expect(events[0]!.brand_id).toBe('dearborn-denim');
+    expect(events[0]!.urgent).toBe(1);
+    expect(JSON.parse(events[0]!.payload)).toEqual({
+      proposal_id: id, agent: 'technical-designer', action_type: 'design_sheet',
+      hand: 'ad-manager', path: '/api/x', response: { ok: true, ref: 'abc' },
+    });
+  });
+
+  it('does not emit on a failed execution (non-2xx)', async () => {
+    await executeProposal(db, id, deps(async () => new Response('nope', { status: 500 })));
+    expect(selectEvents(db)).toHaveLength(0);
+  });
+
+  it('does not emit when fetch throws', async () => {
+    await executeProposal(db, id, deps(async () => { throw new Error('boom'); }));
+    expect(selectEvents(db)).toHaveLength(0);
+  });
+
+  it('does not emit when the row was decided out from under the execution (recorded=false)', async () => {
+    const fetchImpl = async () => {
+      db.prepare("UPDATE proposals SET status = 'rejected' WHERE id = ?").run(id);
+      return new Response('{}', { status: 200 });
+    };
+    const r = await executeProposal(db, id, deps(fetchImpl));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.recorded).toBe(false);
+    expect(selectEvents(db)).toHaveLength(0);
+  });
+
+  it('emits both sourcing_option_executed and sourcing_options_executed once each for a sourcing_option proposal', async () => {
+    const sid = insertProposal(db, {
+      agent: 'sourcing-agent', brand_id: 'dearborn-denim', action_type: 'sourcing_option',
+      action_payload: { hand: 'ad-manager', method: 'POST', path: '/api/y', body: {} },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    await executeProposal(db, sid, deps(async () => new Response('{}', { status: 200 })));
+    const events = selectEvents(db);
+    expect(events.map((e) => e.event_type).sort()).toEqual(['sourcing_option_executed', 'sourcing_options_executed']);
+    expect(events.every((e) => e.urgent === 1)).toBe(true);
+  });
+
+  it('does not pluralize any other action type', async () => {
+    await executeProposal(db, id, deps(async () => new Response('{}', { status: 200 })));
+    expect(selectEvents(db).map((e) => e.event_type)).toEqual(['design_sheet_executed']);
+  });
+
+  it('truncates a large response body to 4 KB on the event payload', async () => {
+    const big = JSON.stringify({ blob: 'x'.repeat(10000) });
+    await executeProposal(db, id, deps(async () => new Response(big, { status: 200 })));
+    const events = selectEvents(db);
+    const payload = JSON.parse(events[0]!.payload) as { response: unknown };
+    expect(typeof payload.response).toBe('string');
+    expect((payload.response as string).length).toBeLessThan(big.length);
+    expect((payload.response as string).endsWith('…[truncated]')).toBe(true);
+    expect(Buffer.byteLength(payload.response as string, 'utf8')).toBeLessThan(big.length);
+  });
+
+  it('is best-effort: a DB error inserting the event never fails the execution', async () => {
+    db.exec('DROP TABLE spine_events');
+    const r = await executeProposal(db, id, deps(async () => new Response('{}', { status: 200 })));
+    expect(r.ok).toBe(true);
+    expect(getProposalById(db, id)!.status).toBe('executed');
+  });
+});
+
+describe('executeProposal: executed-event suppression for notes cards', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  function insertNotesWithActionType(actionType: string): number {
+    return insertProposal(db, {
+      agent: 'ops-agent', brand_id: 'dearborn-denim', action_type: actionType,
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+  }
+
+  it.each(['capacity_report', 'inventory_warning', 'fraud_alert', 'restock_flag'])(
+    'never emits for a %s notes card',
+    async (actionType) => {
+      const id = insertNotesWithActionType(actionType);
+      await executeProposal(db, id, deps(vi.fn()));
+      expect(selectEvents(db)).toHaveLength(0);
+    },
+  );
+
+  it('emits {} as the response for a non-suppressed notes card', async () => {
+    const id = insertNotesWithActionType('design_sheet');
+    await executeProposal(db, id, deps(vi.fn()));
+    const events = selectEvents(db);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event_type).toBe('design_sheet_executed');
+    const payload = JSON.parse(events[0]!.payload) as { response: unknown };
+    expect(payload.response).toEqual({});
+  });
+});
+
 describe('resolveHandUrl', () => {
   it('stays under the base path and origin', () => {
     expect(resolveHandUrl('https://am.example', '/x')).toEqual({ ok: true, href: 'https://am.example/x' });
