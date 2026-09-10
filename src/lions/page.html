@@ -1303,6 +1303,8 @@ function renderSchedule(){
     html += '<p class="sched-note" style="margin-top:var(--sp-3);">' + esc(SCHED_SOURCE_NOTE) + '</p>';
     if (SCHED_IS_LIVE) {
       html += '<p class="sched-note">Live from the CPS sheet' + (LIVE.checkedAt ? ' &middot; Checked ' + esc(schedCheckedLabel(LIVE.checkedAt)) + ' CT' : '') + '</p>';
+    } else {
+      html += '<p class="sched-note">Live copy with automatic schedule-change alerts: <a href="https://mcsecretary-triage-production.up.railway.app/lions" style="color:var(--gold);">mcsecretary-triage-production.up.railway.app/lions</a></p>';
     }
   }
 

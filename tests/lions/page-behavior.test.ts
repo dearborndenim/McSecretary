@@ -136,6 +136,9 @@ describe('team page — static (live:false)', () => {
     expect(h.el('alert-banner').hidden).toBe(true);
     expect(h.el('sched-calendar').innerHTML).toContain('2:00 PM');
     expect(h.el('sched-calendar').innerHTML).not.toContain('Checked');
+    expect(h.el('sched-calendar').innerHTML).toContain(
+      'href="https://mcsecretary-triage-production.up.railway.app/lions"'
+    );
   });
 
   it('still pops the banner when a static alerts array is present', () => {
@@ -181,6 +184,7 @@ describe('team page — live data', () => {
     const h = runPage(html);
     expect(h.el('sched-calendar').innerHTML).toContain('Live from the CPS sheet');
     expect(h.el('sched-calendar').innerHTML).toMatch(/Checked Sep 9, 6:00 PM CT/);
+    expect(h.el('sched-calendar').innerHTML).not.toContain('mcsecretary-triage-production');
   });
 
   it('marks the changed week with a red CHANGED pill', () => {
