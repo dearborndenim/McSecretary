@@ -135,6 +135,44 @@ describe('buildSpine', () => {
     expect(bot.sent).toHaveLength(0);
   });
 
+  it('wires the built-in email hand through Graph and records rfq_messages', async () => {
+    db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('sourcing','dearborn-denim','rfq_send',2)").run();
+    const calls: string[] = [];
+    const s = buildSpine({
+      db, transport: bot, now: () => NOW, env: { RFQ_FROM_ADDRESS: 'rob@dearborndenim.com' },
+      brandsDir: BRANDS, agentKeys: new Map(),
+      fetch: async (url) => { calls.push(url); return new Response('', { status: 202, headers: { 'request-id': 'g-7' } }); },
+      getGraphToken: async () => 'tok',
+    });
+    const r = await s.file(input({
+      agent: 'sourcing', action_type: 'rfq_send',
+      action_payload: {
+        hand: 'email', method: 'POST', path: '/send',
+        body: { to: 'sales@carr.example', subject: '[DD-RFQ-r1] Fabric request', text: 'Please quote.' },
+      },
+      evidence: { rfq_id: 'r1', intents: 'fi_1' },
+    }));
+    expect(r.routed).toBe('executed');
+    expect(calls).toEqual(['https://graph.microsoft.com/v1.0/users/rob%40dearborndenim.com/sendMail']);
+    expect(bot.sent.at(-1)!.text).toMatch(/Sent to sales@carr\.example: \[DD-RFQ-r1\]/);
+    const rows = db.prepare('SELECT rfq_id, vendor_domain, intents, graph_message_id FROM rfq_messages').all();
+    expect(rows).toEqual([{ rfq_id: 'r1', vendor_domain: 'carr.example', intents: 'fi_1', graph_message_id: 'g-7' }]);
+  });
+
+  it('fails an email proposal when no Graph token is wired, without calling out', async () => {
+    db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('sourcing','dearborn-denim','rfq_send',2)").run();
+    const r = await spine.file(input({
+      agent: 'sourcing', action_type: 'rfq_send',
+      action_payload: {
+        hand: 'email', method: 'POST', path: '/send',
+        body: { to: 'sales@carr.example', subject: 's', text: 't' },
+      },
+    }));
+    expect(r.routed).toBe('execution_failed');
+    expect(getProposalById(db, r.id)!.status).toBe('failed');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM rfq_messages').get()).toEqual({ n: 0 });
+  });
+
   it('aborts a hung hand call after handTimeoutMs and records the failure', async () => {
     db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('marketing-manager','dearborn-denim','creative_request',2)").run();
     const s = buildSpine({ db, transport: bot, now: () => NOW, env: { CONTENT_ENGINE_URL: 'https://ce.example', CONTENT_ENGINE_KEY: 'k' }, brandsDir: BRANDS, agentKeys: new Map(), fetch: hungFetch(), handTimeoutMs: 50 });

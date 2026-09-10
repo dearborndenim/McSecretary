@@ -14,6 +14,7 @@ let _briefingPreviewCacheProvider: (() => BriefingPreviewCache | undefined) | nu
 type SpineHttp = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean>;
 let _spineHttp: SpineHttp | null = null;
 let _lionsHttp: SpineHttp | null = null;
+let _rfqFilesHttp: SpineHttp | null = null;
 
 /** Wired from src/index.ts. Handles /spine/* before the legacy routes. */
 export function setSpineHttpHandler(handler: SpineHttp): void {
@@ -23,6 +24,16 @@ export function setSpineHttpHandler(handler: SpineHttp): void {
 /** Wired from src/index.ts. Handles /lions and /lions/* (see src/lions/routes.ts). */
 export function setLionsHttpHandler(handler: SpineHttp): void {
   _lionsHttp = handler;
+}
+
+/**
+ * Wired from src/index.ts. Serves `/files/rfq/<storage_id>/<name>` — the
+ * swatch photos vendors attach to an RFQ reply. Public and unauthenticated by
+ * design: product-dev's gallery renders them in an `<img>`. The 32-hex
+ * storage id is the capability (see src/email/rfq-files.ts).
+ */
+export function setRfqFilesHttpHandler(handler: SpineHttp): void {
+  _rfqFilesHttp = handler;
 }
 
 export function initApi(db: Database.Database, apiSecret: string): void {
@@ -178,6 +189,10 @@ export function startApiServer(port: number = 3000): http.Server {
 
     if (_lionsHttp && (req.url ?? '').startsWith('/lions')) {
       if (await _lionsHttp(req, res)) return;
+    }
+
+    if (_rfqFilesHttp && (req.url ?? '').startsWith('/files/rfq/')) {
+      if (await _rfqFilesHttp(req, res)) return;
     }
 
     // CORS + health check

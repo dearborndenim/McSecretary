@@ -100,6 +100,27 @@ export function initializeSpineSchema(db: Database.Database): void {
       notes TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_agent_run_index_outcome ON agent_run_index(outcome, started_at);
+
+    -- rfq_messages: every email the built-in email hand sends, so a vendor's
+    -- reply can be correlated back to the RFQ (by the [DD-RFQ-<id>] subject tag)
+    -- or, when the vendor strips the tag, by their sending domain. intents is
+    -- the CSV of product-dev fabric-intent ids the RFQ covered, copied from the
+    -- proposal's evidence at send time -- the reply's quotes are filed against
+    -- them.
+    CREATE TABLE IF NOT EXISTS rfq_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rfq_id TEXT NOT NULL DEFAULT '',
+      vendor_email TEXT NOT NULL,
+      vendor_domain TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      graph_message_id TEXT,
+      sent_at TEXT NOT NULL,
+      proposal_id INTEGER,
+      brand_id TEXT NOT NULL DEFAULT '',
+      intents TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_rfq_messages_rfq ON rfq_messages(rfq_id, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_rfq_messages_domain ON rfq_messages(vendor_domain, sent_at);
   `);
 
   // Additive migration: proposals.run_id (Stage 0B provenance link). PRAGMA-gated like user-schema.ts.

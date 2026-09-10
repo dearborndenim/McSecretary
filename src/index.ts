@@ -47,6 +47,7 @@ import {
   setBriefingPreviewCacheProvider,
   setSpineHttpHandler,
   setLionsHttpHandler,
+  setRfqFilesHttpHandler,
 } from './api.js';
 import { createLionsRouter } from './lions/routes.js';
 import { runLionsCheck, formatScheduleForTelegram } from './lions/check.js';
@@ -55,6 +56,11 @@ import { lionsConfig } from './lions/config.js';
 import { buildSpine } from './spine/wiring.js';
 import { createTelegramTransport } from './spine/telegram-card.js';
 import { parseAgentKeys } from './spine/agent-keys.js';
+import { getGraphToken } from './auth/graph.js';
+import { setRfqIntakeHandler, processRfqReply } from './email/rfq-intake.js';
+import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
+import { extractRfqOptions, saveRfqAttachments, postVendorQuote } from './email/rfq-runtime.js';
+import { insertEvent } from './db/event-queries.js';
 import { runExpirySweep, buildTrustMonthlySummary } from './spine/jobs.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
 import { seedTeam } from './db/seed-team.js';
@@ -1586,8 +1592,31 @@ async function main() {
     brandsDir: config.spine.brandsDir,
     agentKeys: parseAgentKeys(config.spine.agentKeys, { minLength: 16 }),
     fetch: (url, init) => fetch(url, init),
+    getGraphToken,
   });
   setSpineHttpHandler(spine.handleHttp);
+
+  // RFQ reply intake (spec §12.3): triage hands a recognised vendor reply here
+  // instead of the Haiku classifier. The notes card and the
+  // `vendor_quote_received` event go through the spine — no second approval
+  // flow, no second scheduler.
+  const rfqBrandId = process.env.RFQ_BRAND_ID || 'dearborn-denim';
+  setRfqIntakeHandler(async (email, match) => processRfqReply(email, match, {
+    db,
+    now: () => new Date().toISOString(),
+    brandId: rfqBrandId,
+    extract: (e) => extractRfqOptions(e),
+    saveAttachments: (e, rfqId) => saveRfqAttachments(e, rfqId, {
+      fetch: (url, init) => fetch(url, init),
+      getGraphToken,
+      env: process.env,
+    }),
+    postVendorQuote: (body) => postVendorQuote(body, { fetch: (url, init) => fetch(url, init), env: process.env }),
+    file: spine.file,
+    emitEvent: (e) => { insertEvent(db, e, new Date().toISOString()); },
+  }));
+
+  setRfqFilesHttpHandler(createRfqFilesRouter({ dir: rfqFilesDir(process.env) }));
 
   // Public team page + JSON, admin check/clear. Mounted before the legacy routes.
   setLionsHttpHandler(createLionsRouter({

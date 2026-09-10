@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CLASSIFICATION_OUTPUT_FORMAT } from '../../src/email/classifier.js';
 import { EMAIL_SCAN_OUTPUT_FORMAT, CLEANUP_OUTPUT_FORMAT } from '../../src/email/scan-schemas.js';
+import { RFQ_EXTRACTION_OUTPUT_FORMAT } from '../../src/email/rfq-intake.js';
 
 /**
  * Live probe (2026-09-03): the structured-outputs endpoint rejects `minimum`,
@@ -36,6 +37,7 @@ const SCHEMAS = {
   CLASSIFICATION_OUTPUT_FORMAT,
   EMAIL_SCAN_OUTPUT_FORMAT,
   CLEANUP_OUTPUT_FORMAT,
+  RFQ_EXTRACTION_OUTPUT_FORMAT,
 };
 
 describe('structured-output schemas use only API-supported keywords', () => {

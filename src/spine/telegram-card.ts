@@ -22,6 +22,8 @@ export const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 const REASON_CAP = 500;
 const EVIDENCE_VALUE_CAP = 80;
+/** An RFQ body is longer than a reason; Robert still has to read it on a phone. */
+const EMAIL_PREVIEW_CAP = 1200;
 
 /**
  * The inbox transport. Everything Telegram-specific lives behind this, so a
@@ -87,6 +89,25 @@ export function renderProposalCard(p: ProposalRow): string {
       `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
       `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
     ];
+    return lines.join('\n');
+  }
+
+  // email proposals are vendor-facing: Robert is approving a message, so show
+  // the recipient, subject and the text he is about to send, not hand/path.
+  if (payload.hand === 'email') {
+    const body = payload.body as { to?: unknown; subject?: unknown; text?: unknown; attachments?: unknown };
+    const to = Array.isArray(body.to) ? body.to.join(', ') : String(body.to ?? '(no recipient)');
+    const subject = typeof body.subject === 'string' ? body.subject : '(no subject)';
+    const attCount = Array.isArray(body.attachments) ? body.attachments.length : 0;
+    const lines = [
+      `#${p.id} ${p.agent} · ${p.brand_id}`,
+      `${p.action_type} → email to ${cap(to, EVIDENCE_VALUE_CAP)}`,
+      `Subject: ${cap(subject, REASON_CAP)}`,
+      cap(typeof body.text === 'string' ? body.text : '', EMAIL_PREVIEW_CAP),
+      attCount > 0 ? `${attCount} attachment${attCount === 1 ? '' : 's'}` : null,
+      `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
+      `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
+    ].filter((l): l is string => l !== null);
     return lines.join('\n');
   }
 

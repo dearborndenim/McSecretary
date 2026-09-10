@@ -3,6 +3,7 @@ import { getUserById } from '../db/user-queries.js';
 import { getProposalById } from '../db/proposal-queries.js';
 import { loadBrandConfig, listBrandIds } from './brand-config.js';
 import { executeProposal } from './executor.js';
+import { sendHandEmail, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { fileProposal } from './router.js';
 import {
   renderProposalCard, parseCallbackData, handleProposalCallback, handleEditReply, type CardDeps, type InboxTransport,
@@ -22,6 +23,8 @@ export interface SpineBuildDeps {
   fetch: (url: string, init: RequestInit) => Promise<Response>;
   /** Abort a hand call after this long so a hung hand can't wedge a callback. Default 20 s. */
   handTimeoutMs?: number;
+  /** Microsoft Graph app token for the built-in `email` hand. Omit to disable sending. */
+  getGraphToken?: () => Promise<string>;
 }
 
 const DEFAULT_HAND_TIMEOUT_MS = 20_000;
@@ -36,7 +39,14 @@ export function buildSpine(d: SpineBuildDeps) {
     if (!user?.telegram_chat_id) throw new Error(`No Telegram chat for inbox user of ${brandId}`);
     return user.telegram_chat_id;
   };
-  const execute = (id: number) => executeProposal(d.db, id, { fetch: fetchWithTimeout, env: d.env, loadBrand, now: d.now });
+  const getGraphToken = d.getGraphToken;
+  const sendEmail = getGraphToken
+    ? (req: EmailHandRequest): Promise<EmailHandResult> =>
+        sendHandEmail(d.db, req, { fetch: fetchWithTimeout, getGraphToken, env: d.env, now: d.now })
+    : undefined;
+  const execute = (id: number) => executeProposal(d.db, id, {
+    fetch: fetchWithTimeout, env: d.env, loadBrand, now: d.now, sendEmail,
+  });
   const replyTo = (chatId: string) => async (text: string) => { await d.transport.sendText(chatId, text); };
 
   const file = (input: ProposalInput) => fileProposal(d.db, input, {

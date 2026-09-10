@@ -193,6 +193,49 @@ describe('spine routes', () => {
     expect(filed).toHaveLength(1);
   });
 
+  it('POST /spine/proposals accepts an email proposal for a brand with no email hand registered', async () => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', {
+      brand_id: 'dearborn-denim', action_type: 'rfq_send',
+      action_payload: {
+        hand: 'email', method: 'POST', path: '/send',
+        body: {
+          to: 'sales@carr.example',
+          subject: '[DD-RFQ-linen-carr-20260910] Fabric request — Dearborn Denim, Spring 27',
+          text: 'Please reply with style number, price/yd, weight, width, content, minimum and lead time.',
+          attachments: [{ url: 'https://design.example/files/x/linen.png', name: 'linen.png' }],
+          rfq_id: 'linen-carr-20260910',
+        },
+      },
+      reason: 'RFQ to Carr Textiles', evidence: { rfq_id: 'linen-carr-20260910', intents: 'fi_1,fi_2' },
+      cost_usd: 0, reversible: false, level_required: 1, expires_at: '2026-09-12T00:00:00.000Z',
+    }, `Bearer ${KEY}`), res);
+    expect(out.status).toBe(200);
+    expect(filed).toHaveLength(1);
+  });
+
+  it('POST /spine/proposals rejects a malformed email payload at file time', async () => {
+    const cases: [unknown, RegExp][] = [
+      [{ hand: 'email', method: 'PUT', path: '/send', body: { to: 'a@b.com', subject: 's', text: 't' } }, /method must be POST/],
+      [{ hand: 'email', method: 'POST', path: '/hands/email/send', body: { to: 'a@b.com', subject: 's', text: 't' } }, /path must be '\/send'/],
+      [{ hand: 'email', method: 'POST', path: '/send', body: { subject: 's', text: 't' } }, /at least one recipient/],
+      [{ hand: 'email', method: 'POST', path: '/send', body: { to: 'nope', subject: 's', text: 't' } }, /invalid email address/],
+      [{ hand: 'email', method: 'POST', path: '/send', body: { to: 'a@b.com', subject: '', text: 't' } }, /subject/],
+      [{ hand: 'email', method: 'POST', path: '/send', body: { to: 'a@b.com', subject: 's' } }, /text/],
+      [{ hand: 'email', method: 'POST', path: '/send', body: { to: 'a@b.com', subject: 's', text: 't', attachments: [{ url: 'ftp://x/y', name: 'n' }] } }, /http\(s\) url/],
+    ];
+    for (const [action_payload, re] of cases) {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', {
+        brand_id: 'dearborn-denim', action_type: 'rfq_send', action_payload,
+        reason: 'r', evidence: {}, cost_usd: 0, reversible: false, level_required: 1, expires_at: '2026-09-12T00:00:00.000Z',
+      }, `Bearer ${KEY}`), res);
+      expect(out.status, JSON.stringify(action_payload)).toBe(400);
+      expect(JSON.parse(out.body).error).toMatch(re);
+    }
+    expect(filed).toHaveLength(0);
+  });
+
   it('POST /spine/events caps names and slug-checks brand_id', async () => {
     for (const [patch, re] of [
       [{ event_type: 'x'.repeat(129) }, /event_type/],

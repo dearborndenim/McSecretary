@@ -39,6 +39,31 @@ describe('telegram card', () => {
   beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); id = seed(db); setTelegramRef(db, id, '555', 1); });
   afterEach(() => db.close());
 
+  it('renders an email proposal as the message Robert is approving, not hand/path', () => {
+    const emailId = insertProposal(db, {
+      agent: 'sourcing', brand_id: 'dearborn-denim', action_type: 'rfq_send',
+      action_payload: {
+        hand: 'email', method: 'POST', path: '/send',
+        body: {
+          to: ['sales@carr.example'],
+          subject: '[DD-RFQ-linen-carr-20260910] Fabric request — Dearborn Denim, Spring 27',
+          text: 'We are after a mid-weight linen for a Spring 27 shirt.',
+          attachments: [{ url: 'https://design.example/files/x/linen.png', name: 'linen.png' }],
+        },
+      },
+      reason: 'No house or catalog match for the linen intent.',
+      evidence: { rfq_id: 'linen-carr-20260910', intents: 'fi_1,fi_2' },
+      cost_usd: 0, reversible: false, level_required: 1, expires_at: '2026-09-12T00:00:00.000Z',
+    }, NOW).id;
+    const text = renderProposalCard(getProposalById(db, emailId)!);
+    expect(text).toContain('rfq_send → email to sales@carr.example');
+    expect(text).toContain('Subject: [DD-RFQ-linen-carr-20260910] Fabric request');
+    expect(text).toContain('We are after a mid-weight linen');
+    expect(text).toContain('1 attachment');
+    expect(text).toContain('NOT reversible');
+    expect(text).not.toContain('/send');
+  });
+
   it('renders agent, brand, action, reason, up to three evidence lines, cost', () => {
     const text = renderProposalCard(getProposalById(db, id)!);
     expect(text).toContain('marketing-manager · dearborn-denim');

@@ -8,12 +8,21 @@ function tables(db: Database.Database): string[] {
 }
 
 describe('spine schema', () => {
-  it('creates the six spine tables via initializeSchema', () => {
+  it('creates the seven spine tables via initializeSchema', () => {
     const db = new Database(':memory:');
     initializeSchema(db);
     const t = tables(db);
-    for (const name of ['proposals', 'spine_events', 'trust_ledger', 'outcomes', 'outcome_maturity', 'agent_run_index']) {
+    for (const name of ['proposals', 'spine_events', 'trust_ledger', 'outcomes', 'outcome_maturity', 'agent_run_index', 'rfq_messages']) {
       expect(t, name).toContain(name);
+    }
+  });
+
+  it('gives rfq_messages the columns reply correlation needs', () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    const cols = (db.prepare('PRAGMA table_info(rfq_messages)').all() as { name: string }[]).map((c) => c.name);
+    for (const name of ['rfq_id', 'vendor_email', 'vendor_domain', 'subject', 'graph_message_id', 'sent_at', 'proposal_id', 'brand_id', 'intents']) {
+      expect(cols, name).toContain(name);
     }
   });
 

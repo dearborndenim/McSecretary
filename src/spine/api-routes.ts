@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
 import { loadBrandConfig, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
+import { validateEmailPayload } from './email-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
 import { insertEvent, drainEvents, countPendingByType } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
@@ -99,6 +100,10 @@ function validateProposal(b: Record<string, unknown>): string | null {
     const notesBad = validateNotesPayload(payload);
     if (notesBad) return notesBad;
   }
+  if (payload.hand === 'email') {
+    const emailCheck = validateEmailPayload(payload);
+    if (!emailCheck.ok) return emailCheck.error;
+  }
   if (typeof b.reason !== 'string' || b.reason.length === 0 || b.reason.length > 2000) return 'reason must be a string of 1–2000 chars';
   if (!isPlainObject(b.evidence)) return 'evidence must be an object';
   if (typeof b.cost_usd !== 'number' || !Number.isFinite(b.cost_usd) || b.cost_usd < 0) return 'cost_usd must be a non-negative number';
@@ -111,14 +116,15 @@ function validateProposal(b: Record<string, unknown>): string | null {
 
 /**
  * The brand must have a config file and the hand must be registered in it, or
- * Robert would approve a card that can only fail. Exception: `notes` is a
- * built-in hand available to every brand that hasn't registered its own hand
- * of that name — it never makes an HTTP call, so it needs no config entry.
+ * Robert would approve a card that can only fail. Exceptions: `notes` and
+ * `email` are built-in hands available to every brand that hasn't registered
+ * its own hand of that name — `notes` never makes an HTTP call and `email`
+ * goes out through Microsoft Graph, so neither needs a config entry.
  */
 function validateBrandAndHand(brandsDir: string, brandId: string, hand: string): string | null {
   let brand;
   try { brand = loadBrandConfig(brandsDir, brandId); } catch { return `Unknown brand: ${brandId}`; }
-  if (hand === 'notes' && !Object.hasOwn(brand.hands, 'notes')) return null;
+  if ((hand === 'notes' || hand === 'email') && !Object.hasOwn(brand.hands, hand)) return null;
   if (!Object.hasOwn(brand.hands, hand)) return `Unknown hand for ${brandId}: ${hand}`;
   return null;
 }

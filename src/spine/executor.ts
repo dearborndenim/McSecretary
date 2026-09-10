@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
 import { resolveHand, type BrandConfig } from './brand-config.js';
+import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -9,6 +10,12 @@ export interface ExecutorDeps {
   env: Record<string, string | undefined>;
   loadBrand: (brandId: string) => BrandConfig;
   now: () => string;
+  /**
+   * The built-in `email` hand (spec §12.4). Absent means "this deployment
+   * cannot send mail" and an `email` proposal fails rather than silently
+   * doing nothing. Wired in `wiring.ts`; tests inject a stub.
+   */
+  sendEmail?: (req: EmailHandRequest) => Promise<EmailHandResult>;
 }
 
 export type ExecutionResult =
@@ -248,6 +255,33 @@ export async function executeProposal(
     const recorded = recordExecution(db, id, 'executed', result);
     if (recorded) emitExecutedEvent(db, row, payload, payload.body, deps);
     return { ok: true, http_status: 200, body: payload.body, recorded };
+  }
+
+  // Built-in "email" hand: the ONLY way a message leaves Robert's mailbox
+  // (spec §12.4). No HTTP route sends mail — a send is always the execution of
+  // a proposal that cleared the trust ledger. A brand may register its own
+  // `email` hand in config to override this.
+  if (payload.hand === 'email' && !Object.hasOwn(brand.hands, 'email')) {
+    const valid = validateEmailPayload(payload);
+    if (!valid.ok) return fail(valid.error);
+    if (!deps.sendEmail) return fail('Email hand is not configured on this instance');
+    let sent: EmailHandResult;
+    try {
+      let evidence: Record<string, unknown> = {};
+      try { evidence = JSON.parse(row.evidence) as Record<string, unknown>; } catch { /* evidence is advisory */ }
+      sent = await deps.sendEmail({ proposalId: row.id, brandId: row.brand_id, evidence, body: valid.body });
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    if (!sent.ok) {
+      const result = { http_status: sent.http_status ?? 0, body: sent.body ?? sent.error, error: sent.error, at: deps.now() };
+      const recorded = recordExecution(db, id, 'failed', result);
+      return { ok: false, http_status: sent.http_status, body: sent.body, error: sent.error, recorded };
+    }
+    const result = { http_status: sent.http_status, body: sent.body, at: deps.now() };
+    const recorded = recordExecution(db, id, 'executed', result);
+    if (recorded) emitExecutedEvent(db, row, payload, sent.body, deps);
+    return { ok: true, http_status: sent.http_status, body: sent.body, recorded };
   }
 
   let target: { url: string; bearer: string };
