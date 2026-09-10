@@ -217,6 +217,7 @@ describe('buildExtractionPrompt', () => {
 // ---------------------------------------------------------------------------
 
 const MATCH: RfqMatch = {
+  id: 1,
   rfq_id: RFQ_ID,
   vendor_email: 'sales@carrtextiles.example',
   vendor_domain: 'carrtextiles.example',
@@ -236,12 +237,14 @@ interface Harness {
   quotes: VendorQuoteBody[];
   proposals: ProposalInput[];
   events: SpineEventInput[];
+  acks: { email: RawEmail; match: RfqMatch }[];
 }
 
 function harness(over: Partial<RfqIntakeDeps> & { extraction?: RfqExtraction } = {}): Harness {
   const quotes: VendorQuoteBody[] = [];
   const proposals: ProposalInput[] = [];
   const events: SpineEventInput[] = [];
+  const acks: { email: RawEmail; match: RfqMatch }[] = [];
   let n = 0;
   const deps: RfqIntakeDeps = {
     db: null as unknown as Database.Database, // processRfqReply never touches the db itself
@@ -252,9 +255,10 @@ function harness(over: Partial<RfqIntakeDeps> & { extraction?: RfqExtraction } =
     postVendorQuote: async (body) => { quotes.push(body); n += 1; return { ok: true, id: `q${n}` }; },
     file: async (input) => { proposals.push(input); return { id: 1, routed: 'card' }; },
     emitEvent: (e) => { events.push(e); },
+    sendAcknowledgement: async (email, match) => { acks.push({ email, match }); return { ok: true }; },
     ...over,
   };
-  return { deps, quotes, proposals, events };
+  return { deps, quotes, proposals, events, acks };
 }
 
 describe('processRfqReply', () => {
@@ -352,6 +356,44 @@ describe('processRfqReply', () => {
     await processRfqReply(reply(), { ...MATCH, intents: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }, h.deps);
     expect(h.quotes).toHaveLength(20);
     expect(new Set(h.quotes.map((q) => q.fabricIntentId)).size).toBeLessThanOrEqual(5);
+  });
+
+  it('sends the acknowledgement once >=1 quote is filed', async () => {
+    const h = harness();
+    const email = reply();
+    await processRfqReply(email, MATCH, h.deps);
+    expect(h.acks).toHaveLength(1);
+    expect(h.acks[0]!.email).toBe(email);
+    expect(h.acks[0]!.match).toBe(MATCH);
+  });
+
+  it('never acknowledges an unparsed reply (no options, so nothing filed)', async () => {
+    const h = harness({ extraction: { options: [], unparsed_excerpt: 'Out of office until 22 Sept.' } });
+    const r = await processRfqReply(reply(), MATCH, h.deps);
+    expect(r.filed).toBe(0);
+    expect(h.acks).toEqual([]);
+  });
+
+  it('never acknowledges when every quote was rejected by product-dev', async () => {
+    const h = harness({ postVendorQuote: async () => ({ ok: false, id: null, error: 'product-dev 422' }) });
+    const r = await processRfqReply(reply(), MATCH, h.deps);
+    expect(r.filed).toBe(0);
+    expect(h.acks).toEqual([]);
+  });
+
+  it('records an acknowledgement failure in errors without undoing the filed quotes or the event', async () => {
+    const h = harness({ sendAcknowledgement: async () => ({ ok: false, error: 'Graph 403' }) });
+    const r = await processRfqReply(reply(), MATCH, h.deps);
+    expect(r.filed).toBe(2);
+    expect(h.events).toHaveLength(1);
+    expect(r.errors.join(' ')).toMatch(/Acknowledgement failed: Graph 403/);
+  });
+
+  it('records an acknowledgement failure when sendAcknowledgement throws', async () => {
+    const h = harness({ sendAcknowledgement: async () => { throw new Error('ECONNRESET'); } });
+    const r = await processRfqReply(reply(), MATCH, h.deps);
+    expect(r.filed).toBe(2);
+    expect(r.errors.join(' ')).toMatch(/Acknowledgement failed: ECONNRESET/);
   });
 });
 

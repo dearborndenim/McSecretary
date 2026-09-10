@@ -4,7 +4,7 @@ import { initializeSchema } from '../../src/db/schema.js';
 import { insertProposal, getProposalById } from '../../src/db/proposal-queries.js';
 import { executeProposal, type ExecutorDeps } from '../../src/spine/executor.js';
 import {
-  sendHandEmail, validateEmailPayload, buildSendMailPayload, contentTypeFor, fromAddress, resolveRfqId,
+  sendHandEmail, validateEmailPayload, buildSendMailPayload, contentTypeFor, fromAddress, mailboxAddress, resolveRfqId,
   type EmailHandBody, type EmailHandDeps,
 } from '../../src/spine/email-hand.js';
 import { listRfqMessages } from '../../src/db/rfq-queries.js';
@@ -97,12 +97,40 @@ describe('contentTypeFor', () => {
   });
 });
 
-describe('fromAddress / resolveRfqId', () => {
-  it('sends from RFQ_FROM_ADDRESS, falling back to Robert', () => {
-    expect(fromAddress({ RFQ_FROM_ADDRESS: 'sourcing@dearborndenim.com' })).toBe('sourcing@dearborndenim.com');
-    expect(fromAddress({})).toBe('rob@dearborndenim.com');
+describe('mailboxAddress / fromAddress', () => {
+  it('mailboxAddress is RFQ_MAILBOX, falling back to OUTLOOK_USER_EMAIL_1 then Robert', () => {
+    expect(mailboxAddress({ RFQ_MAILBOX: 'sourcing-mailbox@dearborndenim.com' })).toBe('sourcing-mailbox@dearborndenim.com');
+    expect(mailboxAddress({ OUTLOOK_USER_EMAIL_1: 'rob2@dearborndenim.com' })).toBe('rob2@dearborndenim.com');
+    expect(mailboxAddress({})).toBe('rob@dearborndenim.com');
   });
 
+  it('fromAddress is RFQ_FROM_ADDRESS, falling back to the sending mailbox', () => {
+    expect(fromAddress({ RFQ_FROM_ADDRESS: 'sourcing@dearborndenim.com' })).toBe('sourcing@dearborndenim.com');
+    expect(fromAddress({})).toBe('rob@dearborndenim.com');
+    // No alias configured: from equals the mailbox, even when the mailbox itself is non-default.
+    expect(fromAddress({ RFQ_MAILBOX: 'sourcing-mailbox@dearborndenim.com' })).toBe('sourcing-mailbox@dearborndenim.com');
+    // Alias set on top of a non-default mailbox: from is the alias, mailbox stays the sender.
+    expect(fromAddress({ RFQ_MAILBOX: 'sourcing-mailbox@dearborndenim.com', RFQ_FROM_ADDRESS: 'sourcing@dearborndenim.com' }))
+      .toBe('sourcing@dearborndenim.com');
+  });
+});
+
+describe('buildSendMailPayload with a sender override', () => {
+  it('adds no from/replyTo when the alias equals the mailbox', () => {
+    const p = buildSendMailPayload(normalized(), [], { mailbox: 'rob@dearborndenim.com', from: 'rob@dearborndenim.com' });
+    expect(p.message.from).toBeUndefined();
+    expect(p.message.replyTo).toBeUndefined();
+  });
+
+  it('stamps message.from/replyTo with the alias and a display name when it differs from the mailbox', () => {
+    const p = buildSendMailPayload(normalized(), [], { mailbox: 'rob@dearborndenim.com', from: 'sourcing@dearborndenim.com' });
+    const expected = { emailAddress: { address: 'sourcing@dearborndenim.com', name: 'Dearborn Denim Sourcing' } };
+    expect(p.message.from).toEqual(expected);
+    expect(p.message.replyTo).toEqual([expected]);
+  });
+});
+
+describe('resolveRfqId', () => {
   it('takes the rfq id from the body, then evidence, then the subject tag', () => {
     expect(resolveRfqId(normalized(), {})).toBe('linen-spring27-carr-20260910');
     expect(resolveRfqId(normalized({ rfq_id: undefined }), { rfq_id: 'from-evidence' })).toBe('from-evidence');
@@ -236,6 +264,58 @@ describe('sendHandEmail', () => {
     }, handDeps(async () => { throw new Error('ECONNRESET'); }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/ECONNRESET/);
+  });
+
+  it('sends through RFQ_MAILBOX but stamps message.from/replyTo with RFQ_FROM_ADDRESS when they differ', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 202, headers: { 'request-id': 'g1' } }));
+    const r = await sendHandEmail(db, {
+      proposalId: 7, brandId: 'dearborn-denim', evidence: {}, body: normalized({ attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch'], {
+      RFQ_MAILBOX: 'rob@dearborndenim.com', RFQ_FROM_ADDRESS: 'sourcing@dearborndenim.com',
+    }));
+    expect(r.ok).toBe(true);
+
+    const [sendUrl, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(sendUrl).toBe('https://graph.microsoft.com/v1.0/users/rob%40dearborndenim.com/sendMail');
+    const payload = JSON.parse(init.body as string);
+    expect(payload.message.from).toEqual({ emailAddress: { address: 'sourcing@dearborndenim.com', name: 'Dearborn Denim Sourcing' } });
+    expect(payload.message.replyTo).toEqual([{ emailAddress: { address: 'sourcing@dearborndenim.com', name: 'Dearborn Denim Sourcing' } }]);
+  });
+
+  it('sends no from/replyTo override when RFQ_MAILBOX and RFQ_FROM_ADDRESS are the same (or unset)', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 202 }));
+    await sendHandEmail(db, {
+      proposalId: 8, brandId: 'dearborn-denim', evidence: {}, body: normalized({ attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    const payload = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    expect(payload.message.from).toBeUndefined();
+    expect(payload.message.replyTo).toBeUndefined();
+  });
+
+  it('names the alias plainly when Graph rejects the send-from-alias with a 403/400 mentioning "from"', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ error: { code: 'ErrorAccessDenied', message: 'The property From is invalid or the user lacks permission to send as that address.' } }),
+      { status: 403 },
+    ));
+    const r = await sendHandEmail(db, {
+      proposalId: 9, brandId: 'dearborn-denim', evidence: {}, body: normalized({ attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch'], {
+      RFQ_MAILBOX: 'rob@dearborndenim.com', RFQ_FROM_ADDRESS: 'sourcing@dearborndenim.com',
+    }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/alias sourcing@dearborndenim\.com through mailbox rob@dearborndenim\.com/);
+    expect(r.error).toMatch(/send-from-alias enabled/);
+  });
+
+  it('does not add the alias explanation on a 4xx unrelated to the sender when no alias is configured', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { code: 'ErrorInvalidRecipients' } }), { status: 400 }));
+    const r = await sendHandEmail(db, {
+      proposalId: 10, brandId: 'dearborn-denim', evidence: {}, body: normalized({ attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).not.toMatch(/send-from-alias/);
   });
 });
 

@@ -153,14 +153,36 @@ export interface GraphSendMailPayload {
     toRecipients: { emailAddress: { address: string } }[];
     ccRecipients: { emailAddress: { address: string } }[];
     attachments: GraphFileAttachment[];
+    from?: { emailAddress: { address: string; name: string } };
+    replyTo?: { emailAddress: { address: string; name: string } }[];
   };
   saveToSentItems: true;
 }
 
-/** Build the Graph `sendMail` request body. Pure — the fetching of attachment bytes happens before this. */
-export function buildSendMailPayload(body: EmailHandBody, attachments: GraphFileAttachment[]): GraphSendMailPayload {
+/** Display name stamped on `message.from`/`replyTo` when the alias differs from the sending mailbox. */
+export const RFQ_SENDER_NAME = 'Dearborn Denim Sourcing';
+
+export interface EmailSender {
+  /** The Graph mailbox the send goes through: `/users/{mailbox}/sendMail`. */
+  mailbox: string;
+  /** The address shown as the sender. Same as `mailbox` unless RFQ_FROM_ADDRESS names an alias. */
+  from: string;
+}
+
+/**
+ * Build the Graph `sendMail` request body. Pure — the fetching of attachment bytes happens before this.
+ * `sender` is optional so existing callers that only care about body/recipients are unaffected; when
+ * given and `sender.from` differs from `sender.mailbox`, the payload sets `message.from`/`replyTo` to
+ * the alias — Exchange must have send-from-alias enabled and the alias must belong to that mailbox, or
+ * Graph answers 403/400 on the send.
+ */
+export function buildSendMailPayload(
+  body: EmailHandBody,
+  attachments: GraphFileAttachment[],
+  sender?: EmailSender,
+): GraphSendMailPayload {
   const useHtml = typeof body.html === 'string' && body.html.trim().length > 0;
-  return {
+  const payload: GraphSendMailPayload = {
     message: {
       subject: body.subject,
       body: { contentType: useHtml ? 'HTML' : 'Text', content: useHtml ? body.html! : body.text },
@@ -170,6 +192,12 @@ export function buildSendMailPayload(body: EmailHandBody, attachments: GraphFile
     },
     saveToSentItems: true,
   };
+  if (sender && sender.from !== sender.mailbox) {
+    const addr = { emailAddress: { address: sender.from, name: RFQ_SENDER_NAME } };
+    payload.message.from = addr;
+    payload.message.replyTo = [addr];
+  }
+  return payload;
 }
 
 export interface EmailHandDeps {
@@ -214,9 +242,20 @@ export interface EmailHandFailure {
 
 export type EmailHandResult = EmailHandSuccess | EmailHandFailure;
 
-/** Where the message is sent from. Robert's mailbox unless RFQ_FROM_ADDRESS says otherwise. */
+/**
+ * The Graph mailbox the send actually goes through — `/users/{mailbox}/sendMail`.
+ * RFQ_MAILBOX, falling back to Robert's own mailbox.
+ */
+export function mailboxAddress(env: Record<string, string | undefined>): string {
+  return (env.RFQ_MAILBOX || env.OUTLOOK_USER_EMAIL_1 || 'rob@dearborndenim.com').trim();
+}
+
+/**
+ * The address shown as the sender. RFQ_FROM_ADDRESS, falling back to the sending mailbox itself —
+ * so an instance with no alias configured behaves exactly as before the mailbox/alias split.
+ */
 export function fromAddress(env: Record<string, string | undefined>): string {
-  return (env.RFQ_FROM_ADDRESS || env.OUTLOOK_USER_EMAIL_1 || 'rob@dearborndenim.com').trim();
+  return (env.RFQ_FROM_ADDRESS || mailboxAddress(env)).trim();
 }
 
 const TAG_RE = /\[DD-RFQ-([A-Za-z0-9][A-Za-z0-9._-]{0,127})\]/;
@@ -289,8 +328,10 @@ export async function sendHandEmail(
   req: EmailHandRequest,
   deps: EmailHandDeps,
 ): Promise<EmailHandResult> {
+  const mailbox = mailboxAddress(deps.env);
+  if (!mailbox) return { ok: false, error: 'No sending mailbox configured (set RFQ_MAILBOX or RFQ_FROM_ADDRESS)' };
   const from = fromAddress(deps.env);
-  if (!from) return { ok: false, error: 'No sending mailbox configured (set RFQ_FROM_ADDRESS)' };
+  const sender: EmailSender = { mailbox, from };
 
   const skipped: string[] = [];
   const attachments: GraphFileAttachment[] = [];
@@ -300,7 +341,7 @@ export async function sendHandEmail(
     else skipped.push(`${ref.name} (${got.why})`);
   }
 
-  const payload = buildSendMailPayload(req.body, attachments);
+  const payload = buildSendMailPayload(req.body, attachments, sender);
 
   let token: string;
   try {
@@ -312,7 +353,7 @@ export async function sendHandEmail(
   const clientRequestId = deps.requestId ? deps.requestId() : cryptoRandomId();
   let res: Response;
   try {
-    res = await deps.fetch(`${GRAPH_BASE}/users/${encodeURIComponent(from)}/sendMail`, {
+    res = await deps.fetch(`${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/sendMail`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -329,11 +370,18 @@ export async function sendHandEmail(
     let text = '';
     try { text = await res.text(); } catch { /* body already consumed or unreadable */ }
     const capped = text.length > 2000 ? `${text.slice(0, 2000)}…[truncated]` : text;
+    const aliasSuspect = sender.from !== sender.mailbox
+      && (res.status === 403 || res.status === 400)
+      && /from/i.test(capped);
+    const error = aliasSuspect
+      ? `Graph sendMail returned ${res.status} sending as alias ${sender.from} through mailbox ${sender.mailbox} — `
+        + `check that Exchange has send-from-alias enabled and that ${sender.from} belongs to ${sender.mailbox}: ${capped}`
+      : `Graph sendMail returned ${res.status}: ${capped}`;
     return {
       ok: false,
       http_status: res.status,
       body: capped,
-      error: `Graph sendMail returned ${res.status}: ${capped}`,
+      error,
     };
   }
 

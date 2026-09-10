@@ -15,6 +15,10 @@ export interface RfqMessageInput {
 export interface RfqMessageRow extends RfqMessageInput {
   id: number;
   vendor_domain: string;
+  /** The inbound vendor-reply message id the acknowledgement was sent for, if any. */
+  ack_message_id: string | null;
+  /** When the acknowledgement for `ack_message_id` was sent. Null until then. */
+  acknowledged_at: string | null;
 }
 
 /** Lowercased domain part of an email address, or '' when it isn't one. */
@@ -69,6 +73,31 @@ export function findRfqMessageByDomain(
 
 export function listRfqMessages(db: Database.Database, rfqId: string): RfqMessageRow[] {
   return db.prepare('SELECT * FROM rfq_messages WHERE rfq_id = ? ORDER BY id ASC').all(rfqId) as RfqMessageRow[];
+}
+
+/**
+ * Has an acknowledgement already gone out for this inbound vendor-reply message?
+ * Keyed by the reply's own Graph message id, not the RFQ — a re-triage of the
+ * same inbound message (restart, retry, reprocessing) must never send twice,
+ * regardless of which outbound row `matchRfqReply` resolves it to.
+ */
+export function isRfqReplyAcknowledged(db: Database.Database, inboundMessageId: string): boolean {
+  if (!inboundMessageId) return false;
+  const row = db.prepare(
+    'SELECT 1 FROM rfq_messages WHERE ack_message_id = ? AND acknowledged_at IS NOT NULL LIMIT 1',
+  ).get(inboundMessageId);
+  return row !== undefined;
+}
+
+/** Record that the outbound row `rowId` (the RFQ send matchRfqReply resolved) was acknowledged for inbound message `inboundMessageId`. */
+export function markRfqReplyAcknowledged(
+  db: Database.Database,
+  rowId: number,
+  inboundMessageId: string,
+  ackedAt: string,
+): void {
+  db.prepare('UPDATE rfq_messages SET ack_message_id = ?, acknowledged_at = ? WHERE id = ?')
+    .run(inboundMessageId, ackedAt, rowId);
 }
 
 /** Parse an `intents` CSV into trimmed, non-empty ids. */

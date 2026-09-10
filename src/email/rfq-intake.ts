@@ -44,6 +44,8 @@ export function extractRfqTag(...texts: (string | null | undefined)[]): string |
 }
 
 export interface RfqMatch {
+  /** The matched `rfq_messages` row id — the outbound send the acknowledgement gets recorded against. */
+  id: number;
   rfq_id: string;
   vendor_email: string;
   vendor_domain: string;
@@ -55,6 +57,7 @@ export interface RfqMatch {
 
 function toMatch(row: RfqMessageRow, matchedBy: 'tag' | 'domain'): RfqMatch {
   return {
+    id: row.id,
     rfq_id: row.rfq_id,
     vendor_email: row.vendor_email,
     vendor_domain: row.vendor_domain,
@@ -284,6 +287,12 @@ export interface RfqIntakeDeps {
   postVendorQuote: (body: VendorQuoteBody) => Promise<{ ok: boolean; id: string | null; error?: string }>;
   file: (input: ProposalInput) => Promise<{ id: number; routed: Routed }>;
   emitEvent: (e: SpineEventInput) => void;
+  /**
+   * Sends the one-line acknowledgement in the vendor's thread. Called only
+   * after >=1 quote has been filed (never for an unparsed reply); idempotent
+   * on the inbound message id, so a re-triage is safe to call again.
+   */
+  sendAcknowledgement: (email: RawEmail, match: RfqMatch) => Promise<{ ok: boolean; error?: string }>;
   /** How long the unparsed-reply card stays actionable. Default 48 h. */
   expiryHours?: number;
 }
@@ -437,6 +446,14 @@ export async function processRfqReply(
       });
     } catch (err) {
       errors.push(`Event emit failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Never acknowledge a reply that yielded no filed quotes (unparsed, no intents, all rejected).
+    try {
+      const ack = await deps.sendAcknowledgement(email, match);
+      if (!ack.ok) errors.push(`Acknowledgement failed: ${ack.error ?? 'unknown error'}`);
+    } catch (err) {
+      errors.push(`Acknowledgement failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

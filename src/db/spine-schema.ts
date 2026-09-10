@@ -127,6 +127,14 @@ export function initializeSpineSchema(db: Database.Database): void {
   const cols = (db.prepare('PRAGMA table_info(proposals)').all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes('run_id')) db.exec('ALTER TABLE proposals ADD COLUMN run_id TEXT');
 
+  // Additive migration: rfq_messages.ack_message_id / acknowledged_at (RFQ reply
+  // acknowledgement, spec change 2). ack_message_id holds the *inbound* vendor
+  // message id that triggered the ack, keyed on the outbound row matchRfqReply
+  // resolved -- a re-triage of the same inbound message id never sends twice.
+  const rfqCols = (db.prepare('PRAGMA table_info(rfq_messages)').all() as { name: string }[]).map((c) => c.name);
+  if (!rfqCols.includes('ack_message_id')) db.exec('ALTER TABLE rfq_messages ADD COLUMN ack_message_id TEXT');
+  if (!rfqCols.includes('acknowledged_at')) db.exec('ALTER TABLE rfq_messages ADD COLUMN acknowledged_at TEXT');
+
   const seed = db.prepare(
     'INSERT OR IGNORE INTO outcome_maturity (lane, metric, lag_days) VALUES (?, ?, ?)',
   );

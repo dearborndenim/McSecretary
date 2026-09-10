@@ -5,11 +5,14 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import type Database from 'better-sqlite3';
 import {
   RFQ_EXTRACTION_OUTPUT_FORMAT, RFQ_EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt, parseRfqExtraction,
-  MAX_ATTACHMENTS, type QuoteAttachment, type RfqExtraction, type VendorQuoteBody,
+  MAX_ATTACHMENTS, type QuoteAttachment, type RfqExtraction, type RfqMatch, type VendorQuoteBody,
 } from './rfq-intake.js';
 import { newStorageId, rfqFileUrl, rfqPublicBaseUrl, rfqFilesDir, writeRfqFile } from './rfq-files.js';
+import { isRfqReplyAcknowledged, markRfqReplyAcknowledged } from '../db/rfq-queries.js';
+import { fromAddress, mailboxAddress, RFQ_SENDER_NAME } from '../spine/email-hand.js';
 import type { RawEmail } from './types.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
@@ -147,4 +150,118 @@ export async function postVendorQuote(
     if (typeof raw === 'string' || typeof raw === 'number') id = String(raw);
   } catch { /* a 2xx with an unreadable body still means it landed */ }
   return { ok: true, id };
+}
+
+// ---------------------------------------------------------------------------
+// Acknowledgement (spec change 2)
+// ---------------------------------------------------------------------------
+
+/** Exact body of the one-line RFQ acknowledgement, plain text, no quoting added by us. */
+export const RFQ_ACK_BODY =
+  'Thank you for your response. We have logged your options and will follow up on samples.\n\nDearborn Denim Sourcing';
+
+export interface RfqAckDeps {
+  db: Database.Database;
+  fetch: (url: string, init: RequestInit) => Promise<Response>;
+  getGraphToken: () => Promise<string>;
+  env: Record<string, string | undefined>;
+  now: () => string;
+}
+
+export interface RfqAckResult {
+  ok: boolean;
+  /** True when an earlier run already acknowledged this exact inbound message — no Graph call was made. */
+  skipped?: boolean;
+  method?: 'reply' | 'sendMail';
+  error?: string;
+}
+
+type SenderOverride = { emailAddress: { address: string; name: string } };
+
+function senderOverride(mailbox: string, from: string): SenderOverride | null {
+  return from === mailbox ? null : { emailAddress: { address: from, name: RFQ_SENDER_NAME } };
+}
+
+async function graphPost(
+  deps: Pick<RfqAckDeps, 'fetch'>,
+  token: string,
+  url: string,
+  payload: unknown,
+): Promise<{ ok: boolean; status?: number; text: string }> {
+  let res: Response;
+  try {
+    res = await deps.fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return { ok: false, text: err instanceof Error ? err.message : String(err) };
+  }
+  if (res.ok) return { ok: true, status: res.status, text: '' };
+  let text = '';
+  try { text = await res.text(); } catch { /* body already consumed or unreadable */ }
+  return { ok: false, status: res.status, text };
+}
+
+/**
+ * Send the one-line RFQ acknowledgement in the vendor's own thread, once
+ * `processRfqReply` has filed at least one quote off their reply. Prefers
+ * Graph's `reply` action on the inbound message id (so it lands in the same
+ * thread); falls back to `sendMail` with a `Re:`-prefixed subject and the
+ * original `conversationId` when `reply` is unavailable (the message id is
+ * stale, or the reply call itself fails). Sent from the alias `RFQ_FROM_ADDRESS`
+ * names (email-hand.ts) through the `RFQ_MAILBOX` that holds the message.
+ *
+ * Idempotent on the inbound message id: `rfq_messages.acknowledged_at` is
+ * checked (and set) keyed by `email.id`, so a re-triage of the same reply
+ * (restart, retry) never sends a second acknowledgement. Callers must only
+ * reach this after a successful parse — an unparsed reply is never acked.
+ */
+export async function sendRfqAcknowledgement(
+  email: RawEmail,
+  match: RfqMatch,
+  deps: RfqAckDeps,
+): Promise<RfqAckResult> {
+  if (isRfqReplyAcknowledged(deps.db, email.id)) return { ok: true, skipped: true };
+
+  const mailbox = mailboxAddress(deps.env);
+  const from = fromAddress(deps.env);
+  const override = senderOverride(mailbox, from);
+
+  let token: string;
+  try {
+    token = await deps.getGraphToken();
+  } catch (err) {
+    return { ok: false, error: `Graph token failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const replyUrl = `${GRAPH_BASE}/users/${encodeURIComponent(email.account)}/messages/${encodeURIComponent(email.id)}/reply`;
+  const replyPayload: Record<string, unknown> = { comment: RFQ_ACK_BODY };
+  if (override) replyPayload.message = { from: override, replyTo: [override] };
+
+  let result = await graphPost(deps, token, replyUrl, replyPayload);
+  let method: 'reply' | 'sendMail' = 'reply';
+
+  if (!result.ok) {
+    method = 'sendMail';
+    const sendUrl = `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/sendMail`;
+    const subject = /^re:/i.test(email.subject.trim()) ? email.subject : `Re: ${email.subject}`;
+    const message: Record<string, unknown> = {
+      subject,
+      body: { contentType: 'Text', content: RFQ_ACK_BODY },
+      toRecipients: [{ emailAddress: { address: email.sender } }],
+    };
+    if (email.threadId) message.conversationId = email.threadId;
+    if (override) { message.from = override; message.replyTo = [override]; }
+    result = await graphPost(deps, token, sendUrl, { message, saveToSentItems: true });
+  }
+
+  if (!result.ok) {
+    const statusPart = result.status ? ` (${result.status})` : '';
+    return { ok: false, method, error: `RFQ acknowledgement via ${method}${statusPart} failed: ${result.text}` };
+  }
+
+  markRfqReplyAcknowledged(deps.db, match.id, email.id, deps.now());
+  return { ok: true, method };
 }

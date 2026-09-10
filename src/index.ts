@@ -59,7 +59,7 @@ import { parseAgentKeys } from './spine/agent-keys.js';
 import { getGraphToken } from './auth/graph.js';
 import { setRfqIntakeHandler, processRfqReply } from './email/rfq-intake.js';
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
-import { extractRfqOptions, saveRfqAttachments, postVendorQuote } from './email/rfq-runtime.js';
+import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
 import { runExpirySweep, buildTrustMonthlySummary } from './spine/jobs.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
@@ -1614,6 +1614,13 @@ async function main() {
     postVendorQuote: (body) => postVendorQuote(body, { fetch: (url, init) => fetch(url, init), env: process.env }),
     file: spine.file,
     emitEvent: (e) => { insertEvent(db, e, new Date().toISOString()); },
+    sendAcknowledgement: (e, match) => sendRfqAcknowledgement(e, match, {
+      db,
+      fetch: (url, init) => fetch(url, init),
+      getGraphToken,
+      env: process.env,
+      now: () => new Date().toISOString(),
+    }),
   }));
 
   setRfqFilesHttpHandler(createRfqFilesRouter({ dir: rfqFilesDir(process.env) }));
