@@ -121,6 +121,17 @@ export function initializeSpineSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_rfq_messages_rfq ON rfq_messages(rfq_id, sent_at);
     CREATE INDEX IF NOT EXISTS idx_rfq_messages_domain ON rfq_messages(vendor_domain, sent_at);
+
+    -- rfq_replies: one row per *inbound* vendor-reply message that has already
+    -- been run through the RFQ intake (quotes filed / notes card raised).
+    -- Keyed on the inbound Graph message id so the 30-minute Email Scan job
+    -- and the 5 AM triage (or a Telegram "scan rfq") never double-file the
+    -- same reply, regardless of which one sees it first.
+    CREATE TABLE IF NOT EXISTS rfq_replies (
+      message_id TEXT PRIMARY KEY,
+      rfq_id TEXT NOT NULL DEFAULT '',
+      processed_at TEXT NOT NULL
+    );
   `);
 
   // Additive migration: proposals.run_id (Stage 0B provenance link). PRAGMA-gated like user-schema.ts.

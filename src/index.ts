@@ -26,7 +26,7 @@ import {
 import { initializeDefaultSchedule, startSchedulerFromDb, stopAllJobs, registerHandler } from './scheduler.js';
 import { createShutdown } from './shutdown.js';
 import { TIMEZONE } from './calendar/types.js';
-import { fetchRecentEmails, formatEmailsForContext } from './email/reader.js';
+import { fetchRecentEmails, formatEmailsForContext, toRawEmail } from './email/reader.js';
 import {
   readMasterLearnings,
   readMasterPatterns,
@@ -57,7 +57,7 @@ import { buildSpine } from './spine/wiring.js';
 import { createTelegramTransport } from './spine/telegram-card.js';
 import { parseAgentKeys } from './spine/agent-keys.js';
 import { getGraphToken } from './auth/graph.js';
-import { setRfqIntakeHandler, processRfqReply } from './email/rfq-intake.js';
+import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRepliesFrom, type RfqScanSummary } from './email/rfq-intake.js';
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
@@ -388,6 +388,24 @@ async function handleInviteReminders(): Promise<void> {
   }
 }
 
+/**
+ * Run the RFQ reply matcher/intake (spec §12.3) over a batch of already-fetched
+ * `EmailSummary` rows. Shared by the 30-minute Email Scan job and the "scan rfq"
+ * Telegram command — both need the reply intake to run outside the 5 AM
+ * triage, and both are idempotent per inbound message id via `rfq_replies`
+ * (`intakeRfqRepliesFrom`), so running this twice over the same message, or
+ * once here and once in `runTriage`, files nothing twice.
+ *
+ * Returns null with no intake handler registered yet (startup ordering, or
+ * an admin/test context where `setRfqIntakeHandler` was never called).
+ */
+async function runRfqScan(messages: EmailSummary[]): Promise<RfqScanSummary | null> {
+  const handler = getRfqIntakeHandler();
+  if (!handler) return null;
+  const rawEmails = messages.filter((e) => e.body !== undefined).map(toRawEmail);
+  return intakeRfqRepliesFrom(rawEmails, { db, now: () => new Date().toISOString(), handler });
+}
+
 async function handleEmailScan(): Promise<void> {
   try {
     console.log('Scanning emails for auto-tagging...');
@@ -398,8 +416,13 @@ async function handleEmailScan(): Promise<void> {
       getUserEmailAccounts(db, u.id).map((a) => a.email_address),
     );
 
+    // includeBody: true — the RFQ matcher below only needs subject/sender/preview,
+    // but a matched reply's extraction (spec §12.3) needs the full body, and
+    // fetching it lazily per-match would mean a second Graph round trip per
+    // vendor reply. Fetching it up front here is one extra field on a call
+    // that already runs every 30 minutes over a small (≤30/account) window.
     const emailResults = await Promise.all(
-      allEmailAddresses.map((email) => fetchRecentEmails(email, 4, 30).catch(() => [])),
+      allEmailAddresses.map((email) => fetchRecentEmails(email, 4, 30, true).catch(() => [])),
     );
 
     // Only process untagged emails (no Outlook categories yet)
@@ -470,6 +493,21 @@ When in doubt, mark as NOT spam. Better to let a real email through than miss it
       } else {
         notSpam.push(email);
       }
+    }
+
+    // RFQ reply intake (spec §12.3): a vendor's answer to one of our RFQs
+    // must not sit in the inbox for up to a day waiting on the 5 AM triage —
+    // run the same matcher/intake the briefing uses over every not-spam
+    // message here too. Idempotent per inbound message id (`rfq_replies`),
+    // so a reply this scan already filed is a no-op for the next one, and
+    // for the 5 AM triage if it sees the same message again.
+    const rfqScanSummary = await runRfqScan(notSpam);
+    if (rfqScanSummary) {
+      console.log(
+        `RFQ scan: ${rfqScanSummary.matched} matched, ${rfqScanSummary.filed} quote(s) filed, `
+        + `${rfqScanSummary.noted} carded, ${rfqScanSummary.skipped} already processed.`,
+      );
+      if (rfqScanSummary.errors.length > 0) console.error('RFQ scan errors:', rfqScanSummary.errors.join('; '));
     }
 
     // Bulk-tag spam emails
@@ -1331,6 +1369,31 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         const msg = err instanceof Error ? err.message : String(err);
         return `Briefing-sections update failed: ${msg}`;
       }
+    }
+  }
+
+  // Run the RFQ reply intake immediately instead of waiting on the next
+  // 30-minute Email Scan or the 5 AM triage — admin only, like other
+  // on-demand ops commands (journal, dev requests).
+  if ((lowerText === '/scan rfq' || lowerText === 'scan rfq') && user.role === 'admin') {
+    try {
+      const accounts = getUserEmailAccounts(db, user.id);
+      const emailResults = await Promise.all(
+        accounts.map((a) => fetchRecentEmails(a.email_address, 72, 50, true).catch(() => [])),
+      );
+      const summary = await runRfqScan(emailResults.flat());
+      const response = summary
+        ? `RFQ scan: ${summary.matched} matched, ${summary.filed} quote(s) filed, `
+          + `${summary.noted} carded, ${summary.skipped} already processed.`
+          + (summary.errors.length > 0 ? `\nErrors: ${summary.errors.join('; ')}` : '')
+        : 'RFQ scan: intake handler not registered yet.';
+      insertConversationMessage(db, user.id, today, 'secretary', response);
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errorMsg = `RFQ scan failed: ${msg}`;
+      insertConversationMessage(db, user.id, today, 'secretary', errorMsg);
+      return errorMsg;
     }
   }
 

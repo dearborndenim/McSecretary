@@ -17,6 +17,15 @@ describe('spine schema', () => {
     }
   });
 
+  it('creates rfq_replies for cross-scan RFQ intake idempotency', () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    const t = tables(db);
+    expect(t).toContain('rfq_replies');
+    const cols = (db.prepare('PRAGMA table_info(rfq_replies)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(['message_id', 'rfq_id', 'processed_at']);
+  });
+
   it('gives rfq_messages the columns reply correlation needs', () => {
     const db = new Database(':memory:');
     initializeSchema(db);
