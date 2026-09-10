@@ -13,10 +13,16 @@ let _briefingPreviewCacheProvider: (() => BriefingPreviewCache | undefined) | nu
 
 type SpineHttp = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean>;
 let _spineHttp: SpineHttp | null = null;
+let _lionsHttp: SpineHttp | null = null;
 
 /** Wired from src/index.ts. Handles /spine/* before the legacy routes. */
 export function setSpineHttpHandler(handler: SpineHttp): void {
   _spineHttp = handler;
+}
+
+/** Wired from src/index.ts. Handles /lions and /lions/* (see src/lions/routes.ts). */
+export function setLionsHttpHandler(handler: SpineHttp): void {
+  _lionsHttp = handler;
 }
 
 export function initApi(db: Database.Database, apiSecret: string): void {
@@ -168,6 +174,10 @@ export function startApiServer(port: number = 3000): http.Server {
   const server = http.createServer(async (req, res) => {
     if (_spineHttp && (req.url ?? '').startsWith('/spine/')) {
       if (await _spineHttp(req, res)) return;
+    }
+
+    if (_lionsHttp && (req.url ?? '').startsWith('/lions')) {
+      if (await _lionsHttp(req, res)) return;
     }
 
     // CORS + health check
