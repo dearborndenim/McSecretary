@@ -4,6 +4,9 @@
  * archives, or modifies anything. It just reads.
  */
 
+import { stripHtml } from './outlook.js';
+import type { RawEmail } from './types.js';
+
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 export interface EmailSummary {
@@ -16,18 +19,26 @@ export interface EmailSummary {
   receivedAt: string;
   isRead: boolean;
   categories: string[];
+  /** Only present when `fetchRecentEmails` was called with `includeBody: true`. */
+  body?: string;
+  /** Only present when `fetchRecentEmails` was called with `includeBody: true`. */
+  threadId?: string;
 }
 
 export async function fetchRecentEmails(
   userEmail: string,
   hours: number = 48,
   maxResults: number = 30,
+  includeBody: boolean = false,
 ): Promise<EmailSummary[]> {
   const { getGraphToken } = await import('../auth/graph.js');
   const token = await getGraphToken();
 
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-  const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=id,from,subject,bodyPreview,receivedDateTime,isRead,categories`;
+  const fields = includeBody
+    ? 'id,from,subject,bodyPreview,body,receivedDateTime,isRead,categories,conversationId'
+    : 'id,from,subject,bodyPreview,receivedDateTime,isRead,categories';
+  const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=${fields}`;
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -50,7 +61,29 @@ export async function fetchRecentEmails(
     receivedAt: msg.receivedDateTime,
     isRead: msg.isRead,
     categories: msg.categories ?? [],
+    ...(includeBody ? { body: stripHtml(msg.body?.content ?? ''), threadId: msg.conversationId ?? '' } : {}),
   }));
+}
+
+/**
+ * Adapt an `EmailSummary` fetched with `includeBody: true` into the `RawEmail`
+ * shape the RFQ intake (`matchRfqReply` / `processRfqReply`) expects. Used by
+ * the 30-minute Email Scan job and the "scan rfq" command — both fetch with
+ * `fetchRecentEmails(..., true)` first.
+ */
+export function toRawEmail(e: EmailSummary): RawEmail {
+  return {
+    id: e.id,
+    account: e.account,
+    sender: e.from,
+    senderName: e.fromName,
+    subject: e.subject,
+    bodyPreview: e.bodyPreview,
+    body: e.body ?? e.bodyPreview,
+    receivedAt: e.receivedAt,
+    threadId: e.threadId ?? '',
+    isRead: e.isRead,
+  };
 }
 
 export function formatEmailsForContext(emails: EmailSummary[]): string {

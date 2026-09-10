@@ -100,6 +100,30 @@ export function markRfqReplyAcknowledged(
     .run(inboundMessageId, ackedAt, rowId);
 }
 
+/**
+ * Has this *inbound* vendor-reply message already been run through the RFQ
+ * intake? Keyed on the reply's own Graph message id so the 30-minute Email
+ * Scan job and the 5 AM triage (or an on-demand "scan rfq") never re-file
+ * quotes or re-card an unparsed reply for the same message.
+ */
+export function isRfqReplyProcessed(db: Database.Database, messageId: string): boolean {
+  if (!messageId) return false;
+  const row = db.prepare('SELECT 1 FROM rfq_replies WHERE message_id = ? LIMIT 1').get(messageId);
+  return row !== undefined;
+}
+
+/** Record that inbound message `messageId` was run through the RFQ intake for `rfqId`. */
+export function markRfqReplyProcessed(
+  db: Database.Database,
+  messageId: string,
+  rfqId: string,
+  processedAt: string,
+): void {
+  db.prepare(
+    'INSERT OR IGNORE INTO rfq_replies (message_id, rfq_id, processed_at) VALUES (?, ?, ?)',
+  ).run(messageId, rfqId, processedAt);
+}
+
 /** Parse an `intents` CSV into trimmed, non-empty ids. */
 export function parseIntents(csv: string | null | undefined): string[] {
   if (!csv) return [];

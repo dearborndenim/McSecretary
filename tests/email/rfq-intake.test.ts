@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeSchema } from '../../src/db/schema.js';
-import { insertRfqMessage, emailDomain, parseIntents } from '../../src/db/rfq-queries.js';
+import {
+  insertRfqMessage, emailDomain, parseIntents, isRfqReplyProcessed, markRfqReplyProcessed,
+} from '../../src/db/rfq-queries.js';
 import {
   matchRfqReply, extractRfqTag, parseRfqExtraction, buildVendorQuoteBody, vendorNameFor,
   processRfqReply, setRfqIntakeHandler, getRfqIntakeHandler, buildExtractionPrompt, classifyRfqReply,
-  type RfqExtraction, type RfqIntakeDeps, type RfqMatch, type RfqOption, type VendorQuoteBody,
+  intakeRfqRepliesFrom,
+  type RfqExtraction, type RfqIntakeDeps, type RfqIntakeHandler, type RfqIntakeResult, type RfqMatch,
+  type RfqOption, type VendorQuoteBody,
 } from '../../src/email/rfq-intake.js';
 import type { RawEmail } from '../../src/email/types.js';
 import type { ProposalInput, SpineEventInput } from '../../src/spine/types.js';
@@ -447,5 +451,149 @@ describe('classifyRfqReply (the triage seam)', () => {
     expect(c.category).toBe('rfq_reply');
     expect(c.summary).toMatch(/could not be processed: db locked/);
     expect(errors[0]).toMatch(/RFQ intake failed for msg-1: db locked/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('isRfqReplyProcessed / markRfqReplyProcessed', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  it('is false for a message nothing has recorded yet', () => {
+    expect(isRfqReplyProcessed(db, 'msg-1')).toBe(false);
+  });
+
+  it('is true once marked, keyed on the inbound message id', () => {
+    markRfqReplyProcessed(db, 'msg-1', RFQ_ID, NOW);
+    expect(isRfqReplyProcessed(db, 'msg-1')).toBe(true);
+    expect(isRfqReplyProcessed(db, 'msg-2')).toBe(false);
+  });
+
+  it('marking twice is a no-op, not a throw (INSERT OR IGNORE)', () => {
+    markRfqReplyProcessed(db, 'msg-1', RFQ_ID, NOW);
+    expect(() => markRfqReplyProcessed(db, 'msg-1', RFQ_ID, '2026-09-13T00:00:00.000Z')).not.toThrow();
+    expect(isRfqReplyProcessed(db, 'msg-1')).toBe(true);
+  });
+
+  it('is false for an empty message id', () => {
+    expect(isRfqReplyProcessed(db, '')).toBe(false);
+  });
+});
+
+describe('intakeRfqRepliesFrom (30-min Email Scan + "scan rfq" shared entry point)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  function filedHandler(calls: RawEmail[]): RfqIntakeHandler {
+    return async (email) => {
+      calls.push(email);
+      const result: RfqIntakeResult = {
+        rfq_id: RFQ_ID, vendor: 'Carr Textiles', options: 1, quotes: ['q1'], filed: 1,
+        intents: ['fi_1'], noted: false, summary: 'filed', suggestedAction: 'rank it', errors: [],
+      };
+      return result;
+    };
+  }
+
+  function unparsedHandler(calls: RawEmail[]): RfqIntakeHandler {
+    return async (email) => {
+      calls.push(email);
+      const result: RfqIntakeResult = {
+        rfq_id: RFQ_ID, vendor: 'Carr Textiles', options: 0, quotes: [], filed: 0,
+        intents: ['fi_1'], noted: true, summary: 'carded', suggestedAction: 'read it', errors: [],
+      };
+      return result;
+    };
+  }
+
+  it('ignores a message that matches no RFQ', async () => {
+    const calls: RawEmail[] = [];
+    const summary = await intakeRfqRepliesFrom([reply({ subject: 'hi', bodyPreview: '', sender: 'random@example.com' })], {
+      db, now: () => NOW, handler: filedHandler(calls),
+    });
+    expect(summary).toMatchObject({ scanned: 1, matched: 0, skipped: 0, filed: 0, noted: 0, errors: [] });
+    expect(calls).toEqual([]);
+    expect(summary.outcomes.size).toBe(0);
+  });
+
+  it('runs the handler once for a matched reply and marks it processed', async () => {
+    seedSend(db);
+    const calls: RawEmail[] = [];
+    const email = reply();
+    const summary = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler: filedHandler(calls) });
+
+    expect(summary).toMatchObject({ scanned: 1, matched: 1, skipped: 0, filed: 1, noted: 0, errors: [] });
+    expect(calls).toEqual([email]);
+    expect(isRfqReplyProcessed(db, email.id)).toBe(true);
+    const outcome = summary.outcomes.get(email.id)!;
+    expect(outcome.skipped).toBe(false);
+    expect(outcome.classified.category).toBe('rfq_reply');
+    expect(outcome.result?.filed).toBe(1);
+  });
+
+  it('a second scan over the same message is a no-op — the handler is not called again', async () => {
+    seedSend(db);
+    const calls: RawEmail[] = [];
+    const email = reply();
+    const handler = filedHandler(calls);
+
+    const first = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler });
+    expect(first.filed).toBe(1);
+
+    const second = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler });
+    expect(second).toMatchObject({ scanned: 1, matched: 1, skipped: 1, filed: 0, noted: 0, errors: [] });
+    expect(calls).toHaveLength(1); // handler ran exactly once across both scans
+    expect(second.outcomes.get(email.id)!.skipped).toBe(true);
+  });
+
+  it('marks an unparsed (carded, no quotes filed) reply processed too, so it is never re-carded', async () => {
+    seedSend(db);
+    const calls: RawEmail[] = [];
+    const email = reply();
+    const handler = unparsedHandler(calls);
+
+    const first = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler });
+    expect(first).toMatchObject({ matched: 1, filed: 0, noted: 1 });
+    expect(isRfqReplyProcessed(db, email.id)).toBe(true);
+
+    const second = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler });
+    expect(second).toMatchObject({ skipped: 1, noted: 0 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not mark processed when the handler throws, so the next scan retries it', async () => {
+    seedSend(db);
+    const calls: RawEmail[] = [];
+    const email = reply();
+    const handler: RfqIntakeHandler = async (e) => { calls.push(e); throw new Error('product-dev unreachable'); };
+
+    const first = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler });
+    expect(first.matched).toBe(1);
+    expect(first.errors.join(' ')).toMatch(/product-dev unreachable/);
+    expect(isRfqReplyProcessed(db, email.id)).toBe(false);
+
+    const second = await intakeRfqRepliesFrom([email], { db, now: () => NOW, handler });
+    expect(second.skipped).toBe(0);
+    expect(calls).toHaveLength(2); // retried, not skipped
+  });
+
+  it('processes a batch independently — one match, one non-match, one already-processed', async () => {
+    seedSend(db);
+    const calls: RawEmail[] = [];
+    const handler = filedHandler(calls);
+    const already = reply({ id: 'msg-already' });
+    markRfqReplyProcessed(db, 'msg-already', RFQ_ID, NOW);
+
+    const summary = await intakeRfqRepliesFrom([
+      reply({ id: 'msg-new' }),
+      reply({ id: 'msg-unrelated', subject: 'newsletter', bodyPreview: '', sender: 'news@random.example' }),
+      already,
+    ], { db, now: () => NOW, handler });
+
+    expect(summary).toMatchObject({ scanned: 3, matched: 2, skipped: 1, filed: 1 });
+    expect(calls.map((c) => c.id)).toEqual(['msg-new']);
   });
 });

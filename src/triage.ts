@@ -18,7 +18,7 @@ import {
 import { getUserEmailAccounts, getUserPreferences } from './db/user-queries.js';
 import { fetchUnreadOutlookEmails } from './email/outlook.js';
 import { classifyEmail } from './email/classifier.js';
-import { matchRfqReply, getRfqIntakeHandler, classifyRfqReply } from './email/rfq-intake.js';
+import { getRfqIntakeHandler, intakeRfqRepliesFrom } from './email/rfq-intake.js';
 import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutlookEmail } from './email/actions.js';
 import { generateBriefing } from './briefing/generator.js';
 import type { UserBriefingContext } from './briefing/generator.js';
@@ -197,19 +197,24 @@ export async function runTriage(
       pendingActions,
     };
 
+    // RFQ reply intake first (spec §12.3): a vendor's answer to one of our
+    // RFQs is not ordinary mail — it is extracted into product-dev vendor
+    // quotes instead of classified. Shared with the 30-minute Email Scan job
+    // and the "scan rfq" command (src/index.ts) via `intakeRfqRepliesFrom`,
+    // which is idempotent per inbound message id — a reply the scan already
+    // filed is a no-op here. With no intake handler registered (tests, the
+    // admin CLI) every email takes the ordinary path.
+    const rfqIntake = getRfqIntakeHandler();
+    const rfqScan = rfqIntake
+      ? await intakeRfqRepliesFrom(allEmails, { db, now: () => now.toISOString(), handler: rfqIntake })
+      : null;
+    if (rfqScan) errors.push(...rfqScan.errors);
+
     // Classify emails
     console.log('Classifying emails...');
-    const rfqIntake = getRfqIntakeHandler();
     for (const email of allEmails) {
       try {
-        // A vendor's answer to one of our RFQs is not ordinary mail: it is
-        // extracted into product-dev vendor quotes instead of classified
-        // (spec §12.3). With no intake handler registered (tests, the admin
-        // CLI) every email takes the ordinary path.
-        const rfqMatch = rfqIntake ? matchRfqReply(db, email, now.toISOString()) : null;
-        const classified = rfqMatch
-          ? await classifyRfqReply(email, rfqMatch, rfqIntake!, errors)
-          : await classifyEmail(email);
+        const classified = rfqScan?.outcomes.get(email.id)?.classified ?? await classifyEmail(email);
         allClassified.push(classified);
 
         getOrCreateSenderProfile(db, userId, classified.sender, classified.senderName);

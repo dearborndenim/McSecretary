@@ -16,7 +16,8 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type Database from 'better-sqlite3';
 import {
-  emailDomain, findRfqMessageByDomain, findRfqMessageByRfqId, parseIntents, type RfqMessageRow,
+  emailDomain, findRfqMessageByDomain, findRfqMessageByRfqId, parseIntents,
+  isRfqReplyProcessed, markRfqReplyProcessed, type RfqMessageRow,
 } from '../db/rfq-queries.js';
 import type { ProposalInput, SpineEventInput } from '../spine/types.js';
 import type { Routed } from '../spine/router.js';
@@ -486,12 +487,25 @@ export type RfqIntakeHandler = (email: RawEmail, match: RfqMatch) => Promise<Rfq
  * failed intake still yields a row, flagged for Robert, with the error in the
  * summary — the reply must never vanish because product-dev was down.
  */
-export async function classifyRfqReply(
+interface RfqReplyProcessing {
+  classified: ClassifiedEmail;
+  /** null when the handler itself threw — a wiring failure, not an intake outcome. */
+  result: RfqIntakeResult | null;
+}
+
+/**
+ * Run a matched reply through the intake handler and build the `ClassifiedEmail`
+ * both call sites need, without deciding anything about idempotency — that is
+ * `intakeRfqRepliesFrom`'s job (§ below). `classifyRfqReply` is this with only
+ * the classified row kept, for triage's inline per-email loop; `errors` is
+ * appended to in place either way.
+ */
+async function runRfqIntakeForEmail(
   email: RawEmail,
   match: RfqMatch,
   intake: RfqIntakeHandler,
   errors: string[],
-): Promise<ClassifiedEmail> {
+): Promise<RfqReplyProcessing> {
   const base = {
     ...email,
     category: 'rfq_reply',
@@ -503,16 +517,123 @@ export async function classifyRfqReply(
   try {
     const result = await intake(email, match);
     for (const e of result.errors) errors.push(`RFQ ${result.rfq_id || '(untagged)'}: ${e}`);
-    return { ...base, summary: result.summary, suggestedAction: result.suggestedAction };
+    return { classified: { ...base, summary: result.summary, suggestedAction: result.suggestedAction }, result };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errors.push(`RFQ intake failed for ${email.id}: ${msg}`);
     return {
-      ...base,
-      summary: `Vendor reply to RFQ ${match.rfq_id || '(untagged)'} could not be processed: ${msg}`,
-      suggestedAction: 'Read the reply and file the quotes by hand.',
+      classified: {
+        ...base,
+        summary: `Vendor reply to RFQ ${match.rfq_id || '(untagged)'} could not be processed: ${msg}`,
+        suggestedAction: 'Read the reply and file the quotes by hand.',
+      },
+      result: null,
     };
   }
+}
+
+export async function classifyRfqReply(
+  email: RawEmail,
+  match: RfqMatch,
+  intake: RfqIntakeHandler,
+  errors: string[],
+): Promise<ClassifiedEmail> {
+  return (await runRfqIntakeForEmail(email, match, intake, errors)).classified;
+}
+
+// ---------------------------------------------------------------------------
+// Shared scan/triage entry point (idempotent across the 30-min Email Scan,
+// the 5 AM triage, and the "scan rfq" Telegram command)
+// ---------------------------------------------------------------------------
+
+export interface RfqReplyOutcome {
+  match: RfqMatch;
+  /** True when a *previous* scan/triage already ran this inbound message through intake. */
+  skipped: boolean;
+  classified: ClassifiedEmail;
+  /** The intake result, when the handler ran and resolved this time. Null when skipped or the handler threw. */
+  result: RfqIntakeResult | null;
+}
+
+export interface RfqScanDeps {
+  db: Database.Database;
+  now: () => string;
+  handler: RfqIntakeHandler;
+}
+
+export interface RfqScanSummary {
+  /** Messages handed in. */
+  scanned: number;
+  /** Recognised as a reply to one of our RFQs. */
+  matched: number;
+  /** Matched but already processed by an earlier scan/triage — no-op this time. */
+  skipped: number;
+  /** Vendor quotes filed across every matched, newly-processed reply. */
+  filed: number;
+  /** Replies that produced a `rfq_reply_unparsed` notes card. */
+  noted: number;
+  errors: string[];
+  /** Per-message-id outcome, for a caller (triage) that needs the classified row back. */
+  outcomes: Map<string, RfqReplyOutcome>;
+}
+
+/**
+ * Run the RFQ reply matcher over a batch of inbound messages and, for each
+ * match not already processed, run the registered intake handler exactly
+ * once — recording it in `rfq_replies` so a later scan/triage over the same
+ * inbound message id is a no-op. Used by both `runTriage` (spec §12.3) and
+ * the 30-minute Email Scan job / the "scan rfq" command (a vendor reply must
+ * not wait up to a day for the next briefing to notice it).
+ */
+export async function intakeRfqRepliesFrom(
+  messages: RawEmail[],
+  deps: RfqScanDeps,
+): Promise<RfqScanSummary> {
+  const summary: RfqScanSummary = {
+    scanned: messages.length, matched: 0, skipped: 0, filed: 0, noted: 0, errors: [], outcomes: new Map(),
+  };
+  for (const email of messages) {
+    try {
+      const match = matchRfqReply(deps.db, email, deps.now());
+      if (!match) continue;
+      summary.matched += 1;
+
+      if (isRfqReplyProcessed(deps.db, email.id)) {
+        summary.skipped += 1;
+        summary.outcomes.set(email.id, {
+          match,
+          skipped: true,
+          result: null,
+          classified: {
+            ...email,
+            category: 'rfq_reply',
+            urgency: 'high',
+            actionNeeded: 'review_required',
+            confidence: 1,
+            senderImportance: 'vendor',
+            summary: `Vendor reply to RFQ ${match.rfq_id || '(untagged)'} already processed by an earlier scan.`,
+            suggestedAction: 'No action needed — already filed.',
+          },
+        });
+        continue;
+      }
+
+      const { classified, result } = await runRfqIntakeForEmail(email, match, deps.handler, summary.errors);
+      if (result) {
+        // Only mark processed when the handler actually resolved. A thrown
+        // error is a wiring failure (deps misconfigured, db locked) — the
+        // next scan should retry it, not skip it forever.
+        markRfqReplyProcessed(deps.db, email.id, match.rfq_id, deps.now());
+        summary.filed += result.filed;
+        if (result.noted) summary.noted += 1;
+      }
+      summary.outcomes.set(email.id, { match, skipped: false, classified, result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      summary.errors.push(`RFQ matching failed for ${email.id}: ${msg}`);
+    }
+  }
+  return summary;
 }
 
 // ---------------------------------------------------------------------------
