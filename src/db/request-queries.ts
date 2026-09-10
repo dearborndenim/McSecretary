@@ -72,23 +72,3 @@ export function rejectDevRequest(
     WHERE id = ?
   `).run(reviewedBy, reason, id);
 }
-
-export function getApprovedDevRequests(db: Database.Database): DevRequest[] {
-  return db.prepare(
-    "SELECT * FROM dev_requests WHERE status = 'approved' ORDER BY reviewed_at ASC"
-  ).all() as DevRequest[];
-}
-
-/**
- * Approved requests that have not yet been written back to NIGHTLY_PLAN.md on GitHub.
- * Used by the update_nightly_plan empire tool.
- */
-export function getApprovedUnsyncedDevRequests(db: Database.Database): DevRequest[] {
-  return db.prepare(
-    "SELECT * FROM dev_requests WHERE status = 'approved' AND synced_at IS NULL ORDER BY reviewed_at ASC"
-  ).all() as DevRequest[];
-}
-
-export function markDevRequestSynced(db: Database.Database, id: number): void {
-  db.prepare("UPDATE dev_requests SET synced_at = datetime('now') WHERE id = ?").run(id);
-}

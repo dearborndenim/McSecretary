@@ -10,7 +10,8 @@ vi.mock('../../src/config.js', () => ({
   },
 }));
 
-import { listOrgRepos, readRepoFile, getFileSha, updateRepoFile } from '../../src/empire/github.js';
+import * as github from '../../src/empire/github.js';
+const { listOrgRepos, readRepoFile } = github;
 
 const originalFetch = globalThis.fetch;
 
@@ -134,70 +135,50 @@ describe('readRepoFile', () => {
   });
 });
 
-// ---------- getFileSha ----------
+// ---------- read-only surface (Robert, 2026-09-10) ----------
 
-describe('getFileSha', () => {
-  it('extracts SHA from API response', async () => {
+describe('read-only GitHub module', () => {
+  it('exports no write helper', () => {
+    for (const banned of ['getFileSha', 'updateRepoFile', 'createRepoFile', 'deleteRepoFile', 'commitFile']) {
+      expect(github, banned).not.toHaveProperty(banned);
+    }
+  });
+
+  it('exports exactly the read helpers plus the token/not-found utilities', () => {
+    expect(Object.keys(github).sort()).toEqual([
+      'GITHUB_TOKEN_MISSING_MESSAGE',
+      'GitHubNotFoundError',
+      'hasGitHubToken',
+      'isGitHubNotFound',
+      'listOrgRepos',
+      'readRepoFile',
+    ]);
+  });
+
+  it('never issues a non-GET request', async () => {
     mockFetch({
       ok: true,
       status: 200,
-      body: { sha: 'deadbeef1234567890', content: 'ignored', encoding: 'base64' },
+      body: { content: Buffer.from('x').toString('base64'), encoding: 'base64', sha: 'a' },
     });
+    await readRepoFile('repo', 'file.md');
+    mockFetch({ ok: true, status: 200, body: [] });
+    await listOrgRepos();
 
-    const sha = await getFileSha('my-repo', 'PROJECT_STATUS.md');
-    expect(sha).toBe('deadbeef1234567890');
+    for (const call of (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls) {
+      const init = call[1] as { method?: string } | undefined;
+      expect(init?.method ?? 'GET').toBe('GET');
+    }
   });
 
-  it('throws on API error', async () => {
-    mockFetch({ ok: false, status: 401, body: 'Unauthorized' });
-    await expect(getFileSha('repo', 'file.md')).rejects.toThrow(
-      'GitHub API error getting file SHA: 401',
-    );
-  });
-});
-
-// ---------- updateRepoFile ----------
-
-describe('updateRepoFile', () => {
-  it('sends correct PUT request with base64-encoded content and SHA', async () => {
-    mockFetch({ ok: true, status: 200, body: {} });
-
-    await updateRepoFile('my-repo', 'PROJECT_STATUS.md', 'New content here', 'Update status', 'sha123');
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/repos/test-org/my-repo/contents/'),
-      expect.objectContaining({
-        method: 'PUT',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer test-token-123',
-          'Content-Type': 'application/json',
-        }),
-      }),
-    );
-
-    // Verify the body contains correct fields
-    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(call[1].body as string);
-    expect(body.message).toBe('Update status');
-    expect(body.content).toBe(Buffer.from('New content here', 'utf-8').toString('base64'));
-    expect(body.sha).toBe('sha123');
+  it('isGitHubNotFound recognizes the 404 error and rejects unrelated failures', async () => {
+    mockFetch({ ok: false, status: 404, body: 'Not Found' });
+    const err = await readRepoFile('missing', 'README.md').catch((e) => e);
+    expect(github.isGitHubNotFound(err)).toBe(true);
+    expect(github.isGitHubNotFound(new Error('GitHub API error reading file: 500'))).toBe(false);
   });
 
-  it('omits SHA when creating a new file', async () => {
-    mockFetch({ ok: true, status: 201, body: {} });
-
-    await updateRepoFile('my-repo', 'NEW_FILE.md', 'Hello', 'Create file');
-
-    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(call[1].body as string);
-    expect(body.sha).toBeUndefined();
-    expect(body.message).toBe('Create file');
-  });
-
-  it('throws on API error', async () => {
-    mockFetch({ ok: false, status: 422, body: 'Unprocessable Entity' });
-    await expect(
-      updateRepoFile('repo', 'file.md', 'content', 'msg', 'sha'),
-    ).rejects.toThrow('GitHub API error updating file: 422');
+  it('hasGitHubToken reflects the configured token', () => {
+    expect(github.hasGitHubToken()).toBe(true);
   });
 });

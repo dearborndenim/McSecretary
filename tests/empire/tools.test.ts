@@ -1,29 +1,113 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the GitHub helpers so we never hit real APIs
+// Mock the GitHub helpers so we never hit real APIs.
 const mockListOrgRepos = vi.fn();
 const mockReadRepoFile = vi.fn();
-const mockGetFileSha = vi.fn();
-const mockUpdateRepoFile = vi.fn();
+let tokenPresent = true;
 
-vi.mock('../../src/empire/github.js', () => ({
-  listOrgRepos: (...args: unknown[]) => mockListOrgRepos(...args),
-  readRepoFile: (...args: unknown[]) => mockReadRepoFile(...args),
-  getFileSha: (...args: unknown[]) => mockGetFileSha(...args),
-  updateRepoFile: (...args: unknown[]) => mockUpdateRepoFile(...args),
-}));
+vi.mock('../../src/empire/github.js', async () => {
+  const actual = await vi.importActual<typeof import('../../src/empire/github.js')>(
+    '../../src/empire/github.js',
+  );
+  return {
+    GITHUB_TOKEN_MISSING_MESSAGE: actual.GITHUB_TOKEN_MISSING_MESSAGE,
+    GitHubNotFoundError: actual.GitHubNotFoundError,
+    isGitHubNotFound: actual.isGitHubNotFound,
+    hasGitHubToken: () => tokenPresent,
+    listOrgRepos: (...args: unknown[]) => mockListOrgRepos(...args),
+    readRepoFile: (...args: unknown[]) => mockReadRepoFile(...args),
+  };
+});
 
-// Mock config (required by transitive import)
 vi.mock('../../src/config.js', () => ({
   config: {
-    github: { token: 'test-token', org: 'test-org' },
+    github: { token: 'test-token', org: 'dearborndenim' },
   },
 }));
 
 import { executeEmpireTool, isEmpireTool, EMPIRE_TOOL_DEFINITIONS } from '../../src/empire/tools.js';
+import { GITHUB_TOKEN_MISSING_MESSAGE, GitHubNotFoundError } from '../../src/empire/github.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tokenPresent = true;
+});
+
+// ---------- registry ----------
+
+const REMOVED_TOOLS = [
+  'append_project_feedback',
+  'get_nightly_plan',
+  'update_nightly_plan',
+  'append_to_nightly_plan',
+];
+
+describe('EMPIRE_TOOL_DEFINITIONS (read-only, Robert 2026-09-10)', () => {
+  it('registers exactly the two read tools', () => {
+    expect(EMPIRE_TOOL_DEFINITIONS.map((t) => t.name).sort()).toEqual([
+      'list_projects',
+      'read_project_status',
+    ]);
+  });
+
+  it('each tool has name, description, and input_schema', () => {
+    for (const tool of EMPIRE_TOOL_DEFINITIONS) {
+      expect(tool.name).toBeTruthy();
+      expect(tool.description).toBeTruthy();
+      expect(tool.input_schema).toBeDefined();
+    }
+  });
+
+  it('both descriptions say they are read-only', () => {
+    for (const tool of EMPIRE_TOOL_DEFINITIONS) {
+      expect(tool.description?.toLowerCase(), tool.name).toContain('read-only');
+    }
+  });
+
+  it('no tool description offers a write, a build, or a queued task', () => {
+    // Strip the read-only disclaimer first: it legitimately names the verbs it forbids.
+    const blob = JSON.stringify(EMPIRE_TOOL_DEFINITIONS)
+      .toLowerCase()
+      .replace('read-only: it cannot edit, append to, or create any file.', '');
+    for (const banned of ['append', 'nightly', 'commit', 'queue', 'foreman', 'write', 'update']) {
+      expect(blob, banned).not.toContain(banned);
+    }
+  });
+
+  it('read_project_status states the write prohibition in its own description', () => {
+    const d = EMPIRE_TOOL_DEFINITIONS.find((t) => t.name === 'read_project_status')?.description ?? '';
+    expect(d).toContain('cannot edit, append to, or create any file');
+  });
+});
+
+describe('removed write tools', () => {
+  it('isEmpireTool rejects every removed tool name', () => {
+    for (const name of REMOVED_TOOLS) {
+      expect(isEmpireTool(name), name).toBe(false);
+    }
+  });
+
+  it('isEmpireTool accepts the two read tools', () => {
+    expect(isEmpireTool('read_project_status')).toBe(true);
+    expect(isEmpireTool('list_projects')).toBe(true);
+  });
+
+  it('isEmpireTool returns false for unrelated names', () => {
+    expect(isEmpireTool('send_email')).toBe(false);
+    expect(isEmpireTool('')).toBe(false);
+  });
+
+  it('the executor is a no-op for every removed tool and touches no GitHub helper', async () => {
+    for (const name of REMOVED_TOOLS) {
+      expect(await executeEmpireTool(name, { project_name: 'McSecretary', feedback_text: 'x' }), name).toBe('');
+    }
+    expect(mockReadRepoFile).not.toHaveBeenCalled();
+    expect(mockListOrgRepos).not.toHaveBeenCalled();
+  });
+
+  it('the executor is a no-op for an unknown tool name', async () => {
+    expect(await executeEmpireTool('nonexistent_tool', {})).toBe('');
+  });
 });
 
 // ---------- read_project_status ----------
@@ -41,80 +125,69 @@ describe('read_project_status', () => {
     expect(mockReadRepoFile).toHaveBeenCalledWith('McSecretary', 'PROJECT_STATUS.md');
   });
 
-  it('propagates error when file is missing', async () => {
-    mockReadRepoFile.mockRejectedValue(new Error('File not found: PROJECT_STATUS.md in test-org/ghost-project'));
+  it('returns the missing-token sentence and makes no request when GITHUB_TOKEN is unset', async () => {
+    tokenPresent = false;
+
+    const result = await executeEmpireTool('read_project_status', { project_name: 'McSecretary' });
+
+    expect(result).toBe(GITHUB_TOKEN_MISSING_MESSAGE);
+    expect(result).toContain('GITHUB_TOKEN missing');
+    expect(result.split('\n')).toHaveLength(1);
+    expect(mockReadRepoFile).not.toHaveBeenCalled();
+  });
+
+  it('names the org and lists projects when the repo does not exist', async () => {
+    mockReadRepoFile.mockRejectedValue(
+      new GitHubNotFoundError('File not found: PROJECT_STATUS.md in dearborndenim/ghost-project'),
+    );
+    mockListOrgRepos.mockResolvedValue([
+      { name: 'McSecretary', description: null, pushed_at: '2026-09-09T12:00:00Z' },
+      { name: 'content-engine', description: null, pushed_at: '2026-09-08T12:00:00Z' },
+    ]);
+
+    const result = await executeEmpireTool('read_project_status', { project_name: 'ghost-project' });
+
+    expect(result).toBe(
+      'No repo named ghost-project in dearborndenim; projects: McSecretary, content-engine',
+    );
+    expect(result).not.toContain('404');
+  });
+
+  it('omits the project list when the org listing is also unavailable', async () => {
+    mockReadRepoFile.mockRejectedValue(new GitHubNotFoundError('File not found'));
+    mockListOrgRepos.mockRejectedValue(new Error('GitHub API error listing repos: 403 Forbidden'));
+
+    const result = await executeEmpireTool('read_project_status', { project_name: 'ghost-project' });
+
+    expect(result).toBe('No repo named ghost-project in dearborndenim');
+  });
+
+  it('distinguishes an existing repo with no status file from a missing repo', async () => {
+    mockReadRepoFile.mockRejectedValue(new GitHubNotFoundError('File not found'));
+    mockListOrgRepos.mockResolvedValue([
+      { name: 'content-engine', description: null, pushed_at: '2026-09-08T12:00:00Z' },
+    ]);
+
+    const result = await executeEmpireTool('read_project_status', { project_name: 'content-engine' });
+
+    expect(result).toContain('content-engine');
+    expect(result).toContain('no PROJECT_STATUS.md');
+    expect(result).not.toContain('No repo named');
+  });
+
+  it('propagates a non-404 GitHub failure instead of guessing', async () => {
+    mockReadRepoFile.mockRejectedValue(new Error('GitHub API error reading file: 500 Server Error'));
 
     await expect(
-      executeEmpireTool('read_project_status', { project_name: 'ghost-project' }),
-    ).rejects.toThrow('File not found');
-  });
-});
-
-// ---------- append_project_feedback ----------
-
-describe('append_project_feedback', () => {
-  it('appends feedback under existing Robert\'s Feedback section', async () => {
-    const existing = "# Project\n\n## Robert's Feedback\n\n### 2026-04-09\n- Looks good\n";
-    mockReadRepoFile.mockResolvedValue(existing);
-    mockGetFileSha.mockResolvedValue('sha-existing');
-    mockUpdateRepoFile.mockResolvedValue(undefined);
-
-    const result = await executeEmpireTool('append_project_feedback', {
-      project_name: 'McSecretary',
-      feedback_text: 'Need better error handling',
-    });
-
-    expect(result).toContain('Feedback appended');
-    expect(result).toContain('McSecretary');
-
-    // Verify updateRepoFile was called with correct args
-    expect(mockUpdateRepoFile).toHaveBeenCalledWith(
-      'McSecretary',
-      'PROJECT_STATUS.md',
-      expect.stringContaining('Need better error handling'),
-      expect.any(String),
-      'sha-existing',
-    );
-
-    // The updated content should still contain old feedback
-    const updatedContent = mockUpdateRepoFile.mock.calls[0][2] as string;
-    expect(updatedContent).toContain('Looks good');
-    expect(updatedContent).toContain('Need better error handling');
+      executeEmpireTool('read_project_status', { project_name: 'McSecretary' }),
+    ).rejects.toThrow('500');
+    expect(mockListOrgRepos).not.toHaveBeenCalled();
   });
 
-  it('appends feedback section at end when section does not exist', async () => {
-    const existing = '# Project\n\n## Overview\nSome project info.';
-    mockReadRepoFile.mockResolvedValue(existing);
-    mockGetFileSha.mockResolvedValue('sha-456');
-    mockUpdateRepoFile.mockResolvedValue(undefined);
-
-    await executeEmpireTool('append_project_feedback', {
-      project_name: 'content-engine',
-      feedback_text: 'Images need work',
-    });
-
-    const updatedContent = mockUpdateRepoFile.mock.calls[0][2] as string;
-    expect(updatedContent).toContain("## Robert's Feedback");
-    expect(updatedContent).toContain('Images need work');
-    expect(updatedContent).toContain('Some project info.');
-  });
-
-  it('creates PROJECT_STATUS.md when file does not exist', async () => {
-    mockReadRepoFile.mockRejectedValue(new Error('File not found'));
-    mockUpdateRepoFile.mockResolvedValue(undefined);
-
-    const result = await executeEmpireTool('append_project_feedback', {
-      project_name: 'new-project',
-      feedback_text: 'Kickoff feedback',
-    });
-
-    expect(result).toContain('Created PROJECT_STATUS.md');
-    expect(mockUpdateRepoFile).toHaveBeenCalledWith(
-      'new-project',
-      'PROJECT_STATUS.md',
-      expect.stringContaining('Kickoff feedback'),
-      expect.stringContaining('Add PROJECT_STATUS.md'),
-    );
+  it('reports a missing project_name without calling GitHub', async () => {
+    const result = await executeEmpireTool('read_project_status', {});
+    expect(result).toContain('missing project_name');
+    expect(mockReadRepoFile).not.toHaveBeenCalled();
   });
 });
 
@@ -133,15 +206,22 @@ describe('list_projects', () => {
     expect(result).toContain('AI secretary');
     expect(result).toContain('content-engine');
     expect(result).toContain('last push:');
-    // Should be formatted as bullet list
     expect(result).toMatch(/^- /m);
+  });
+
+  it('returns the missing-token sentence and makes no request when GITHUB_TOKEN is unset', async () => {
+    tokenPresent = false;
+
+    const result = await executeEmpireTool('list_projects', {});
+
+    expect(result).toBe(GITHUB_TOKEN_MISSING_MESSAGE);
+    expect(result.split('\n')).toHaveLength(1);
+    expect(mockListOrgRepos).not.toHaveBeenCalled();
   });
 
   it('returns message when no repos found', async () => {
     mockListOrgRepos.mockResolvedValue([]);
-
-    const result = await executeEmpireTool('list_projects', {});
-    expect(result).toBe('No repositories found in the org.');
+    expect(await executeEmpireTool('list_projects', {})).toBe('No repositories found in the org.');
   });
 
   it('handles repo with no description gracefully', async () => {
@@ -151,106 +231,6 @@ describe('list_projects', () => {
 
     const result = await executeEmpireTool('list_projects', {});
     expect(result).toContain('bare-repo');
-    // Should not contain " -- null" or similar
     expect(result).not.toContain('null');
-  });
-});
-
-// ---------- get_nightly_plan ----------
-
-describe('get_nightly_plan', () => {
-  it('reads from claude_code repo first', async () => {
-    mockReadRepoFile.mockResolvedValue('# Nightly Plan\n\n1. Build tests');
-
-    const result = await executeEmpireTool('get_nightly_plan', {});
-    expect(result).toContain('Nightly Plan');
-    expect(mockReadRepoFile).toHaveBeenCalledWith('claude_code', 'NIGHTLY_PLAN.md');
-  });
-
-  it('falls back to McSecretary repo', async () => {
-    mockReadRepoFile
-      .mockRejectedValueOnce(new Error('Not found'))
-      .mockResolvedValueOnce('# Fallback Plan');
-
-    const result = await executeEmpireTool('get_nightly_plan', {});
-    expect(result).toBe('# Fallback Plan');
-    expect(mockReadRepoFile).toHaveBeenCalledTimes(2);
-    expect(mockReadRepoFile).toHaveBeenCalledWith('McSecretary', 'NIGHTLY_PLAN.md');
-  });
-
-  it('returns not-found message when both repos fail', async () => {
-    mockReadRepoFile
-      .mockRejectedValueOnce(new Error('Not found'))
-      .mockRejectedValueOnce(new Error('Not found'));
-
-    const result = await executeEmpireTool('get_nightly_plan', {});
-    expect(result).toContain('NIGHTLY_PLAN.md not found');
-  });
-});
-
-// ---------- unknown tool ----------
-
-describe('unknown tool', () => {
-  it('returns empty string for unknown tool name', async () => {
-    const result = await executeEmpireTool('nonexistent_tool', {});
-    expect(result).toBe('');
-  });
-});
-
-// ---------- isEmpireTool ----------
-
-describe('isEmpireTool', () => {
-  it('returns true for known empire tools', () => {
-    expect(isEmpireTool('read_project_status')).toBe(true);
-    expect(isEmpireTool('append_project_feedback')).toBe(true);
-    expect(isEmpireTool('list_projects')).toBe(true);
-    expect(isEmpireTool('get_nightly_plan')).toBe(true);
-  });
-
-  it('returns false for unknown tools', () => {
-    expect(isEmpireTool('send_email')).toBe(false);
-    expect(isEmpireTool('')).toBe(false);
-  });
-});
-
-// ---------- tool definitions ----------
-
-describe('EMPIRE_TOOL_DEFINITIONS', () => {
-  it('defines 6 tools', () => {
-    expect(EMPIRE_TOOL_DEFINITIONS).toHaveLength(6);
-  });
-
-  it('each tool has name, description, and input_schema', () => {
-    for (const tool of EMPIRE_TOOL_DEFINITIONS) {
-      expect(tool.name).toBeTruthy();
-      expect(tool.description).toBeTruthy();
-      expect(tool.input_schema).toBeDefined();
-    }
-  });
-});
-
-// ---------- MCS-11: nightly-plan tool descriptions ----------
-
-describe('nightly-plan tool descriptions (nightly build deactivated 2026-08-05)', () => {
-  const desc = (name: string) => EMPIRE_TOOL_DEFINITIONS.find((t) => t.name === name)?.description ?? '';
-
-  it('keeps all three tools registered', () => {
-    const names = EMPIRE_TOOL_DEFINITIONS.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(['get_nightly_plan', 'update_nightly_plan', 'append_to_nightly_plan']));
-  });
-
-  it('get_nightly_plan says the file is a stale historical queue', () => {
-    expect(desc('get_nightly_plan')).toContain('deactivated');
-    expect(desc('get_nightly_plan')).toContain('stale');
-    expect(desc('get_nightly_plan')).not.toContain("tonight's");
-  });
-
-  it('update_nightly_plan and append_to_nightly_plan say nothing consumes the file and require an explicit ask', () => {
-    for (const name of ['update_nightly_plan', 'append_to_nightly_plan']) {
-      expect(desc(name), name).toContain('Nothing consumes this file automatically');
-      expect(desc(name), name).toContain('explicitly asks');
-      expect(desc(name), name).not.toContain('Foreman sees');
-      expect(desc(name), name).not.toContain("tomorrow's build");
-    }
   });
 });

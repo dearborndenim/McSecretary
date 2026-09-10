@@ -1,5 +1,11 @@
 /**
- * GitHub API helpers for empire coordination.
+ * GitHub API helpers for empire coordination — READ ONLY.
+ *
+ * McSecretary never writes to GitHub (Robert, 2026-09-10). This module
+ * intentionally exports no mutating helper: no file update, no SHA lookup,
+ * no branch/commit creation. Repository changes go to the Foreman session
+ * (Claude Code), not to the secretary.
+ *
  * Uses native fetch — no additional dependencies.
  */
 
@@ -7,10 +13,34 @@ import { config } from '../config.js';
 
 const GITHUB_API = 'https://api.github.com';
 
+/** The single sentence the chat agent relays when GITHUB_TOKEN is unset. */
+export const GITHUB_TOKEN_MISSING_MESSAGE =
+  'GitHub reads are not configured (GITHUB_TOKEN missing); ask Robert to set a read-only token on McSecretary';
+
+/** True when a GitHub token is configured; reads are impossible without one. */
+export function hasGitHubToken(): boolean {
+  return Boolean(config.github.token);
+}
+
+/** Thrown when GitHub answers 404 — missing repo or missing file. */
+export class GitHubNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GitHubNotFoundError';
+  }
+}
+
+/** Recognizes a not-found failure from a real error or a mocked one. */
+export function isGitHubNotFound(err: unknown): boolean {
+  if (err instanceof GitHubNotFoundError) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /not found|\b404\b/i.test(msg);
+}
+
 function getHeaders(): Record<string, string> {
   const token = config.github.token;
   if (!token) {
-    throw new Error('GITHUB_TOKEN not configured. Set it in environment variables.');
+    throw new Error(GITHUB_TOKEN_MISSING_MESSAGE);
   }
   return {
     Authorization: `Bearer ${token}`,
@@ -62,7 +92,7 @@ export async function readRepoFile(
 
   if (!res.ok) {
     if (res.status === 404) {
-      throw new Error(`File not found: ${filePath} in ${org}/${repoName}`);
+      throw new GitHubNotFoundError(`File not found: ${filePath} in ${org}/${repoName}`);
     }
     const text = await res.text();
     throw new Error(`GitHub API error reading file: ${res.status} ${text}`);
@@ -75,62 +105,4 @@ export async function readRepoFile(
   }
 
   return Buffer.from(data.content, 'base64').toString('utf-8');
-}
-
-/**
- * Get the SHA of a file in a GitHub repo (needed for updates).
- */
-export async function getFileSha(
-  repoName: string,
-  filePath: string,
-): Promise<string> {
-  const org = config.github.org;
-  const url = `${GITHUB_API}/repos/${org}/${repoName}/contents/${encodeURIComponent(filePath)}`;
-  const res = await fetch(url, { headers: getHeaders() });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GitHub API error getting file SHA: ${res.status} ${text}`);
-  }
-
-  const data = (await res.json()) as { sha: string };
-  return data.sha;
-}
-
-/**
- * Update (or create) a file in a GitHub repo via the Contents API.
- * Commits directly to the default branch.
- */
-export async function updateRepoFile(
-  repoName: string,
-  filePath: string,
-  content: string,
-  commitMessage: string,
-  sha?: string,
-): Promise<void> {
-  const org = config.github.org;
-  const url = `${GITHUB_API}/repos/${org}/${repoName}/contents/${encodeURIComponent(filePath)}`;
-
-  const body: Record<string, string> = {
-    message: commitMessage,
-    content: Buffer.from(content, 'utf-8').toString('base64'),
-  };
-
-  if (sha) {
-    body.sha = sha;
-  }
-
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      ...getHeaders(),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GitHub API error updating file: ${res.status} ${text}`);
-  }
 }

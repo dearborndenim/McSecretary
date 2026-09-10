@@ -164,3 +164,49 @@ describe('buildChatSystemBlocks (MCS-9 cache layout)', () => {
     expect(iEmail).toBeGreaterThan(iSms);
   });
 });
+
+// ---------- read-only / no-execution policy (Robert, 2026-09-10) ----------
+
+describe('hard-limits policy: no code execution, no GitHub writes, no build queue', () => {
+  it('states all three prohibitions plainly', () => {
+    const text = buildSystemPromptBase(robert);
+    expect(text).toContain('=== WHAT YOU DO NOT DO (HARD LIMITS) ===');
+    expect(text).toContain(
+      'You never run code, never write to GitHub, and never queue work for a build system.',
+    );
+  });
+
+  it('routes builds, code changes, and filed feedback to the Foreman session with a drafted message', () => {
+    const text = buildSystemPromptBase(robert);
+    expect(text).toContain('a build, a code change, a bug fix, feedback to be filed');
+    expect(text).toContain('do not attempt a tool');
+    expect(text).toContain('goes to the Foreman session (Claude Code)');
+    expect(text).toContain('offer to draft the exact message to paste there');
+  });
+
+  it('tells the agent to relay the missing-token sentence once and not retry', () => {
+    const text = buildSystemPromptBase(robert);
+    expect(text).toContain('GITHUB_TOKEN is missing');
+    expect(text).toContain('relay that sentence once');
+    expect(text).toContain('do not retry it or try another tool');
+  });
+
+  it('still permits the two read tools by name', () => {
+    const text = buildSystemPromptBase(robert);
+    expect(text).toContain('read_project_status and list_projects are read-only');
+  });
+
+  it('advertises GitHub as read-only and drops the feedback-filing command', () => {
+    const text = buildSystemPromptBase(robert);
+    expect(text).toContain('READ-ONLY access to the dearborndenim GitHub org');
+    expect(text).not.toContain('append feedback');
+    expect(text).not.toContain('feedback [project]');
+    expect(text).not.toContain('NIGHTLY_PLAN');
+  });
+
+  it('carries the policy into the cached stable block for every user', () => {
+    for (const user of [robert, olivier]) {
+      expect(buildStableSystemText(user), user.name).toContain('=== WHAT YOU DO NOT DO (HARD LIMITS) ===');
+    }
+  });
+});

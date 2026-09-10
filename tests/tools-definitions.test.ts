@@ -145,3 +145,44 @@ describe('MCS-13: previously under-described tools', () => {
     expect(j).toContain('Read-only');
   });
 });
+
+// ---------- MCS read-only + no-execution surface (Robert, 2026-09-10) ----------
+
+describe('McSecretary has no write-to-GitHub and no code-execution tool', () => {
+  const names = TOOL_DEFINITIONS.map((t) => t.name);
+
+  it('exposes exactly the two GitHub read tools and nothing else empire-shaped', () => {
+    expect(names.filter((n) => /project|nightly|repo|github/i.test(n)).sort()).toEqual([
+      'list_projects',
+      'read_project_status',
+    ]);
+  });
+
+  it('no removed GitHub write tool is registered', () => {
+    for (const removed of [
+      'append_project_feedback',
+      'get_nightly_plan',
+      'update_nightly_plan',
+      'append_to_nightly_plan',
+    ]) {
+      expect(names, removed).not.toContain(removed);
+    }
+  });
+
+  it('registers no tool that runs code, spawns a process, or dispatches a build', () => {
+    for (const t of TOOL_DEFINITIONS) {
+      expect(t.name, t.name).not.toMatch(
+        /\b(run|exec|execute|shell|bash|command|spawn|deploy|build|dispatch|queue)/i,
+      );
+    }
+  });
+
+  it('no tool description promises a build, a commit, or a Foreman handoff', () => {
+    for (const t of TOOL_DEFINITIONS) {
+      const d = (t.description ?? '').toLowerCase();
+      for (const banned of ['foreman', 'nightly_plan', 'commit', 'run the build', 'queue a task']) {
+        expect(d, `${t.name} / ${banned}`).not.toContain(banned);
+      }
+    }
+  });
+});

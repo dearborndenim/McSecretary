@@ -80,7 +80,6 @@ import {
 } from './db/request-queries.js';
 import { shouldUserCheckInNow, shouldUserEodNow } from './scheduler-windows.js';
 import { getTomorrowEventsPreview } from './calendar/tomorrow-preview.js';
-import { setEmpireDb, executeEmpireTool } from './empire/tools.js';
 import { buildChatSystemBlocks } from './chat-prompt.js';
 import {
   EMAIL_SCAN_OUTPUT_FORMAT,
@@ -747,16 +746,9 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     if (req) {
       await sendMessageToUser(req.user_id, `Your request #${id} was approved!${refined ? ` Refined: ${refined}` : ''}`).catch(() => {});
     }
-    // Push approved request(s) to NIGHTLY_PLAN.md on GitHub so the Foreman picks it up.
-    let syncNote = '';
-    try {
-      const syncResult = await executeEmpireTool('update_nightly_plan', {});
-      syncNote = `\n${syncResult}`;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      syncNote = `\n(Nightly plan sync failed: ${msg})`;
-    }
-    return `Request #${id} approved.${refined ? ` Refined: ${refined}` : ''}${syncNote}`;
+    // McSecretary does not write to GitHub or queue build work (Robert, 2026-09-10).
+    // Approval records the decision here; the build itself goes to the Foreman session.
+    return `Request #${id} approved.${refined ? ` Refined: ${refined}` : ''}\nRecorded here only — send it to the Foreman session (Claude Code) to get it built.`;
   }
 
   if (lowerText.startsWith('/reject ') && user.role === 'admin') {
@@ -1572,9 +1564,6 @@ async function main() {
   // Initialize tools with DB reference
   const { setToolsDb } = await import('./tools.js');
   setToolsDb(db);
-
-  // Give the empire tools a DB handle so update_nightly_plan can mark rows synced.
-  setEmpireDb(db);
 
   // Start API server for Mac Mini agent
   initApi(db, config.api.secret);

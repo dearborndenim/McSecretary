@@ -36,7 +36,9 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `src/telegram/bot.ts` — per-user message sending (sendMessageToUser, sendBriefingToUser)
 - `src/tools.ts` — core Claude tools (email, calendar, To Do, schedule, journal) plus the empire tools re-exported from `src/empire/tools.ts`; `TOOL_DEFINITIONS` is the source of truth for the count.
 - `src/chat-prompt.ts` — per-user chat system prompt builder (stable cached block + volatile context block)
-- `src/empire/request-sync.ts` — export approved dev requests to NIGHTLY_PLAN.md (file is a queue only; nightly build deactivated)
+- `src/empire/github.ts` — **read-only** GitHub client (`listOrgRepos`, `readRepoFile`). No write helper exists here by design; see "GitHub is read-only" below.
+- `src/empire/tools.ts` — the two GitHub read tools (`read_project_status`, `list_projects`) and their executor
+- `src/empire/request-sync.ts` — formats pending dev requests for the admin's morning briefing (nothing is exported to GitHub)
 - `src/admin.ts` — CLI for user management
 - `src/triage.ts` — per-user email triage pipeline
 - `src/lions/` — South Loop Lions schedule checker (CPS SCORE! sheet → diff → Telegram alert → public team page)
@@ -58,7 +60,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 
 ## Telegram Commands (all users)
 - `briefing` — full email/calendar briefing
-- `/request <description>` — submit a dev request to the admin review queue (approved requests can be exported to NIGHTLY_PLAN.md, which no automated build currently consumes)
+- `/request <description>` — submit a dev request to the admin review queue (recorded in McSecretary's DB only; nothing is written to GitHub and no build is queued)
 - `/myrequests` — see your submitted requests
 - `journal: <thoughts>` — log journal entry
 - `/log <activity>` — log time
@@ -74,8 +76,18 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `/briefing-preview [--user=<name>] [--sections=<csv>]` — render tomorrow's 5 AM morning briefing immediately for QA (re-uses `runTriage` — no duplicate render path). `--user=<name>` previews the briefing as if for a named user (case-insensitive first-name match). `--sections=<csv>` renders only those sections (valid names: `overnight_dev`, `production`, `admin_ops`, `calendar`, `dev_requests`, `emails`, `stats`) — order in csv is honored. When **both** flags are present, `--sections` overrides the user's saved `briefing_sections_json` preference for the preview only (does NOT persist). Invalid section names return an error listing the valid set.
 - `/briefing-sections --user=<name> (--set=<csv> | --reset | --list | --diff | --clone-from=<src> | --history [--days=N] | --revert)` OR `/briefing-sections --list` OR `/briefing-sections --set-all=<csv> --apply-to=all` — write, clear, read, diff, clone, view-history, revert, or bulk-set the per-user `briefing_sections_json` preference. When set, that user's daily 5 AM briefing renders ONLY those sections **in the order the array was stored** (e.g., `--set=calendar,stats,emails` renders calendar first, then stats, then emails — overriding the default canonical order). `--reset` clears to NULL (full briefing, default behavior, default order). `--list` (with `--user`) shows that user's stored pref or `(default: full briefing)`. `--list` (bare, no `--user`) shows the canonical catalog of valid section names with one-line descriptions. `--diff` (with `--user`) shows that user's pref vs full briefing — `Current:`, `Missing:`, `Order:` lines (NULL pref → `Current: (default: full briefing)`, `Missing: (none)`); unknown user → `User '<name>' not found. Use /onboarding-status for the list.`. `--clone-from=<src>` (with `--user=<target>`) copies the source user's stored briefing prefs onto the target verbatim — NULL source → resets target to default-full-briefing; unknown source → `User '<src>' not found.`; unknown target → `User '<target>' not found.`; cloning to self → `Cannot clone-from self.`; success → `Cloned briefing prefs from '<src>' to '<target>'. Sections: <csv | (default: full briefing)>`. `--history --user=<name> [--days=N]` lists audit rows for that user newest-first (one line per row: `YYYY-MM-DD HH:MM <action> [from <source_user>] sections=<csv | (default)>`). Days default 7, clamp [1, 90] (audit pruned at 90d). Empty case → `No audit history for '<name>' in last <N> day(s).`. `--revert --user=<name>` undoes the most-recent action by writing the prior `sections_json` from the audit log (the 2nd-most-recent row); writes itself as a new audit row with `action=revert`; <2 rows → `No prior briefing-sections action to revert for '<name>'.`. `--set-all=<csv> --apply-to=all` writes the same section preference to every onboarded (briefing-enabled) user; lists up to 20 names then `...and K more` when >20; `--apply-to` MUST be `all` (anything else is rejected by the parser). Every `--set` / `--reset` / `--set-all` / `--clone-from` / `--revert` write emits a row to `briefing_sections_audit` (auto-pruned >90d on every insert via `BRIEFING_AUDIT_RETENTION_DAYS`, default 90, clamp [1, 3650]); the daily 7 AM CT "Briefing Audit Digest" job summarizes the last 24h of changes (empty case = silent; opt-out via `DISABLE_BRIEFING_AUDIT_DIGEST=1`; recipient configured via `BRIEFING_AUDIT_DIGEST_RECIPIENT`).
 - `/lions` — South Loop Lions schedule (stored snapshot) plus any active schedule-change alerts
-- `status <project>` — read PROJECT_STATUS.md from GitHub
-- `feedback <project>: <text>` — append feedback
+- `status <project>` — read PROJECT_STATUS.md from GitHub (read-only)
+- `status all` / `list projects` — list repos in the dearborndenim org (read-only)
+
+## GitHub is read-only (Robert, 2026-09-10)
+McSecretary **reads** GitHub and never writes to it, and it has no way to run code or queue build work.
+
+- Registered GitHub tools: `read_project_status` and `list_projects`. That is the whole set — `EMPIRE_TOOL_DEFINITIONS` in `src/empire/tools.ts` is the source of truth and `tests/empire/tools.test.ts` pins it.
+- Removed 2026-09-10: the `append_project_feedback`, `get_nightly_plan`, `update_nightly_plan` and `append_to_nightly_plan` tools, the `updateRepoFile` / `getFileSha` GitHub write helpers, the NIGHTLY_PLAN.md merge helpers, `setEmpireDb`, and the approved-request → NIGHTLY_PLAN.md sync that used to fire on `/approve`. Do not reintroduce any of them; a repository change goes to the Foreman session (Claude Code).
+- No tool in `src/tools.ts` runs a command, spawns a process, or dispatches a build, and `src/` imports no `child_process`. The spine (proposals → trust ledger → hands) is not code execution and is unaffected.
+- `GITHUB_TOKEN` (env, optional; `GITHUB_ORG` defaults to `dearborndenim`) needs only **read** scope. When it is unset both tools return the single line `GitHub reads are not configured (GITHUB_TOKEN missing); ask Robert to set a read-only token on McSecretary` instead of throwing, and the chat agent relays that sentence once.
+- The 5 AM briefing still *reads* NIGHTLY_PLAN.md for its `overnight_dev` section (`src/triage.ts`); that read is unchanged and the file is stale by design.
+- The chat system prompt carries the matching policy under `=== WHAT YOU DO NOT DO (HARD LIMITS) ===` in `src/chat-prompt.ts`, pinned by `tests/chat-prompt.test.ts`.
 
 ## South Loop Lions schedule checker (`src/lions/`)
 Robert coaches the South Loop Lions (CPS SCORE! 7/8th boys, Network 6, Blue Conference). CPS edits game times and opponents in the master Google Sheet without telling anyone, so McSecretary watches it.
