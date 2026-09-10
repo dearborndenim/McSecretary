@@ -349,18 +349,28 @@ describe('training tab — coaching by player', () => {
     success: `success ${i + 1}`,
   }));
 
-  it('ships the COACHING constant seeded empty', () => {
-    expect(template).toContain('var COACHING = {};');
-    expect(runPage().sandbox.COACHING).toEqual({});
+  it('ships the COACHING constant fully populated for all 23 players', () => {
+    expect(template).not.toContain('var COACHING = {};');
+    const h = runPage();
+    const players = h.sandbox['PLAYERS'] as { name: string }[];
+    expect(players.length).toBe(23);
+    const coaching = h.sandbox.COACHING;
+    expect(Object.keys(coaching).length).toBe(23);
+    players.forEach((p) => { expect(coaching[p.name]).toBeTruthy(); });
+    // No placeholder left on the training grid now every player has a plan.
+    expect(count(h.html('coach-by-player'), 'Coaching plan coming.')).toBe(0);
   });
 
   it('renders the quiet placeholder for a player with no entry', () => {
     const h = runPage();
-    expect(h.html('profile')).toContain('Coaching focus');
-    expect(h.html('profile')).toContain('Coaching plan coming.');
-    expect(h.html('profile')).not.toContain('class="cf-item"');
-    // And on the training grid.
-    expect(count(h.html('coach-by-player'), 'Coaching plan coming.')).toBe(23);
+    // Use a fake name/slug that can never collide with a real roster entry,
+    // rather than relying on a specific real player having no plan (they all do).
+    const fake = { name: 'Fake Testerson', slug: 'fake-testerson' };
+    const coachCardHtml = h.sandbox['coachCardHtml'] as (p: unknown) => string;
+    const card = coachCardHtml(fake);
+    expect(card).toContain('Coaching focus');
+    expect(card).toContain('Coaching plan coming.');
+    expect(card).not.toContain('class="cf-item"');
   });
 
   it('renders one accordion item per focus item with the first open', () => {
@@ -391,19 +401,24 @@ describe('training tab — coaching by player', () => {
 
   it('opens and closes an accordion item on click', () => {
     const h = runPage();
-    h.sandbox.COACHING['Kiefer'] = { position: 'CM', one_thing: 'One thing.', focus: focus(3) };
+    // Use a player other than the boot-time default ('kiefer') so this test's
+    // renderProfile() call is the first one to wire that player's card — the
+    // default player is already wired once at boot (real COACHING data), and
+    // wiring it a second time here would double-register the click listeners.
+    h.sandbox.COACHING['Wit'] = { position: 'LW', one_thing: 'One thing.', focus: focus(3) };
+    h.sandbox.state.player = 'wit';
     h.sandbox.renderProfile();
 
-    h.click('cf-kiefer-2');
-    expect(h.el('cf-kiefer-2-body').hidden).toBe(false);
-    expect(h.el('cf-kiefer-2').getAttribute('aria-expanded')).toBe('true');
-    expect(h.el('cf-kiefer-0-body').hidden).toBe(true);
-    expect(h.el('cf-kiefer-0').getAttribute('aria-expanded')).toBe('false');
+    h.click('cf-wit-2');
+    expect(h.el('cf-wit-2-body').hidden).toBe(false);
+    expect(h.el('cf-wit-2').getAttribute('aria-expanded')).toBe('true');
+    expect(h.el('cf-wit-0-body').hidden).toBe(true);
+    expect(h.el('cf-wit-0').getAttribute('aria-expanded')).toBe('false');
 
     // Clicking the open one collapses it.
-    h.click('cf-kiefer-2');
-    expect(h.el('cf-kiefer-2-body').hidden).toBe(true);
-    expect(h.sandbox.COACH_OPEN['kiefer']).toBe(-1);
+    h.click('cf-wit-2');
+    expect(h.el('cf-wit-2-body').hidden).toBe(true);
+    expect(h.sandbox.COACH_OPEN['wit']).toBe(-1);
   });
 
   it('groups the training grid by line and lists the focus titles', () => {
