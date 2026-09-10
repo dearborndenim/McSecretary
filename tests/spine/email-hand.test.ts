@@ -19,6 +19,12 @@ const brand: BrandConfig = {
   hands: { 'product-dev': { url_env: 'PD_URL', key_env: 'PD_KEY' } },
 };
 
+/** Same brand, but with a `design-module` hand registered — for the attachment-auth tests below. */
+const brandWithDesignModule: BrandConfig = {
+  ...brand,
+  hands: { ...brand.hands, 'design-module': { url_env: 'DESIGN_MODULE_URL', key_env: 'DESIGN_MODULE_KEY' } },
+};
+
 const BODY = {
   to: 'sales@carrtextiles.example',
   subject: '[DD-RFQ-linen-spring27-carr-20260910] Fabric request — Dearborn Denim, Spring 27',
@@ -139,13 +145,18 @@ describe('resolveRfqId', () => {
   });
 });
 
-function handDeps(fetchImpl: EmailHandDeps['fetch'], env: Record<string, string | undefined> = {}): EmailHandDeps {
+function handDeps(
+  fetchImpl: EmailHandDeps['fetch'],
+  env: Record<string, string | undefined> = {},
+  brandOverride: BrandConfig = brand,
+): EmailHandDeps {
   return {
     fetch: fetchImpl,
     getGraphToken: async () => 'graph-token',
     env: { RFQ_FROM_ADDRESS: 'rob@dearborndenim.com', ...env },
     now: () => NOW,
     requestId: () => 'req-1',
+    loadBrand: () => brandOverride,
   };
 }
 
@@ -316,6 +327,86 @@ describe('sendHandEmail', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error).not.toMatch(/send-from-alias/);
+  });
+
+  describe('attachment fetches against the design-module hand', () => {
+    const DM_ENV = { DESIGN_MODULE_URL: 'https://design.example', DESIGN_MODULE_KEY: 'dm-secret-key' };
+
+    it("sends the design-module hand's own bearer when an attachment URL's host matches its base URL", async () => {
+      const png = Buffer.from('fake-png-bytes');
+      const fetchMock = vi.fn(async (url: string) => (
+        url.startsWith('https://design.example/')
+          ? new Response(png, { status: 200, headers: { 'content-type': 'image/png' } })
+          : new Response('', { status: 202 })
+      ));
+      const r = await sendHandEmail(db, {
+        proposalId: 20, brandId: 'dearborn-denim', evidence: {}, body: normalized(),
+      }, handDeps(fetchMock as unknown as EmailHandDeps['fetch'], DM_ENV, brandWithDesignModule));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.body.attachments_sent).toBe(1);
+      const [attUrl, attInit] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+      expect(attUrl).toBe(BODY.attachments[0]!.url);
+      expect((attInit.headers as Record<string, string> | undefined)?.Authorization).toBe('Bearer dm-secret-key');
+    });
+
+    it('does not send the design-module bearer to an attachment on a foreign host', async () => {
+      const png = Buffer.from('fake-png-bytes');
+      const fetchMock = vi.fn(async (url: string) => (
+        url.startsWith('https://cdn.example.com/')
+          ? new Response(png, { status: 200, headers: { 'content-type': 'image/png' } })
+          : new Response('', { status: 202 })
+      ));
+      const r = await sendHandEmail(db, {
+        proposalId: 21, brandId: 'dearborn-denim', evidence: {},
+        body: normalized({ attachments: [{ url: 'https://cdn.example.com/swatch.png', name: 'swatch.png' }] }),
+      }, handDeps(fetchMock as unknown as EmailHandDeps['fetch'], DM_ENV, brandWithDesignModule));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.body.attachments_sent).toBe(1);
+      const [attUrl, attInit] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+      expect(attUrl).toBe('https://cdn.example.com/swatch.png');
+      expect((attInit.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+    });
+
+    it('sends unauthenticated when no design-module hand is configured on the brand (backward compatible)', async () => {
+      const png = Buffer.from('fake-png-bytes');
+      const fetchMock = vi.fn(async (url: string) => (
+        url.startsWith('https://design.example/')
+          ? new Response(png, { status: 200, headers: { 'content-type': 'image/png' } })
+          : new Response('', { status: 202 })
+      ));
+      const r = await sendHandEmail(db, {
+        proposalId: 22, brandId: 'dearborn-denim', evidence: {},
+        body: normalized({ attachments: [{ url: 'https://design.example/files/x.png', name: 'x.png' }] }),
+      }, handDeps(fetchMock as unknown as EmailHandDeps['fetch'], DM_ENV /* brand has no design-module hand */));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.body.attachments_sent).toBe(1);
+      const [, attInit] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+      expect((attInit.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+    });
+
+    it('a 401 from design-module (bearer already sent) still just skips that attachment and names it in notify', async () => {
+      const fetchMock = vi.fn(async (url: string) => (
+        url.startsWith('https://design.example/')
+          ? new Response('unauthorized', { status: 401 })
+          : new Response('', { status: 202 })
+      ));
+      const r = await sendHandEmail(db, {
+        proposalId: 23, brandId: 'dearborn-denim', evidence: {}, body: normalized(),
+      }, handDeps(fetchMock as unknown as EmailHandDeps['fetch'], DM_ENV, brandWithDesignModule));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.body.attachments_sent).toBe(0);
+      expect(r.body.attachments_skipped).toEqual(['linen-shirt.png (HTTP 401)']);
+      expect(r.body.notify).toMatch(/skipped 1 attachment\(s\): linen-shirt\.png \(HTTP 401\)/);
+      // The bearer was sent on the attempt even though Graph itself never sees it.
+      const [, attInit] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+      expect((attInit.headers as Record<string, string> | undefined)?.Authorization).toBe('Bearer dm-secret-key');
+      // Never surfaced anywhere in the response.
+      expect(JSON.stringify(r.body)).not.toMatch(/dm-secret-key/);
+    });
   });
 });
 

@@ -42,7 +42,7 @@ export function buildSpine(d: SpineBuildDeps) {
   const getGraphToken = d.getGraphToken;
   const sendEmail = getGraphToken
     ? (req: EmailHandRequest): Promise<EmailHandResult> =>
-        sendHandEmail(d.db, req, { fetch: fetchWithTimeout, getGraphToken, env: d.env, now: d.now })
+        sendHandEmail(d.db, req, { fetch: fetchWithTimeout, getGraphToken, env: d.env, now: d.now, loadBrand })
     : undefined;
   const execute = (id: number) => executeProposal(d.db, id, {
     fetch: fetchWithTimeout, env: d.env, loadBrand, now: d.now, sendEmail,

@@ -16,6 +16,7 @@
 
 import type Database from 'better-sqlite3';
 import { insertRfqMessage } from '../db/rfq-queries.js';
+import { resolveHand, type BrandConfig } from './brand-config.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -208,6 +209,13 @@ export interface EmailHandDeps {
   now: () => string;
   /** Correlation id sent as `client-request-id`; injected so tests are deterministic. */
   requestId?: () => string;
+  /**
+   * Resolves a brand's config so an attachment fetch can find the `design-module`
+   * hand's own base URL and bearer (see `designModuleTarget`, below). Optional so
+   * existing callers that never attach a design-module URL are unaffected; when
+   * absent, every attachment fetch is unauthenticated exactly as before.
+   */
+  loadBrand?: (brandId: string) => BrandConfig;
 }
 
 export interface EmailHandRequest {
@@ -276,13 +284,43 @@ function evidenceIntents(evidence: Record<string, unknown>): string {
   return '';
 }
 
+/**
+ * The brand's own `design-module` hand — url + bearer — when the brand config names one
+ * and its env vars are set; `null` otherwise (no hand registered, or misconfigured). Never
+ * throws: an attachment fetch falls back to unauthenticated rather than failing the whole
+ * send over a hand lookup problem.
+ */
+function designModuleTarget(deps: EmailHandDeps, brandId: string): { url: string; bearer: string } | null {
+  if (!deps.loadBrand) return null;
+  try {
+    const brand = deps.loadBrand(brandId);
+    return resolveHand(brand, 'design-module', deps.env);
+  } catch {
+    return null;
+  }
+}
+
+/** True when `url`'s host is exactly the `design-module` hand's own host. Never throws. */
+function isDesignModuleUrl(url: string, target: { url: string; bearer: string } | null): boolean {
+  if (!target) return false;
+  try {
+    return new URL(url).host === new URL(target.url).host;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchAttachment(
   deps: EmailHandDeps,
   ref: EmailAttachmentRef,
+  dmTarget: { url: string; bearer: string } | null,
 ): Promise<{ ok: true; att: GraphFileAttachment } | { ok: false; why: string }> {
+  // design-module's /files/... route is bearer-gated; every other host is fetched exactly
+  // as before, unauthenticated. Never logged — the header is built and used, never printed.
+  const headers = isDesignModuleUrl(ref.url, dmTarget) ? { Authorization: `Bearer ${dmTarget!.bearer}` } : undefined;
   let res: Response;
   try {
-    res = await deps.fetch(ref.url, { method: 'GET' });
+    res = await deps.fetch(ref.url, { method: 'GET', ...(headers ? { headers } : {}) });
   } catch (err) {
     return { ok: false, why: err instanceof Error ? err.message : String(err) };
   }
@@ -311,11 +349,14 @@ async function fetchAttachment(
 /**
  * Send one message and record it in `rfq_messages`.
  *
- * Attachments are fetched by URL (design-module's public `/files/...` links, or
+ * Attachments are fetched by URL (design-module's bearer-gated `/files/...` links, or
  * McSecretary's own `/files/rfq/...`), at most `MAX_ATTACHMENTS` of at most
- * `MAX_ATTACHMENT_BYTES` each. One that 404s, times out or is too large is
- * skipped and named in the notify line rather than failing the whole send —
- * a missing swatch must not stop the RFQ going out.
+ * `MAX_ATTACHMENT_BYTES` each. A URL whose host is the brand's own `design-module`
+ * hand (per `loadBrand`/`resolveHand`) is fetched with that hand's bearer; every
+ * other host is fetched unauthenticated, exactly as before — see `designModuleTarget`.
+ * One that 401s, 404s, times out or is too large is skipped and named in the notify
+ * line rather than failing the whole send — a missing swatch must not stop the RFQ
+ * going out.
  *
  * Graph's `sendMail` answers 202 with an empty body and no message id, so the
  * `graph_message_id` column holds the Graph correlation id (`request-id`, or
@@ -333,10 +374,11 @@ export async function sendHandEmail(
   const from = fromAddress(deps.env);
   const sender: EmailSender = { mailbox, from };
 
+  const dmTarget = designModuleTarget(deps, req.brandId);
   const skipped: string[] = [];
   const attachments: GraphFileAttachment[] = [];
   for (const ref of req.body.attachments.slice(0, MAX_ATTACHMENTS)) {
-    const got = await fetchAttachment(deps, ref);
+    const got = await fetchAttachment(deps, ref, dmTarget);
     if (got.ok) attachments.push(got.att);
     else skipped.push(`${ref.name} (${got.why})`);
   }
