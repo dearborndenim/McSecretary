@@ -270,6 +270,88 @@
 
   .sub-head{ font-size:var(--fs-h2); text-transform:uppercase; margin-bottom:var(--sp-2); }
 
+  /* ---------- training ---------- */
+  .train-block{ margin-top:var(--sp-6); }
+  .train-block:first-child{ margin-top:0; }
+  .train-note{ max-width:65ch; color:var(--ink-muted); margin:6px 0 var(--sp-4); }
+
+  .tp-list{ display:grid; gap:var(--sp-4); }
+  .tp-card{ background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:var(--sp-3); display:grid; gap:var(--sp-3); scroll-margin-top:96px; }
+  .tp-title{ font-size:var(--fs-h2); text-transform:uppercase; margin-top:3px; }
+  .tp-thesis{ margin:6px 0 0; max-width:60ch; }
+  .tp-body{ display:grid; grid-template-columns:minmax(0,330px) minmax(0,1fr); gap:var(--sp-4); align-items:start; }
+  .tp-stagecol{ display:grid; }
+  .tp-stage{ background:var(--ground); border:1px solid var(--line); border-radius:2px; padding:6px; }
+  .tp-svg{ display:block; width:100%; max-width:330px; height:auto; margin:0 auto; }
+  .tp-lion circle{ fill:var(--gold); stroke:var(--gold-deep); stroke-width:1; }
+  .tp-lion.tp-keeper circle{ fill:var(--gk); stroke:#3E6BC4; }
+  .tp-name{ font-family:var(--mono); font-size:8px; fill:var(--ink); }
+  .tp-opp circle{ fill:rgba(232,237,245,0.13); stroke:rgba(232,237,245,0.42); stroke-width:1; }
+  .tp-ball circle{ fill:#FFFFFF; stroke:rgba(11,18,32,0.55); stroke-width:0.7; }
+  .tp-pass{ stroke:#FFFFFF; stroke-width:1.6; stroke-dasharray:5 4; fill:none; }
+  .tp-run{ stroke:var(--gold); stroke-width:1.3; fill:none; }
+  .tp-shape{ fill:rgba(224,169,58,0.16); stroke:var(--gold-deep); stroke-width:1; }
+  .tp-cone{ fill:rgba(232,237,245,0.09); stroke:rgba(232,237,245,0.48); stroke-width:1; }
+  .tp-bad{ stroke:var(--cut); stroke-width:1.4; stroke-dasharray:3 3; fill:none; }
+  .tp-cap{ font-size:var(--fs-small); color:var(--ink); margin:var(--sp-2) 0 0; }
+  .tp-ctl{ display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; margin-top:var(--sp-2); }
+  .tp-dots{ display:flex; gap:5px; }
+  .tp-dot{ appearance:none; cursor:pointer; width:22px; height:10px; border-radius:1px; padding:0; background:var(--panel-2); border:1px solid var(--line); }
+  .tp-dot[aria-current="true"]{ background:var(--gold); border-color:var(--gold); }
+  .tp-count{ font-family:var(--mono); font-size:0.7rem; color:var(--ink-muted); font-variant-numeric:tabular-nums; }
+  .tp-motion{ font-family:var(--mono); font-size:0.64rem; letter-spacing:0.06em; color:var(--ink-muted); }
+  .tp-text{ display:grid; gap:var(--sp-3); }
+  .tp-h{ font-family:var(--mono); font-weight:500; font-size:0.66rem; letter-spacing:0.09em; text-transform:uppercase; color:var(--ink-muted); margin:0 0 6px; }
+  .tp-points{ margin:0; padding-left:16px; display:grid; gap:5px; font-size:var(--fs-small); }
+  .tp-points li::marker{ color:var(--gold); }
+  .tp-drill{ background:var(--panel-2); border:1px solid var(--line); border-left:3px solid var(--gold-deep); border-radius:2px; padding:10px 12px; display:grid; gap:4px; }
+  .tp-drill-name{ font-family:var(--display); font-weight:700; font-size:1.05rem; }
+  .tp-drill p{ margin:0; font-size:var(--fs-small); }
+
+  /* ---------- keeper session ---------- */
+  .gk-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--sp-3); margin-bottom:var(--sp-4); }
+  .gk-station{ background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:10px 12px; display:grid; gap:3px; }
+  .gk-station-name{ font-family:var(--mono); font-size:0.66rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--gk); }
+  .gk-station p{ margin:0; font-size:var(--fs-small); }
+
+  /* ---------- coaching by player ---------- */
+  .cf-one{ margin:0; }
+  .cf-one b{ font-family:var(--mono); font-weight:500; font-size:0.66rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-muted); }
+  .cf-empty{ margin:0; font-size:var(--fs-small); color:var(--ink-muted); }
+  .cf-items{ display:grid; gap:8px; }
+  .cf-item{ background:var(--panel-2); border:1px solid var(--line); border-radius:2px; }
+  .cf-head{ appearance:none; width:100%; text-align:left; cursor:pointer; background:transparent; border:0; color:var(--ink); display:grid; gap:2px; padding:9px 11px; }
+  .cf-head:hover{ background:rgba(232,237,245,0.04); }
+  .cf-head-title{ font-family:var(--display); font-weight:700; font-size:1.05rem; line-height:1.1; }
+  .cf-head-why{ font-size:var(--fs-small); color:var(--ink-muted); }
+  .cf-body{ border-top:1px solid var(--line); padding:10px 11px; display:grid; gap:8px; font-size:var(--fs-small); }
+  .cf-cues{ margin:0; padding-left:16px; display:grid; gap:4px; }
+  .cf-cues li::marker{ color:var(--gold); }
+  .cf-drill{ color:var(--ink-muted); }
+  .cf-drill b{ color:var(--ink); font-weight:500; }
+  .cf-success{ color:var(--pitch); }
+  .coach-group{ font-family:var(--mono); font-size:0.64rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-muted); margin:var(--sp-4) 0 var(--sp-2); }
+  .coach-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:var(--sp-2); }
+  .cbp{ appearance:none; text-align:left; cursor:pointer; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--gold-deep); border-radius:2px; padding:10px 12px; display:grid; gap:5px; }
+  .cbp:hover{ background:var(--panel-2); border-color:var(--line-strong); }
+  .cbp-name{ font-family:var(--display); font-weight:700; font-size:1.1rem; line-height:1.05; }
+  .cbp-pos{ font-family:var(--mono); font-size:0.62rem; letter-spacing:0.07em; color:var(--ink-muted); }
+  .cbp-list{ margin:0; padding-left:15px; display:grid; gap:3px; font-size:var(--fs-small); color:var(--ink); }
+  .cbp-list li::marker{ color:var(--gold); }
+  .cbp-empty{ font-size:var(--fs-small); color:var(--ink-muted); }
+
+  /* ---------- practice plan ---------- */
+  table.ses{ border-collapse:collapse; width:100%; min-width:660px; }
+  table.ses th{
+    text-align:left; font-family:var(--mono); font-weight:500; font-size:0.64rem;
+    letter-spacing:0.09em; text-transform:uppercase; color:var(--ink-muted);
+    border-bottom:1px solid var(--line-strong); padding:8px 14px 8px 0; vertical-align:bottom;
+  }
+  table.ses td{ border-bottom:1px solid var(--line); padding:10px 14px 10px 0; vertical-align:top; font-size:var(--fs-small); }
+  table.ses td.s{ font-family:var(--mono); font-size:0.9rem; color:var(--gold); width:44px; }
+  table.ses td.th{ font-family:var(--display); font-weight:700; font-size:1.02rem; }
+  table.ses a{ color:var(--gold); text-decoration:none; border-bottom:1px solid var(--gold-deep); }
+
   /* ---------- formations ---------- */
   .form-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--sp-4); }
   .form-card{ background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:var(--sp-3); display:grid; gap:var(--sp-3); align-content:start; }
@@ -380,6 +462,8 @@
     .roster-grid{ grid-template-columns:minmax(0,1fr); }
     .rail{ position:static; max-height:340px; }
     .form-grid{ grid-template-columns:minmax(0,1fr); }
+    .tp-body{ grid-template-columns:minmax(0,1fr); }
+    .gk-grid{ grid-template-columns:minmax(0,1fr); }
     .sched-head, .sched-row{ grid-template-columns:52px 84px minmax(0,1fr); }
     .sched-conflict{ grid-column:1 / -1; padding-left:calc(52px + 84px + var(--sp-3) * 2); }
   }
@@ -406,6 +490,7 @@
       <nav class="tabs" role="tablist" aria-label="Team sections">
         <button class="tab" id="tab-roster" role="tab" aria-selected="true" aria-controls="panel-roster" type="button">Roster</button>
         <button class="tab" id="tab-xi" role="tab" aria-selected="false" aria-controls="panel-xi" type="button">Starting XI</button>
+        <button class="tab" id="tab-training" role="tab" aria-selected="false" aria-controls="panel-training" type="button">Training</button>
         <button class="tab" id="tab-formations" role="tab" aria-selected="false" aria-controls="panel-formations" type="button">Formations</button>
         <button class="tab" id="tab-schedule" role="tab" aria-selected="false" aria-controls="panel-schedule" type="button">Schedule</button>
         <button class="tab" id="tab-cuts" role="tab" aria-selected="false" aria-controls="panel-cuts" type="button">Cut List</button>
@@ -540,6 +625,53 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ================= TRAINING ================= -->
+  <div class="wrap panel-pad" id="panel-training" role="tabpanel" aria-labelledby="tab-training" hidden>
+    <div class="section-head">
+      <h2>Training</h2>
+      <p class="eyebrow eyebrow-gold">4-2-3-1 &middot; team shape and practice plan</p>
+    </div>
+
+    <section class="train-block" aria-labelledby="train-pictures-head">
+      <h3 class="sub-head" id="train-pictures-head">Seven tactical pictures</h3>
+      <p class="train-note">Seven moments the whole team should recognise without being told. Play each one through its frames, then run the drill under it. Gold discs are Lions, grey discs are the other team, the white disc is the ball; dashed white lines are passes, thin gold arrows are runs.</p>
+      <div class="tp-list" id="training-pictures"></div>
+    </section>
+
+    <section class="train-block" aria-labelledby="train-gk-head">
+      <p class="eyebrow eyebrow-gold">Keepers train separately</p>
+      <h3 class="sub-head" id="train-gk-head" style="margin-top:6px;">Goalkeeper session</h3>
+      <p class="train-note">Antonio and Nicholas work with a coach or a parent server during the technique block, then join the tactical picture.</p>
+      <div class="gk-grid" id="gk-stations"></div>
+      <div class="tp-list" id="training-gk-picture"></div>
+    </section>
+
+    <section class="train-block" aria-labelledby="train-coach-head">
+      <h3 class="sub-head" id="train-coach-head">Coaching by player</h3>
+      <p class="train-note">One thing per player, then the focus areas behind it. Tap a card to open that player&rsquo;s profile on the Roster tab, where the full plan lives.</p>
+      <div id="coach-by-player"></div>
+    </section>
+
+    <section class="train-block" aria-labelledby="train-plan-head">
+      <h3 class="sub-head" id="train-plan-head">Eight-session practice plan</h3>
+      <p class="train-note">Eight sessions over four weeks, 75 minutes each. Every session runs the same structure: 10 min rondo warm-up &middot; 20 min technique stations by position &middot; 25 min tactical picture &middot; 20 min game with a rule.</p>
+      <div class="table-scroll">
+        <table class="ses">
+          <thead>
+            <tr>
+              <th scope="col">Session</th>
+              <th scope="col">Theme</th>
+              <th scope="col">Tactical picture</th>
+              <th scope="col">Technique block</th>
+              <th scope="col">Game</th>
+            </tr>
+          </thead>
+          <tbody id="ses-rows"></tbody>
+        </table>
+      </div>
+    </section>
   </div>
 
   <!-- ================= FORMATIONS ================= -->
@@ -853,6 +985,1338 @@ var MINIS = {
   ld:[["Oskar",110,238],["George",30,192],["Berni",82,203],["Adrian",138,203],["Jayden",190,192],["Gabe",76,152],["Courtney",144,152],["Wit",30,82],["Emmett",110,97],["Maceo",190,82],["Caleb",110,42]]
 };
 
+/* ---------- tactical pictures ----------
+   One generic renderer (TacticPicture) draws every picture from this data.
+   Coordinates are on a 0-100 (x, left to right) by 0-150 (y) grid; y=150 is our
+   own goal line and the Lions always attack upward. Frames after the first
+   inherit every position they do not restate, so a frame lists only what moved.
+   `passes` and `runs` are [from, to] pairs; a point is a Lion's short name, the
+   string "ball", "o<n>" for an opponent, or a literal [x,y]. `shapes` are
+   polygons: an array of points, or { pts, kind } with kind "cone" (a keeper
+   angle wedge) or "bad" (an open red line showing the wrong shape). */
+var TP_KEEPERS = { Antonio:1, Nicholas:1 };
+
+var TACTICS = [
+  {
+    id:"build-out",
+    title:"Build out of the back into a fast counter",
+    thesis:"Split, push, show. Three passes, under ten seconds.",
+    frames:[
+      {
+        caption:"Antonio has it. Adham and Dickey split to the edges of the box, George and Kayden push high and wide, Adrian shows ahead of the backs.",
+        lions:{ Antonio:[50,143], George:[10,96], Adham:[30,130], Dickey:[70,130], "K. Martin":[90,96], Adrian:[50,113], Kiefer:[64,90], Wit:[10,56], Mat:[48,68], Gabe:[90,56], Caleb:[50,52] },
+        opps:[[42,124],[58,122],[24,100],[50,96],[76,100],[32,62],[50,64],[68,62]],
+        ball:[50,143]
+      },
+      {
+        caption:"First pass out to Adham. Kiefer checks toward the ball, Mat drops into the pocket, Wit and Gabe stay high and wide, Caleb pins the far back.",
+        lions:{ Adham:[30,128], Kiefer:[46,98], Mat:[50,84], Wit:[8,52], Gabe:[92,52], Caleb:[58,52], George:[10,90], "K. Martin":[90,90], Adrian:[56,110] },
+        opps:[[36,120],[52,124],[20,102],[40,92],[70,104],[30,64],[48,66],[66,64]],
+        ball:[30,128],
+        passes:[["Antonio","Adham"]]
+      },
+      {
+        caption:"Adham to Kiefer and Kiefer turns. Wit starts his run in behind, George overlaps outside him.",
+        lions:{ Kiefer:[46,98], George:[10,82] },
+        opps:[[40,110],[54,116],[24,96],[52,92],[70,100],[30,62],[48,66],[66,62]],
+        ball:[46,98],
+        passes:[["Adham","Kiefer"]],
+        runs:[["Wit",[16,30]],["George",[12,64]]]
+      },
+      {
+        caption:"The through ball to Wit. Mat and Gabe arrive at the box, Caleb attacks the near post, Adrian holds the middle.",
+        lions:{ Wit:[16,28], Mat:[46,36], Gabe:[76,30], Caleb:[40,16], Adrian:[50,92], Kiefer:[52,66], George:[12,58], "K. Martin":[88,74], Adham:[34,116], Dickey:[66,116], Antonio:[50,140] },
+        opps:[[30,52],[52,58],[26,70],[46,64],[64,60],[24,22],[46,20],[62,24]],
+        ball:[16,28],
+        passes:[["Kiefer","Wit"]],
+        runs:[["Mat",[44,26]],["Gabe",[70,22]]]
+      }
+    ],
+    points:[
+      "First pass forward when it is on; sideways only if it is not.",
+      "Never pass across our own box. Out to the corner or back to Antonio.",
+      "Show early: be facing the ball before it is played.",
+      "Talk on every pass — “time” or “man on”.",
+      "Ten-second rule: from the keeper's hands to a shot in ten seconds."
+    ],
+    drill:{
+      name:"Box build-out 4v2 to target",
+      setup:[
+        "Antonio plus the back four in our half against two pressers.",
+        "Score by passing into Kiefer on the halfway line, who must receive facing forward.",
+        "As soon as Kiefer has it, break the other way 3v2 and finish."
+      ]
+    }
+  },
+  {
+    id:"high-press",
+    title:"High press",
+    thesis:"Press together or don't press.",
+    frames:[
+      {
+        caption:"Their keeper has it. Caleb angles his run to force play to one side, Mat sits on their pivot, Wit and Gabe tuck in on the fullbacks, the back four hold a high line.",
+        lions:{ Caleb:[56,20], Mat:[50,46], Wit:[22,36], Gabe:[78,36], Kiefer:[58,58], Adrian:[42,60], George:[16,74], Adham:[38,78], Dickey:[62,78], "K. Martin":[84,74], Antonio:[50,100] },
+        opps:[[50,10],[76,26],[24,26],[60,22],[40,22],[50,40],[84,54],[16,54]],
+        ball:[50,10]
+      },
+      {
+        caption:"Out to their fullback. Gabe presses showing him down the line, Kiefer jumps to the next pass, Adrian covers the middle, Kayden pushes up, the backs shift across.",
+        lions:{ Gabe:[78,30], Kiefer:[78,48], Adrian:[50,56], "K. Martin":[86,60], Adham:[46,74], Dickey:[68,72], Caleb:[52,26], Mat:[50,48], Wit:[26,44], George:[22,78] },
+        opps:[[50,10],[76,26],[24,26],[60,22],[40,22],[52,42],[86,50],[16,54]],
+        ball:[76,26],
+        passes:[["o0","o1"]],
+        runs:[["Gabe",[82,22]],["Kiefer",[88,42]]]
+      },
+      {
+        caption:"Trapped on the touchline. Three Lions around the ball and it is won.",
+        lions:{ Gabe:[80,26], "K. Martin":[88,34], Kiefer:[76,38], Mat:[58,34], Caleb:[52,22], Adrian:[50,52], Wit:[28,40], Adham:[46,70], Dickey:[66,68] },
+        opps:[[50,10],[86,24],[26,28],[60,22],[40,22],[62,44],[88,48],[18,52]],
+        ball:[82,28]
+      },
+      {
+        caption:"Straight at them: Gabe to Mat, Mat to Caleb for the shot, or Mat's through pass instead.",
+        lions:{ Mat:[58,34], Caleb:[50,18], Wit:[30,22], Gabe:[80,30], Kiefer:[64,44] },
+        opps:[[50,10],[82,22],[30,30],[54,20],[42,24],[62,40],[86,44],[22,46]],
+        ball:[50,18],
+        passes:[["Gabe","Mat"],["Mat","Caleb"]],
+        runs:[["Wit",[34,16]]]
+      }
+    ],
+    points:[
+      "Triggers: a bad touch, a pass backward, or a ball on the touchline.",
+      "The striker's run sets the side; everyone presses that side.",
+      "The second player closes the next pass, not the ball.",
+      "If the press is beaten, everyone drops — no one keeps chasing.",
+      "The back four step up with the press or the trap does not work."
+    ],
+    drill:{
+      name:"6v4 press to score",
+      setup:[
+        "Four attackers plus a keeper play out of one half against six pressers.",
+        "Attackers score by dribbling or passing through one of two gates on the halfway line.",
+        "Pressers may only start on a trigger the coach calls, and score in the goal."
+      ]
+    }
+  },
+  {
+    id:"drop-back",
+    title:"Dropping back (losing the ball)",
+    thesis:"Five seconds to win it back, then run home.",
+    frames:[
+      {
+        caption:"Mat's pass is cut out on the edge of their box. Kiefer and Mat counter-press the ball for five seconds.",
+        lions:{ Mat:[46,34], Kiefer:[52,44], Caleb:[44,18], Wit:[20,26], Gabe:[78,26], Adrian:[50,60], George:[18,66], Adham:[40,70], Dickey:[60,70], "K. Martin":[82,66], Antonio:[50,104] },
+        opps:[[52,32],[40,24],[62,22],[30,40],[70,44],[50,54],[24,60],[76,60]],
+        ball:[52,30],
+        runs:[["Kiefer",[52,36]],["Mat",[48,32]]]
+      },
+      {
+        caption:"Not won in five. Every Lion sprints goal-side: Wit and Gabe drop level with Adrian and Kiefer for two banks of four, Mat and Caleb stay high as the first line.",
+        lions:{ Kiefer:[56,86], Adrian:[44,86], Wit:[22,88], Gabe:[78,88], George:[22,112], Adham:[40,116], Dickey:[60,116], "K. Martin":[78,112], Mat:[46,56], Caleb:[56,54], Antonio:[50,132] },
+        opps:[[52,60],[40,48],[64,46],[30,66],[70,68],[50,40],[24,80],[76,80]],
+        ball:[52,62]
+      },
+      {
+        caption:"Set block: about 25 yards front to back, everyone shifted to the ball side, Antonio off his line.",
+        lions:{ George:[14,110], Adham:[34,114], Dickey:[52,114], "K. Martin":[68,110], Adrian:[34,94], Kiefer:[52,94], Wit:[20,92], Gabe:[62,92], Mat:[40,74], Caleb:[52,72], Antonio:[46,134] },
+        opps:[[30,80],[44,66],[60,64],[18,72],[70,78],[46,52],[26,96],[62,58]],
+        ball:[30,82]
+      }
+    ],
+    points:[
+      "Recover goal-side first, ball-side second.",
+      "Count to five out loud: press for five, then run home.",
+      "Run past the ball before turning to face it.",
+      "Talk from the back — Adham organises the line.",
+      "Two banks of four, about 25 yards apart, sliding as one."
+    ],
+    drill:{
+      name:"Transition game 6v6 + GK",
+      setup:[
+        "Small field, two keepers, no throw-ins — the coach serves a new ball on every stoppage.",
+        "On any turnover the team that lost it has five seconds to win it back.",
+        "When the coach shouts “home”, everyone must be goal-side of the ball before play continues."
+      ]
+    }
+  },
+  {
+    id:"wing-defend",
+    title:"Defending when the ball is on the wing",
+    thesis:"Show the line, cover behind, tuck the far side.",
+    frames:[
+      {
+        caption:"Their winger has it wide on our left. George closes fast then slows the last three steps, showing him down the line; Wit sprints back to double; Adham covers behind George.",
+        lions:{ George:[22,110], Wit:[18,84], Adham:[34,116], Dickey:[52,120], "K. Martin":[66,126], Adrian:[44,104], Kiefer:[52,98], Mat:[46,80], Caleb:[54,66], Gabe:[76,90], Antonio:[50,140] },
+        opps:[[14,100],[48,124],[40,104],[10,84],[84,104],[58,92],[30,84],[50,72]],
+        ball:[14,100],
+        runs:[["Wit",[16,94]],["George",[16,102]]]
+      },
+      {
+        caption:"Forced backward. The whole block slides with the ball and the far winger is ten yards in from his touchline.",
+        lions:{ George:[16,92], Adham:[32,106], Dickey:[50,110], "K. Martin":[64,112], Adrian:[40,94], Kiefer:[50,90], Wit:[18,80], Gabe:[66,82], Mat:[44,74], Caleb:[52,64] },
+        opps:[[12,86],[46,116],[36,96],[10,72],[80,98],[54,84],[28,76],[48,64]],
+        ball:[12,86]
+      },
+      {
+        caption:"The cross comes anyway: Adham near post, Dickey central with the striker, Kayden at the far post, Adrian on the edge for the second ball, Antonio commanding the six.",
+        lions:{ Adham:[38,138], Dickey:[50,134], "K. Martin":[62,138], Adrian:[50,120], Antonio:[50,144], George:[22,120], Wit:[26,108], Kiefer:[44,112], Gabe:[70,104], Mat:[50,96], Caleb:[52,84] },
+        opps:[[14,96],[46,132],[58,136],[16,110],[74,124],[52,108],[30,100],[44,90]],
+        ball:[50,130],
+        passes:[["o0",[50,130]]]
+      }
+    ],
+    points:[
+      "Never dive in on the wing — slow down and stay on your feet.",
+      "The cover defender's job is the space behind, not the ball.",
+      "The far-side fullback is never wider than the far post.",
+      "Heads up on the cross: mark the runner, not the ball.",
+      "Adrian sits on the edge of the box for everything that comes out."
+    ],
+    drill:{
+      name:"2v2 wing channel and cross",
+      setup:[
+        "A channel down one wing, a full goal with a keeper, a server on the halfway line.",
+        "Two attackers try to cross; two defenders show the line and cover behind.",
+        "Defenders score by clearing the ball past the halfway line under control."
+      ]
+    }
+  },
+  {
+    id:"middle-defend",
+    title:"Defending through the middle",
+    thesis:"Delay, don't dive. Force it sideways. Protect the D.",
+    frames:[
+      {
+        caption:"Their 10 receives between our lines. Adrian steps to him and stays on his feet, Kiefer drops behind to cover, Adham and Dickey stay tight to the striker, the fullbacks narrow.",
+        lions:{ Adrian:[50,106], Kiefer:[50,116], Adham:[42,130], Dickey:[58,130], George:[26,122], "K. Martin":[74,122], Wit:[26,94], Gabe:[74,94], Mat:[48,80], Caleb:[52,68], Antonio:[50,142] },
+        opps:[[50,96],[50,126],[18,104],[82,104],[34,84],[66,84],[22,74],[78,74]],
+        ball:[50,96],
+        runs:[["Adrian",[50,98]]]
+      },
+      {
+        caption:"He turns but he is forced sideways. Mat drops in to double from behind, Wit and Gabe pinch in, Kiefer holds the space behind Adrian.",
+        lions:{ Adrian:[60,100], Mat:[58,86], Kiefer:[52,110], Wit:[34,92], Gabe:[68,90], Adham:[44,128], Dickey:[58,128] },
+        opps:[[62,94],[50,126],[22,102],[84,100],[38,84],[70,82],[26,74],[80,74]],
+        ball:[62,94]
+      },
+      {
+        caption:"Shot lane blocked: Dickey steps out to block, Adham covers the striker, Antonio is set on his line.",
+        lions:{ Dickey:[56,120], Adham:[46,128], Antonio:[50,140], Adrian:[62,104], Kiefer:[52,112], Mat:[58,92] },
+        opps:[[58,110],[50,128],[24,104],[82,102],[40,88],[70,86],[28,78],[78,78]],
+        ball:[56,116],
+        passes:[["o0",[52,148]]]
+      }
+    ],
+    points:[
+      "The first defender slows the ball; the second defender covers behind him.",
+      "Keep the ball in front of the back four at all times.",
+      "No tackle inside the D unless you are certain.",
+      "Block with the body, not a slide.",
+      "Force everything sideways — sideways is not dangerous."
+    ],
+    drill:{
+      name:"3v2 + GK in the centre channel",
+      setup:[
+        "A narrow centre channel, a full goal with a keeper, two wide targets on the halfway line.",
+        "Three attackers have eight seconds to score.",
+        "Defenders score by winning it and passing to either wide target."
+      ]
+    }
+  },
+  {
+    id:"middle-attack",
+    title:"Attacking through the middle",
+    thesis:"Bounce it, third man runs.",
+    frames:[
+      {
+        caption:"Adrian has the ball. Mat finds the pocket between their midfield and defence, Caleb checks to feet to drag a centre back with him.",
+        lions:{ Adrian:[50,92], Mat:[52,54], Caleb:[46,40], Kiefer:[64,82], Wit:[16,50], Gabe:[84,50], George:[14,84], "K. Martin":[86,84], Adham:[40,116], Dickey:[60,116], Antonio:[50,140] },
+        opps:[[50,10],[40,30],[60,30],[20,38],[80,38],[36,70],[64,70],[50,66]],
+        ball:[50,92]
+      },
+      {
+        caption:"Adrian to Mat and Mat's first touch turns him. Caleb spins in behind into the space he emptied, Kiefer starts late toward the edge of the box.",
+        lions:{ Mat:[52,54], Caleb:[44,32], Kiefer:[62,74], Adrian:[50,90] },
+        opps:[[50,10],[40,38],[58,34],[20,40],[80,40],[40,66],[66,64],[50,60]],
+        ball:[52,54],
+        passes:[["Adrian","Mat"]],
+        runs:[["Caleb",[40,20]],["Kiefer",[56,44]]]
+      },
+      {
+        caption:"The through pass to Caleb, or the lay-off to Kiefer arriving for the shot. Wit and Gabe pinch in for rebounds, Adrian holds.",
+        lions:{ Caleb:[40,18], Kiefer:[56,40], Wit:[30,20], Gabe:[70,20], Adrian:[50,88], Mat:[52,52] },
+        opps:[[50,10],[44,26],[58,24],[26,32],[74,30],[42,58],[64,56],[50,62]],
+        ball:[40,18],
+        passes:[["Mat","Caleb"],["Mat","Kiefer"]]
+      }
+    ],
+    points:[
+      "The striker's check is what makes the space — the pass is the easy part.",
+      "One or two touches in the pocket, never three.",
+      "The third runner is the one they don't see; time it late.",
+      "Shoot early from the D.",
+      "Adrian stays behind the ball for the counter."
+    ],
+    drill:{
+      name:"Pocket bounce 3v2 + GK",
+      setup:[
+        "A back player, a pocket player (Mat) and a striker against two defenders and a keeper.",
+        "Every attack must go through the pocket player before the shot.",
+        "A goal counts double when it comes after a third-man run."
+      ]
+    }
+  },
+  {
+    id:"triangles",
+    title:"Opening up to make triangles",
+    thesis:"Every player two passes from the ball.",
+    frames:[
+      {
+        caption:"Flat shape: Kayden has it wide right, Gabe is straight ahead on the line, Kiefer is level with him. Two options, both marked, and both on a straight line.",
+        lions:{ "K. Martin":[88,90], Gabe:[88,62], Kiefer:[58,90], Adrian:[50,100], Mat:[52,72], Wit:[14,60], Caleb:[50,42], George:[14,96], Adham:[40,120], Dickey:[60,120], Antonio:[50,142] },
+        opps:[[86,54],[56,82],[70,70],[40,88],[24,72],[50,58],[36,40],[64,40]],
+        ball:[88,90],
+        shapes:[{ kind:"bad", pts:["Kiefer","K. Martin","Gabe"] }]
+      },
+      {
+        caption:"Move: Gabe drops toward the ball, Kiefer offers underneath at an angle, Mat pushes into the half-space. Three triangles around the ball.",
+        lions:{ Gabe:[84,72], Kiefer:[66,100], Mat:[70,60], Adrian:[54,104] },
+        opps:[[86,56],[60,88],[72,78],[44,92],[24,72],[54,62],[36,40],[64,40]],
+        ball:[88,90],
+        shapes:[["K. Martin","Gabe","Kiefer"],["Kiefer","Mat","Gabe"],["Adrian","K. Martin","Kiefer"]]
+      },
+      {
+        caption:"The ball goes to Kiefer and the triangles reform on the other side, with Adrian as the pivot and George high on the left.",
+        lions:{ Kiefer:[66,100], Adrian:[50,102], George:[12,80], Wit:[14,54], Mat:[46,72], Gabe:[86,66] },
+        opps:[[84,60],[62,92],[74,80],[42,88],[22,68],[52,64],[36,40],[64,40]],
+        ball:[66,100],
+        passes:[["K. Martin","Kiefer"]],
+        shapes:[["Kiefer","Adrian","Mat"],["Adrian","George","Wit"],["Mat","Wit","Caleb"]]
+      }
+    ],
+    points:[
+      "Support at an angle, never in a straight line.",
+      "Move after you pass — a stationary passer has no triangle.",
+      "The pivot (Adrian) is always available behind the ball.",
+      "Width comes from the fullbacks, so the wingers can come inside.",
+      "If you can only see two options, you are standing in the wrong place."
+    ],
+    drill:{
+      name:"Rondo 4v1 to 5v2 to positional 3v3+3",
+      setup:[
+        "Start 4v1 in a 12-yard square, two touches maximum.",
+        "Grow it to 5v2, then to 3v3 plus three neutrals with two small goals.",
+        "One rule the whole session: a triangle must form before a goal counts."
+      ]
+    }
+  }
+];
+
+/* The keeper picture uses the same renderer on a half-pitch view. */
+var GK_PICTURE = {
+  id:"gk-angles",
+  view:"half",
+  title:"Keeper angles and starting position",
+  thesis:"Stand on the line from the ball to the middle of the goal; closer ball, closer to the ball.",
+  frames:[
+    {
+      caption:"Ball at midfield in the middle. Antonio starts high, near the top of the six-yard box, and the back line is high with him.",
+      lions:{ Antonio:[50,139], George:[16,86], Adham:[38,88], Dickey:[62,88], "K. Martin":[84,86] },
+      opps:[[50,78]],
+      ball:[50,76]
+    },
+    {
+      caption:"Ball wide right at the edge of the box. Antonio drops toward the near post, on the line from the ball to the middle of the goal. The cone is the goal the shooter can see.",
+      lions:{ Antonio:[58,144], George:[30,126], Adham:[44,132], Dickey:[56,132], "K. Martin":[72,126] },
+      opps:[[80,130]],
+      ball:[78,128],
+      shapes:[{ kind:"cone", pts:["ball",[36,150],[64,150]] }]
+    },
+    {
+      caption:"Ball central, 20 yards out. Antonio is set on the line of the ball, two steps off his goal line, feet still before the shot.",
+      lions:{ Antonio:[50,145], George:[24,124], Adham:[42,126], Dickey:[58,126], "K. Martin":[76,124] },
+      opps:[[50,122]],
+      ball:[50,120],
+      shapes:[{ kind:"cone", pts:["ball",[36,150],[64,150]] }]
+    },
+    {
+      caption:"Through on goal. Antonio comes early, big to small, and meets him at the edge of the six — the cone shows how little goal is left.",
+      lions:{ Antonio:[50,140], George:[28,134], Adham:[38,136], Dickey:[62,136], "K. Martin":[72,134] },
+      opps:[[50,132]],
+      ball:[50,130],
+      shapes:[{ kind:"cone", pts:["ball",[36,150],[64,150]] }]
+    }
+  ],
+  points:[
+    "Find the line from the ball to the middle of the goal and stand on it.",
+    "The closer the ball, the closer to the ball — narrow the angle.",
+    "Set before the shot: feet still, weight forward.",
+    "Come when the ball leaves the attacker's foot, not before.",
+    "Talk the line up and down — the keeper is the loudest player on the field."
+  ],
+  drill:{
+    name:"Angle walk with a server",
+    setup:[
+      "A server walks the ball around the top of the box; the keeper shuffles to stay on the ball-to-goal-centre line.",
+      "On the coach's whistle the server shoots from wherever he is.",
+      "Two cones mark the near-post and centre positions until the keeper finds them without looking."
+    ]
+  }
+};
+
+var GK_STATIONS = [
+  { name:"Distribution", line:"Roll, throw and goal-kick to a target: 10 each to a fullback at the corner of the box, then 10 driven to the halfway line." },
+  { name:"Cutting angles", line:"Server walks the ball across the top of the box; the keeper shuffles to stay on the ball-to-goal-centre line and sets before each shot." },
+  { name:"Closing down an attacker", line:"1v1 from 25 yards: come early, big to small, and take the ball at the edge of the six." },
+  { name:"Positioning when the ball is not in hand", line:"Ball at midfield, keeper starts at the top of the six; every 20 seconds the coach moves the ball and the keeper resets his depth and line." }
+];
+
+var TP_ALL = TACTICS.concat([GK_PICTURE]);
+var TP_BY_ID = {};
+TP_ALL.forEach(function(pic){ TP_BY_ID[pic.id] = pic; });
+var TP_STATE = {};
+
+/* ---------- per-player coaching plans ----------
+   Keyed by the exact `name` in PLAYERS. Value:
+     { position, one_thing, focus:[ { title, why, cues:[..], drill:{ name, setup, reps }, success } ] }
+   Field players get three focus items, keepers four; the renderer takes any
+   number. Seeded empty on purpose: the written plans are pasted in here. */
+var COACHING = {
+  "Antonio De Marco": {
+    "position": "GK",
+    "one_thing": "Win your goal with angles and calm hands instead of racing out, and start our attack with a simple pass.",
+    "focus": [
+      {
+        "title": "Cut the angle down",
+        "why": "Speed 2 means you cannot fix a bad starting spot, but size 4 covers most of the goal once you are on the line between the ball and the middle of the goal.",
+        "cues": ["Stand on the ball-to-goal-center line", "Walk the arc, never stand flat", "Ball closer, step out and narrow it", "Be set before the shot"],
+        "drill": {
+          "name": "Arc walk",
+          "setup": "Five cones in an arc six yards off your line, post to post. A partner moves a ball around the edge of the box and you slide to the matching cone and set.",
+          "reps": "4 sets of 8 moves"
+        },
+        "success": "Shots keep hitting him because he is already on the line of the shot."
+      },
+      {
+        "title": "Start play from your hands",
+        "why": "Pass 3 is plenty to begin safely, so look short first and roll it to Adham or the other center back once they split wide.",
+        "cues": ["Look short before you look long", "Roll it firmly, never chip it", "Throw flat to a fullback's feet", "Driven kick only on the counter"],
+        "drill": {
+          "name": "Short first, then long",
+          "setup": "Two cones 20 yards wide of goal as the split center backs and one 45 yards out. A partner calls short or long as you collect the ball.",
+          "reps": "3 sets of 8 restarts"
+        },
+        "success": "Restarts leave his hands along the ground to an open teammate."
+      },
+      {
+        "title": "Go early or stay home",
+        "why": "At speed 2 a late decision to come out is the worst thing you can do. Come only when the ball is out of the attacker's feet.",
+        "cues": ["Come when the ball leaves his foot", "Fast out, then small and steady", "Stay tall, hands low and wide", "If you doubt it, stay home"],
+        "drill": {
+          "name": "Long touch trigger",
+          "setup": "A partner dribbles at goal from 25 yards, sometimes pushing the ball far ahead. Attack only those balls; on short touches set on your line.",
+          "reps": "4 sets of 6 attacks"
+        },
+        "success": "He smothers loose balls and is never caught halfway out."
+      },
+      {
+        "title": "Position when it is loose",
+        "why": "Size 4 and a good read kill danger before it starts. Your depth should follow the ball, and your voice should hold the back four together.",
+        "cues": ["Ball far, get off your line", "Ball wide and close, near the six", "Sweep behind a high back line", "Talk loud: push up, drop, mark"],
+        "drill": {
+          "name": "Depth ladder",
+          "setup": "Cones at 40, 25 and 12 yards out. A partner carries a ball to each one while you move to your matching depth and call the line up or back.",
+          "reps": "3 sets of 9 positions"
+        },
+        "success": "He sits a few yards higher than the danger and the defenders hear him."
+      }
+    ]
+  },
+  "Nicholas Farrcor": {
+    "position": "GK",
+    "one_thing": "Decide early and be set on the right angle, because good position is what makes a smaller keeper big.",
+    "focus": [
+      {
+        "title": "Angles and quick feet",
+        "why": "Size 2 means the goal looks big behind you, so the only way to shrink it is to be exactly on the line from the ball to the middle of the goal.",
+        "cues": ["Line up ball and goal center", "Small steps, weight on your toes", "Step out as the ball comes closer", "Set and still before the shot"],
+        "drill": {
+          "name": "Arc shuffle",
+          "setup": "Five cones in an arc five yards off your line. A partner walks a ball around the edge of the box while you shuffle to the matching cone and set.",
+          "reps": "4 sets of 8 moves"
+        },
+        "success": "He is square and stopped every time the ball is struck."
+      },
+      {
+        "title": "Simple, safe restarts",
+        "why": "Pass 2 makes a long kick a coin flip, so roll it to the center back who has split wide and let the team play out.",
+        "cues": ["Roll to the wide center back", "Never pass through the middle", "Plant foot pointed at your target", "Lock the ankle on drives"],
+        "drill": {
+          "name": "Roll to the corner cone",
+          "setup": "Two cones 18 yards wide of goal. Roll firmly to whichever one a partner points at; every fourth ball, drive one at a cone 40 yards out.",
+          "reps": "3 sets of 9 restarts"
+        },
+        "success": "Every restart reaches a teammate's feet along the ground."
+      },
+      {
+        "title": "Early decisions off your line",
+        "why": "Speed 2 and size 2 mean a half-committed run is a goal. Pick one: go the moment the ball is out of his feet, or stay home and be big.",
+        "cues": ["Come only on the long touch", "Big to small as you arrive", "Hands low, chest over the ball", "In doubt, stay on your line"],
+        "drill": {
+          "name": "Come or stay",
+          "setup": "A partner dribbles at goal from 20 yards, pushing the ball far ahead on some runs. Smother only those; on the rest, get set on your line.",
+          "reps": "4 sets of 6 attacks"
+        },
+        "success": "He is either on the ball or on his line, never stranded between."
+      },
+      {
+        "title": "Move with the ball",
+        "why": "Tackle 3 and endurance 3 say you are willing to work, so work between shots: your depth follows the ball and your voice sets the back line.",
+        "cues": ["Ball far, step off your line", "Ball wide and close, near the six", "Slide across as the ball switches", "Call the back line up or back"],
+        "drill": {
+          "name": "Depth and voice",
+          "setup": "Cones at 40, 25 and 12 yards out. A partner carries the ball to each while you move to the matching depth and shout the instruction.",
+          "reps": "3 sets of 9 positions"
+        },
+        "success": "His feet move with the ball all game and defenders can hear him."
+      }
+    ]
+  },
+  "Adham Ali": {
+    "position": "CB",
+    "one_thing": "Look over both shoulders before the ball reaches you, and you will play out of the back before pressure arrives.",
+    "focus": [
+      {
+        "title": "Scan before you receive",
+        "why": "Skill 4, pass 4 and control 4 mean you can play any ball you see, so the limit is what you looked at. Speed 2 means you buy time by looking, not running.",
+        "cues": ["Shoulder check as the ball travels", "Know your out-ball before you touch", "Open your hips to see the field"],
+        "drill": {
+          "name": "Number call receive",
+          "setup": "Three numbered cones in a 12-yard triangle, you in the middle. A partner passes and calls a number while the ball travels.",
+          "reps": "4 sets of 8 passes"
+        },
+        "success": "His first touch already points at the pass he is about to make."
+      },
+      {
+        "title": "Open the passing lanes",
+        "why": "Pass 4 is wasted if you stand behind the player marking you. Angle your body and teammates get an easy option instead of a risky one.",
+        "cues": ["Support at an angle, never flat", "Show the inside of your foot", "Talk so he knows you are free"],
+        "drill": {
+          "name": "Angle support triangle",
+          "setup": "Two cones 10 yards apart as a passer and a target, you eight yards to the side. Receive, open out, play through in two touches.",
+          "reps": "3 sets of 10"
+        },
+        "success": "Teammates under pressure keep finding him because he is never hidden."
+      },
+      {
+        "title": "Delay the fast attacker",
+        "why": "Speed 2 is the one weak spot in your game, so never let a foot race start. Tackle 3 is plenty once he is slowed and help arrives.",
+        "cues": ["Close fast, then slow down", "Angle him toward the sideline", "Stay on your feet, no lunges"],
+        "drill": {
+          "name": "Retreat and steer",
+          "setup": "A channel of cones 12 yards wide. A partner dribbles at you; press five yards, then drop and steer him to one cone without tackling.",
+          "reps": "3 sets of 6"
+        },
+        "success": "Attackers end up wide and slowed instead of running past him."
+      }
+    ]
+  },
+  "Kayden Dickey": {
+    "position": "CB",
+    "one_thing": "Win it, then give it to Adham with one touch, because you never have to dribble a single yard this season.",
+    "focus": [
+      {
+        "title": "Contain, then take it",
+        "why": "Speed 4 and tackle 4 make you our best pure defender, while skill 1 and control 1 mean the mistake to avoid is stepping in too early.",
+        "cues": ["Sprint the first five yards", "Slow down two steps away", "Low hips, feet always moving", "Force him onto his weak foot"],
+        "drill": {
+          "name": "Close-down channel",
+          "setup": "Cones 12 yards apart as a channel. A partner dribbles at you and you close, slow, and hold him six seconds without diving in.",
+          "reps": "4 sets of 5"
+        },
+        "success": "Attackers stop and turn back instead of getting past him."
+      },
+      {
+        "title": "Block tackle timing",
+        "why": "Tackle 4 means the tackle is not your problem, the timing is. Go on his heavy touch, not on your own impatience.",
+        "cues": ["Go when the ball leaves his foot", "Ankle locked, inside of the foot", "Step through it, do not reach"],
+        "drill": {
+          "name": "Heavy touch trigger",
+          "setup": "A 10-yard box of cones. A partner dribbles slowly at you and pushes one heavy touch on purpose; tackle only on that touch.",
+          "reps": "3 sets of 8"
+        },
+        "success": "He wins the ball cleanly and comes out of the tackle standing."
+      },
+      {
+        "title": "One touch to safety",
+        "why": "Skill 1, pass 1 and control 1 all say the ball should leave your foot fast and simple. Endurance 4 lets you defend all game if you never dribble.",
+        "cues": ["Pass to Adham or put it out", "Decide before the ball arrives", "Clear it toward the sideline"],
+        "drill": {
+          "name": "Win it, ship it",
+          "setup": "A cone 12 yards right marked as Adham, a sideline cone behind you. A partner rolls balls in and you put each one to the cone or out.",
+          "reps": "4 sets of 8"
+        },
+        "success": "Clearances find a teammate or go safely out, never back through the middle."
+      }
+    ]
+  },
+  "George McMillan": {
+    "position": "LB",
+    "one_thing": "Use your legs both ways: defend on your feet, then run past Wit the moment he takes the ball inside.",
+    "focus": [
+      {
+        "title": "Stay on your feet",
+        "why": "Size 2 means a shoulder-to-shoulder fight is not your battle, but speed 4 and tackle 4 mean you can stay in front and take it cleanly.",
+        "cues": ["Never sit down or slide", "Show him the sideline", "Match his steps, stay side-on"],
+        "drill": {
+          "name": "Sideline squeeze",
+          "setup": "A 10 by 12 yard channel of cones along a line. A partner attacks and you force him into the line and win it there without sliding.",
+          "reps": "3 sets of 6"
+        },
+        "success": "Wingers get trapped on the touchline with no cross to make."
+      },
+      {
+        "title": "Overlap behind the winger",
+        "why": "Endurance 5 is your superpower, so you can make that 30-yard run 20 times a game, and speed 4 gets you there before their fullback slides across.",
+        "cues": ["Go when he takes it inside", "Run outside him, not into him", "Call his name as you pass", "Cross low and first time"],
+        "drill": {
+          "name": "Overlap and cross",
+          "setup": "A cone as the winger 25 yards from goal and two cones as a goal. Sprint outside the cone, take a rolled pass, drive a low cross across goal.",
+          "reps": "3 sets of 6 runs"
+        },
+        "success": "He gets outside the defense and the cross stays under knee height."
+      },
+      {
+        "title": "Two on one wide",
+        "why": "With skill 2 you do not need to beat anyone alone, you just need to be the second man. Two of you against one defender wins that side.",
+        "cues": ["Stay five yards behind and wide", "If he steps to you, pass inside", "One of you goes, one stays"],
+        "drill": {
+          "name": "Two on one channel",
+          "setup": "A 15 by 20 yard channel with a cone goal at the end. You and a partner attack one defender, or pass around a cone if you are alone.",
+          "reps": "4 sets of 3 attacks"
+        },
+        "success": "The pair reaches the end line without either player being tackled."
+      }
+    ]
+  },
+  "Kayden Martin": {
+    "position": "RB",
+    "one_thing": "You can run all day, so spend that engine on the tackle you time right and the overlap you finish.",
+    "focus": [
+      {
+        "title": "Time the block tackle",
+        "why": "Speed 4 gets you there and endurance 5 keeps you there, but tackle 3 says the timing is still growing. Win it on his touch.",
+        "cues": ["Close fast, settle two steps away", "Go when the ball leaves his foot", "Ankle locked, step through the ball"],
+        "drill": {
+          "name": "Trigger tackle",
+          "setup": "A 12-yard channel of cones. A partner dribbles at half speed and pushes an occasional long touch; tackle only on the long touch.",
+          "reps": "3 sets of 8"
+        },
+        "success": "Clean wins in the tackle with no free kicks given away."
+      },
+      {
+        "title": "Overlap on the right",
+        "why": "Endurance 5 means you can make this run every attack and still cover the counter, and size 4 lets you hold your ground once you arrive.",
+        "cues": ["Wait until he takes it inside", "Sprint the outside lane", "Shout so he knows", "Low hard cross, never floated"],
+        "drill": {
+          "name": "Sprint and serve",
+          "setup": "A cone 25 yards out as the winger, two cones as a goal. Run from 10 yards behind, receive wide, drive a low cross between the cones.",
+          "reps": "3 sets of 6"
+        },
+        "success": "Crosses arrive low and hard from outside their fullback."
+      },
+      {
+        "title": "Overload the right wing",
+        "why": "Skill 3 and control 3 are fine for a fullback but you will rarely beat a man alone. With Gabe you are two against one, and that math wins.",
+        "cues": ["Give him a wide option", "Go outside him or behind him", "Pass, move, get it back"],
+        "drill": {
+          "name": "Two on one to the line",
+          "setup": "A 15 by 20 yard channel of cones. You and a partner attack one defender and try to reach the end line; use a cone as the defender when alone.",
+          "reps": "4 sets of 3"
+        },
+        "success": "The right side keeps reaching the end line with two players involved."
+      }
+    ]
+  },
+  "Anthony Berni": {
+    "position": "CB",
+    "one_thing": "Be the calm one off the bench: get in front, take it cleanly, and give it away simple.",
+    "focus": [
+      {
+        "title": "Get in front and hold",
+        "why": "Tackle 4 is your best mark and speed 3 is fair, so your job is to get in front of the attacker and stay there instead of hunting the ball.",
+        "cues": ["First five yards fast", "Then short steps, low hips", "Show him one direction only"],
+        "drill": {
+          "name": "Hold the channel",
+          "setup": "A 10 by 12 yard channel of cones. A partner attacks and you keep him in front for six seconds with no tackle.",
+          "reps": "4 sets of 5"
+        },
+        "success": "He stays between the attacker and goal instead of chasing from behind."
+      },
+      {
+        "title": "Tackle on his touch",
+        "why": "Tackle 4 means you win most duels once you pick the right moment. Wait until the ball is away from his feet, then commit fully.",
+        "cues": ["Watch the ball, not his shoulders", "Go on the heavy touch", "One tackle, not a reach"],
+        "drill": {
+          "name": "Heavy touch block",
+          "setup": "Two cones eight yards apart. From 10 yards a partner pushes the ball forward on purpose and you block tackle as it leaves his foot.",
+          "reps": "3 sets of 8"
+        },
+        "success": "He wins the ball with one committed tackle and keeps his feet."
+      },
+      {
+        "title": "Look before it comes",
+        "why": "Control 2 means a surprise pass becomes a bad touch. A shoulder check while the ball travels lets you play simple instead of panicking.",
+        "cues": ["Check both shoulders early", "Pick your out-ball first", "First touch out of your feet"],
+        "drill": {
+          "name": "Number call receive",
+          "setup": "Three numbered cones in a 12-yard triangle. A partner passes and calls a number in the air; two touches maximum to that cone.",
+          "reps": "3 sets of 10"
+        },
+        "success": "Two-touch play out of the back with no scrambles."
+      }
+    ]
+  },
+  "Micah Lumpkins": {
+    "position": "CB",
+    "one_thing": "Delay, do not dive, because your speed already beats them and all you have to do is stay in the way.",
+    "focus": [
+      {
+        "title": "Delay first, always",
+        "why": "Speed 4 and endurance 5 mean you recover from almost anything, while tackle 2 means the dive-in is what hurts you. Being in the way beats any lunge.",
+        "cues": ["Close the space, then brake", "Stay an arm's length away", "Feet moving, never crossed", "Buy time, help is coming"],
+        "drill": {
+          "name": "Brake and shadow",
+          "setup": "Cones 14 yards apart. A partner dribbles at you; sprint six yards, then brake and shadow him six seconds with no tackle.",
+          "reps": "4 sets of 5"
+        },
+        "success": "Attackers slow down in front of him and a teammate wins the ball."
+      },
+      {
+        "title": "Poke, never lunge",
+        "why": "Tackle 2 is the number to fix, and the fix is tackling less often rather than harder. One poke when the ball is loose, otherwise stay standing.",
+        "cues": ["Only poke a loose ball", "Front foot flicks, body stays back", "If you miss, still be standing"],
+        "drill": {
+          "name": "Poke gate",
+          "setup": "Two cones three yards apart. A partner dribbles through slowly and you poke the ball out sideways with your front foot and stay upright.",
+          "reps": "3 sets of 10 pokes"
+        },
+        "success": "He tips balls away without ever ending up on the ground."
+      },
+      {
+        "title": "Know your clearance early",
+        "why": "Skill 1, pass 1 and control 1 mean the ball has to leave your foot quickly, so decide before it arrives. One glance shows you the safe kick.",
+        "cues": ["Shoulder check before every ball", "Sideline or the fullback", "One touch, then it is gone"],
+        "drill": {
+          "name": "Scan and clear",
+          "setup": "A cone 15 yards wide as your safe target and a sideline cone behind you. A partner rolls balls in; look, then clear to the cone or out.",
+          "reps": "4 sets of 8"
+        },
+        "success": "Every clearance goes to the place he already looked at."
+      }
+    ]
+  },
+  "Drayman Mcgee": {
+    "position": "CB",
+    "one_thing": "Start deeper than feels normal and win the first ball, because the deep block and the corner kick are where you decide games.",
+    "focus": [
+      {
+        "title": "Drop and delay",
+        "why": "Speed 2 means every foot race is a loss, so start deeper and never let the race begin. Size 5 makes you hard to go through when you stay standing.",
+        "cues": ["Start a step deeper than you think", "Back-pedal side-on, eyes on the ball", "Force him wide, not inside"],
+        "drill": {
+          "name": "Deep drop channel",
+          "setup": "A channel of cones 16 yards wide. A partner starts level with you and dribbles; back-pedal and steer him to a sideline cone without tackling.",
+          "reps": "3 sets of 6"
+        },
+        "success": "Nobody gets in behind him because he was already deep."
+      },
+      {
+        "title": "Block tackle up close",
+        "why": "Tackle 3 works best when the attacker comes to you, which suits size 5. Let him push the ball into your body, then step through it.",
+        "cues": ["Wait until he is one step away", "Ankle locked, inside of the foot", "Play the ball first"],
+        "drill": {
+          "name": "Step-through block",
+          "setup": "Two cones six yards apart. A partner walks the ball at you and pushes it into the gap, and you block tackle it as it comes.",
+          "reps": "3 sets of 8"
+        },
+        "success": "He absorbs the attacker and comes out with the ball at his feet."
+      },
+      {
+        "title": "Open body, open lanes",
+        "why": "Pass 2 and control 2 mean you need the easiest option available, and standing side-on gives it to you. Facing the field turns a panic kick into a pass.",
+        "cues": ["Open your hips before it arrives", "Never receive facing your own goal", "Play the nearest safe pass"],
+        "drill": {
+          "name": "Open-up receive",
+          "setup": "A partner 12 yards in front and a target cone 12 yards to your side. Receive with your back foot, open out, pass to the cone.",
+          "reps": "4 sets of 8"
+        },
+        "success": "His first touch turns him to face the field, not the goalkeeper."
+      }
+    ]
+  },
+  "Bennie Sims": {
+    "position": "CB",
+    "one_thing": "Start deep, stay on your feet and make the simple pass, because your game is won by never being beaten.",
+    "focus": [
+      {
+        "title": "Start deep, steer wide",
+        "why": "Speed 2 means recovery runs are not an option, so your starting position is your speed. Size 5 makes the outside route the only one he wants.",
+        "cues": ["Deeper than the man you mark", "Retreat side-on, do not turn", "Close the inside door"],
+        "drill": {
+          "name": "Steer to the cone",
+          "setup": "A channel of cones 16 yards wide. A partner dribbles at you and you back-pedal and force him to the outside cone with no tackle.",
+          "reps": "3 sets of 6"
+        },
+        "success": "Attackers finish every run wide and slow."
+      },
+      {
+        "title": "Take it up close",
+        "why": "Tackle 3 is enough for a center back who lets the ball come to him, and your block tackle at size 5 wins nearly every duel inside a yard.",
+        "cues": ["Let him come, then step", "Inside of the foot, ankle locked", "Come out standing up"],
+        "drill": {
+          "name": "One-yard block",
+          "setup": "Two cones six yards apart. A partner walks the ball into the gap and you step in and block it back past him.",
+          "reps": "3 sets of 8"
+        },
+        "success": "Duels near him end with the ball at his feet."
+      },
+      {
+        "title": "Check, then touch",
+        "why": "Control 2 means surprises turn into mistakes. One look before the ball arrives tells you whether to pass, open out, or put it out of play.",
+        "cues": ["Look before every back pass", "Know your out-ball early", "The sideline is never a bad choice"],
+        "drill": {
+          "name": "Call the cone",
+          "setup": "Three numbered cones in a 12-yard triangle. A partner passes and calls a number while the ball travels; play there in two touches.",
+          "reps": "3 sets of 10"
+        },
+        "success": "Calm two-touch play under pressure instead of hurried kicks."
+      }
+    ]
+  },
+  "Oskar Riendeau": {
+    "position": "CB",
+    "one_thing": "Every minute you are on, defend deep and simple, and keep your gloves close because some days you are our keeper.",
+    "focus": [
+      {
+        "title": "Deep and patient",
+        "why": "Speed 2 and endurance 2 mean you save your legs by standing in the right place instead of chasing. Size 5 does the work once you are between ball and goal.",
+        "cues": ["Start deeper, stay compact", "Never sprint out of the line", "Feet down, no lunges"],
+        "drill": {
+          "name": "Retreat lane",
+          "setup": "Cones 15 yards apart. A partner dribbles at you and you retreat and hold him six seconds with no tackle, then rest 30 seconds.",
+          "reps": "4 sets of 4"
+        },
+        "success": "He is never the reason a ball gets in behind."
+      },
+      {
+        "title": "Block tackle in close",
+        "why": "Tackle 3 with size 5 wins the duel a yard from your body. Let the attacker come to you and step through the ball with a locked ankle.",
+        "cues": ["Let him come to you", "Step, do not reach", "Finish the tackle standing"],
+        "drill": {
+          "name": "Close-quarters block",
+          "setup": "Two cones six yards apart. A partner walks the ball in and pushes it past you; block it firmly back and stay on your feet.",
+          "reps": "3 sets of 8"
+        },
+        "success": "Strong, clean tackles right in front of his own goal."
+      },
+      {
+        "title": "One touch, safe pass",
+        "why": "Pass 2 and control 2 mean the shortest safe option is right every time. Decide before the ball arrives and it never looks rushed.",
+        "cues": ["Pick your target as it travels", "A short pass beats a long hope", "Out is better than risky"],
+        "drill": {
+          "name": "Nearest cone clear",
+          "setup": "Cones 10 and 20 yards away plus a sideline cone. A partner rolls balls in; pass to the closer cone in two touches, or kick it out.",
+          "reps": "4 sets of 6"
+        },
+        "success": "We never lose possession because of his first touch."
+      }
+    ]
+  },
+  "Kiefer": {
+    "position": "CM",
+    "one_thing": "Be the player who changes the picture: one scan, then either a driven switch or a dribble past the first man.",
+    "focus": [
+      {
+        "title": "Driven and lofted long balls",
+        "why": "Shot 4 and pass 4 mean you already strike a clean ball, and skill 5 lets you choose which kind. A driven switch beats their press; a lofted ball clears their line.",
+        "cues": ["Lock the ankle, toe pointed down", "Laces through the middle to drive it", "Under the ball, high follow-through to loft it"],
+        "drill": {
+          "name": "Two-target switch",
+          "setup": "A cone 35 yards away for driven balls and a five-yard circle of cones 40 yards away for lofted ones. Alternate one of each.",
+          "reps": "4 sets of 6 balls"
+        },
+        "success": "Switches arrive flat and fast and lofted balls land in the circle."
+      },
+      {
+        "title": "Inside-outside and go",
+        "why": "Skill 5 and control 5 mean two moves done perfectly beat ten done halfway: push it inside then outside, or feint one way and change pace the other.",
+        "cues": ["Inside touch, outside touch, accelerate", "Sell the feint with your shoulder", "Change of pace beats the trick"],
+        "drill": {
+          "name": "Cone-man moves",
+          "setup": "One cone as a defender with gate cones three yards either side. Attack at pace, use one of the two moves, burst through a gate.",
+          "reps": "3 sets of 10 moves"
+        },
+        "success": "The move ends with him at full speed, not standing still."
+      },
+      {
+        "title": "Pass it first time",
+        "why": "Endurance 5 and tackle 4 put you in every phase, so the faster you release the ball the more the team plays through you. Control 5 makes one-touch easy.",
+        "cues": ["Prep your body before it arrives", "Receive on your back foot", "Firm to feet, softer into space"],
+        "drill": {
+          "name": "First-time gate",
+          "setup": "Stand eight yards from a wall or partner with two cones four yards apart as a target gate; return every ball first time through it.",
+          "reps": "4 sets of 15 passes"
+        },
+        "success": "One-touch passes keep their weight and find the target under pressure."
+      }
+    ]
+  },
+  "Mat Alija": {
+    "position": "CAM",
+    "one_thing": "Turn and face forward the moment you get it, because everything dangerous you do starts with your eyes up.",
+    "focus": [
+      {
+        "title": "Beat the first man",
+        "why": "Skill 5 and control 5 mean you can already dribble past people; the trick is doing it just outside their box where it hurts. Speed 4 keeps you through.",
+        "cues": ["Take it at his front foot", "One move, then accelerate", "Two moves means you were slow"],
+        "drill": {
+          "name": "Gate beat",
+          "setup": "A cone as a defender 12 yards away with two gates four yards either side. Dribble at it, one move, exit a gate at speed.",
+          "reps": "3 sets of 10"
+        },
+        "success": "One touch after the move he is past his man and running."
+      },
+      {
+        "title": "Shoot from the edge",
+        "why": "Shot 4 from a playmaker is a real threat if you shoot early instead of hunting the perfect pass, and control 5 sets the ball up in one touch.",
+        "cues": ["Set it out of your feet", "Head still, eyes on the ball", "Laces, low and across the keeper"],
+        "drill": {
+          "name": "Set and strike",
+          "setup": "Start 20 yards from a goal or from two cones six yards apart. Push the ball one touch sideways and strike the second touch on target.",
+          "reps": "4 sets of 6 shots"
+        },
+        "success": "Shots leave in two touches and stay under the crossbar."
+      },
+      {
+        "title": "Slip the through pass",
+        "why": "Pass 4 plus your view between the lines is where the assists live. Weight it so the striker never has to slow down.",
+        "cues": ["Wait for the runner to turn", "Pass into space, not at him", "Firm and on the ground"],
+        "drill": {
+          "name": "Slip the gate",
+          "setup": "Two cones three yards apart, 15 yards away, as the gap between defenders. A partner runs from beside you and you pass through the gate.",
+          "reps": "3 sets of 8"
+        },
+        "success": "The runner takes the pass at full speed without breaking stride."
+      }
+    ]
+  },
+  "Gabe Campeau": {
+    "position": "RW",
+    "one_thing": "Beat your man both ways, and when you slide inside, look for the pass that splits them.",
+    "focus": [
+      {
+        "title": "One move each way",
+        "why": "Skill 5 and control 5 say you can beat the fullback, and having one move outside plus one inside stops him guessing. Speed 4 finishes both.",
+        "cues": ["Attack his front foot", "Outside: push it and go", "Inside: chop and change pace", "Show one, do the other"],
+        "drill": {
+          "name": "Two-gate one on one",
+          "setup": "A cone as the fullback 15 yards away with gates four yards inside and outside him. Attack and exit through alternating gates.",
+          "reps": "3 sets of 10 moves"
+        },
+        "success": "The defender stops committing because both exits look real."
+      },
+      {
+        "title": "Low, hard crosses",
+        "why": "Pass 3 is the number to raise and crossing is where it shows. A cross driven low across the six-yard box is the easiest ball we have to score from.",
+        "cues": ["Head up before you strike it", "Aim across the goal, not at it", "Keep it under knee height"],
+        "drill": {
+          "name": "Cross the corridor",
+          "setup": "Two cones six yards apart on the far side of a goal, ball wide 20 yards out. Take a touch and drive the cross between the cones.",
+          "reps": "4 sets of 6 crosses"
+        },
+        "success": "Crosses cut low across goal instead of floating to the keeper."
+      },
+      {
+        "title": "Split them with a pass",
+        "why": "When you slide into center midfield, pass 4 and skill 5 become the ball that unlocks the game. Weight matters more than power.",
+        "cues": ["Spot the run before you turn", "Pass into space ahead of him", "Play it as the defender steps out"],
+        "drill": {
+          "name": "Through the gap",
+          "setup": "Two cones three yards apart, 15 yards ahead of you. A partner runs at an angle and you slide the pass through the gap for him.",
+          "reps": "3 sets of 8"
+        },
+        "success": "Runners get the ball ahead of them and never have to check back."
+      }
+    ]
+  },
+  "Adrian Barber": {
+    "position": "CDM",
+    "one_thing": "Take a picture over both shoulders before every pass and you become the first outlet the whole team looks for.",
+    "focus": [
+      {
+        "title": "See the field first",
+        "why": "Nearly every number of yours is a 4 or 5, so your ceiling depends on information more than ability. Endurance 5 keeps you in position; now always know what is around you.",
+        "cues": ["Shoulder check as the ball travels", "Receive on your back foot", "Know your next pass before you touch"],
+        "drill": {
+          "name": "Numbers scan",
+          "setup": "Four numbered cones in a 15-yard square, you in the middle. A partner passes and calls a number after the ball leaves his foot.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He is already facing forward when the ball arrives."
+      },
+      {
+        "title": "One-touch outlet passing",
+        "why": "Pass 4 and control 4 mean you can play first time, and that is how a screening midfielder beats a press. The quicker it leaves you, the less they can press.",
+        "cues": ["Prep your feet early", "Firm to feet, soft into space", "Standing foot aimed at the target"],
+        "drill": {
+          "name": "First-time gate",
+          "setup": "A wall or partner eight yards away with a gate of two cones four yards apart off to your side. Return every ball first time through it.",
+          "reps": "4 sets of 15"
+        },
+        "success": "Balls played into him come straight back out in one touch."
+      },
+      {
+        "title": "Switch it long",
+        "why": "Shot 4 and pass 4 mean the long switch is already in your legs. When the near side is crowded, one driven ball flips the whole field.",
+        "cues": ["Lock the ankle, laces through it", "Driven when you switch the field", "Lofted over a set back line"],
+        "drill": {
+          "name": "Sideline switch",
+          "setup": "Two cones 35 yards apart on opposite touchlines, you in the middle. One prep touch, drive at the far cone, then walk over and go back.",
+          "reps": "4 sets of 6"
+        },
+        "success": "Switches travel flat and reach the far winger's feet."
+      }
+    ]
+  },
+  "William Strimple": {
+    "position": "CM",
+    "one_thing": "Be the easiest player in the team to play with: look early, pass quickly, and do not lose it under pressure.",
+    "focus": [
+      {
+        "title": "Check before you receive",
+        "why": "Threes across the board mean you earn minutes with good decisions, not tricks. A shoulder check while the ball travels turns control 3 into a calm touch.",
+        "cues": ["Look over both shoulders early", "Receive on your back foot", "Pick the pass before the touch"],
+        "drill": {
+          "name": "Call the cone",
+          "setup": "Four numbered cones in a 15-yard square, you in the middle. A partner passes and calls a number; play there in two touches.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He turns to face forward instead of playing backward every time."
+      },
+      {
+        "title": "Pass it first time",
+        "why": "Pass 3 improves fastest with repetition, and a first-time pass covers for a slower turn. Endurance 4 keeps you in every phase if you keep it simple.",
+        "cues": ["Set your feet before it arrives", "Inside of the foot, through the middle", "Pass and move two yards"],
+        "drill": {
+          "name": "Gate returns",
+          "setup": "A wall or partner eight yards away with two cones four yards apart as a target gate. Return each ball first time, then change your angle.",
+          "reps": "4 sets of 12"
+        },
+        "success": "His passes arrive at the right pace without an extra touch."
+      },
+      {
+        "title": "Two moves you trust",
+        "why": "Skill 3 and control 3 mean two reliable moves beat a bag of tricks, so own the inside-outside push and a body feint into a change of pace.",
+        "cues": ["Inside touch, outside touch, go", "Drop the shoulder, then accelerate", "Beat him with pace, not the move"],
+        "drill": {
+          "name": "Cone defender exits",
+          "setup": "One cone as a defender with gates three yards either side. Attack the cone, use one of your two moves, exit through a gate.",
+          "reps": "3 sets of 10"
+        },
+        "success": "He escapes midfield pressure with one move and a burst of pace."
+      }
+    ]
+  },
+  "Courtney Ayeo": {
+    "position": "LM/RM",
+    "one_thing": "Take her first touch away from pressure and play the simple pass, and the whole wing stays calm.",
+    "focus": [
+      {
+        "title": "First touch out of pressure",
+        "why": "Control 4 is her best mark and should be the first thing everyone notices. Size 2 means she cannot wrestle, so the ball must move before contact arrives.",
+        "cues": ["Look over your shoulder early", "Touch away from the defender", "One touch out, second touch decides"],
+        "drill": {
+          "name": "Touch and turn gate",
+          "setup": "Two cones six yards apart with one cone behind her as the defender. A partner passes in and she takes one touch away from that cone.",
+          "reps": "4 sets of 8"
+        },
+        "success": "She comes out of tight spots facing the field with the ball still hers."
+      },
+      {
+        "title": "Simple wide passing",
+        "why": "Pass 3 and tackle 2 mean her value is keeping the ball, not forcing plays. The short pass back inside to Kiefer or Adrian is almost always right.",
+        "cues": ["Nearest safe teammate first", "Firm along the ground", "No long balls from the sideline"],
+        "drill": {
+          "name": "Two-target choice",
+          "setup": "Cones 10 yards inside her and 12 yards ahead. A partner passes and points at one cone, and she plays there in two touches.",
+          "reps": "4 sets of 8"
+        },
+        "success": "She rarely gives the ball away and the wing keeps its shape."
+      },
+      {
+        "title": "One move to get free",
+        "why": "Skill 3 with control 4 is plenty for one dependable move: push the ball inside, then outside, and go. She needs no more than that to get a pass away.",
+        "cues": ["Inside touch, outside touch, go", "Use the sideline as your friend", "Head up before the second touch"],
+        "drill": {
+          "name": "Escape the corner",
+          "setup": "A 10 by 10 yard box of cones in a corner. Start with the ball, use the inside-outside push to exit a marked gate, then pass to a cone.",
+          "reps": "3 sets of 8"
+        },
+        "success": "She gets out of the sideline trap and still finds a teammate."
+      }
+    ]
+  },
+  "Caleb Campbell": {
+    "position": "ST",
+    "one_thing": "Hold the ball and time your movement, because you do not need to be fast if you arrive at the right second.",
+    "focus": [
+      {
+        "title": "Time it, do not race",
+        "why": "Speed 2 means a sprint contest is not your game, but skill 4 and control 4 mean a well-timed two-yard move gets you the ball.",
+        "cues": ["Move when his head lifts", "Two steps away, then back to the ball", "Stay level with the last defender"],
+        "drill": {
+          "name": "Two-step timing",
+          "setup": "A cone as the defender with you a yard in front and a partner 15 yards away. When he lifts his head, step off the cone and check back.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He receives the ball free instead of standing beside a defender."
+      },
+      {
+        "title": "Hold up and lay off",
+        "why": "Size 5 makes you our best hold-up player, and endurance 2 means you should be winning the ball rather than chasing it. Protect it, then find Mat or Kiefer.",
+        "cues": ["Feel him with your arm, stay wide", "First touch across your body", "Lay it back in one touch"],
+        "drill": {
+          "name": "Back-to-cone shield",
+          "setup": "A cone a yard behind you as the defender, a partner passing from 12 yards, a target cone 10 yards behind him. Receive, shield, lay it back.",
+          "reps": "4 sets of 8"
+        },
+        "success": "The ball sticks with him and comes back out cleanly to midfield."
+      },
+      {
+        "title": "Placement over power",
+        "why": "Shot 5 is the best strike on the team, so the only thing left is where you put it. Low and across the keeper beats hard and high every time.",
+        "cues": ["Pick your corner before you shoot", "Inside of the foot for placement", "Low and across, never over"],
+        "drill": {
+          "name": "Corner-target finishing",
+          "setup": "Two cones a yard inside each post with you 12 yards out. A partner rolls the ball in and you finish first time into a corner.",
+          "reps": "4 sets of 8 shots"
+        },
+        "success": "Shots stay low and find the corners instead of the middle."
+      }
+    ]
+  },
+  "Wit": {
+    "position": "LW",
+    "one_thing": "Curve your run so you stay onside, then finish at full speed, because that combination is almost impossible to defend.",
+    "focus": [
+      {
+        "title": "Curve the run in behind",
+        "why": "Speed 5 is the best number on this team and the only thing that wastes it is being offside. A curved run keeps your shoulder level with the last defender.",
+        "cues": ["Start from behind, not level", "Bend the run, do not run straight", "Go when the passer's head lifts"],
+        "drill": {
+          "name": "Bend and go",
+          "setup": "Two cones marking the offside line, a cone as the last defender, a partner 20 yards behind you. Curve from outside the line and receive beyond it.",
+          "reps": "4 sets of 8 runs"
+        },
+        "success": "He arrives behind the defense with the flag staying down."
+      },
+      {
+        "title": "Finish at full speed",
+        "why": "Shot 4 and control 5 mean you can score once you are through, but running at speed 5 makes your body want to blast it. Slow the hips, not the run.",
+        "cues": ["Take the touch into your stride", "Look at the keeper's feet", "Side-foot low and across"],
+        "drill": {
+          "name": "Run-on finish",
+          "setup": "Push a ball forward from 25 yards, sprint onto it, and finish from 12 yards into a goal or between two cones six yards apart.",
+          "reps": "4 sets of 6"
+        },
+        "success": "One-on-ones with the keeper end low and inside the post."
+      },
+      {
+        "title": "One move each way",
+        "why": "Skill 5 and control 5 mean the fullback has to respect you inside and outside. Two moves keep him honest so your speed can do the rest.",
+        "cues": ["Attack his front foot", "Push and go on the outside", "Chop inside when he opens up"],
+        "drill": {
+          "name": "Beat the cone both ways",
+          "setup": "A cone as the defender 15 yards away with gates four yards inside and outside. Attack it and exit alternating gates at full speed.",
+          "reps": "3 sets of 10 moves"
+        },
+        "success": "Defenders back away from him and he gets past on both sides."
+      }
+    ]
+  },
+  "Maceo Wright": {
+    "position": "RW/LW",
+    "one_thing": "Come on and attack the fullback right away, because one move, one run and one shot can change the game.",
+    "focus": [
+      {
+        "title": "One move each way",
+        "why": "Skill 4 and control 3 mean your dribbling works best when it is simple: a push outside and a cut inside. Speed 4 makes both dangerous once you are past.",
+        "cues": ["Take it at his front foot", "One move only, then go", "Accelerate for three strides"],
+        "drill": {
+          "name": "Two-gate beat",
+          "setup": "A cone as a defender 15 yards away with gates four yards inside and outside. Attack the cone, one move, out through a gate at speed.",
+          "reps": "3 sets of 10"
+        },
+        "success": "He beats his man with the first move instead of stalling on the ball."
+      },
+      {
+        "title": "Run in behind on time",
+        "why": "Speed 4 and endurance 4 make you a threat over the top, especially coming on against tired legs. Tackle 2 says your minutes are for attacking.",
+        "cues": ["Start deeper, then explode", "Go when the passer looks up", "Bend the run to stay onside"],
+        "drill": {
+          "name": "Timed break",
+          "setup": "Cones marking the offside line with a partner 20 yards behind holding the ball. Start behind the line, curve past it as he looks up, receive in stride.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He arrives behind the defense onside and already at pace."
+      },
+      {
+        "title": "Arrive at the far post",
+        "why": "Shot 4 says you can finish, and the far post is where wingers get free tap-ins. Your job is to be there before the cross is struck.",
+        "cues": ["Ball goes wide, sprint the back post", "Attack the ball, do not wait", "Side-foot it into the open net"],
+        "drill": {
+          "name": "Far-post arrivals",
+          "setup": "Two cones as a goal with a cone 20 yards wide as the crosser. Start at the near post, sprint to the far post, finish a rolled ball first time.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He is at the back post on time and finishes with one touch."
+      }
+    ]
+  },
+  "Jayden Cheung": {
+    "position": "ST",
+    "one_thing": "Make the run first and keep the finish simple, because you score by arriving before the defender does.",
+    "focus": [
+      {
+        "title": "Time your through-runs",
+        "why": "Speed 3 and size 2 mean you win by timing, not by out-muscling or out-sprinting anyone. Endurance 4 means you can make ten of these runs a half.",
+        "cues": ["Stay level, not ahead", "Go when the passer's head lifts", "Curve around the defender"],
+        "drill": {
+          "name": "Onside break",
+          "setup": "Two cones marking the offside line with a partner 20 yards behind holding the ball. Hold behind the line, curve past it as he looks up.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He gets behind the defense again and again without being flagged."
+      },
+      {
+        "title": "Placement over power",
+        "why": "Shot 4 is good, but size 2 means you rarely get a free swing, so a quick side-foot into the corner is your best finish.",
+        "cues": ["Choose your corner early", "Inside of the foot, ankle locked", "Low and across, never high"],
+        "drill": {
+          "name": "Corner finishes",
+          "setup": "Cones a yard inside each post with you 12 yards out. A partner rolls balls in from the side and you finish first time into a corner.",
+          "reps": "4 sets of 8 shots"
+        },
+        "success": "Chances end up in the corner instead of at the keeper's chest."
+      },
+      {
+        "title": "Strike it first time",
+        "why": "As a running striker you live on half chances, and control 3 means a second touch often loses them. Hit the first ball cleanly with your laces.",
+        "cues": ["Plant foot alongside the ball", "Ankle locked, toe pointed down", "Hit the target, not the roof"],
+        "drill": {
+          "name": "One-touch from the D",
+          "setup": "Stand 18 yards out while a partner rolls balls to you from the side. Strike each one first time at a goal or through a six-yard cone gate.",
+          "reps": "4 sets of 6"
+        },
+        "success": "First-time shots stay low and on target instead of ballooning over."
+      }
+    ]
+  },
+  "Emmett Dauer": {
+    "position": "FWD",
+    "one_thing": "Get your first touch out of trouble and the rest of your game gets easier right away.",
+    "focus": [
+      {
+        "title": "First touch out of pressure",
+        "why": "Control 3 and size 2 mean you cannot hold defenders off, so the ball has to move before they arrive. One good touch buys you the whole play.",
+        "cues": ["Look before the ball gets to you", "Touch away from the defender", "Second touch is your pass"],
+        "drill": {
+          "name": "Touch out of the box",
+          "setup": "A six-yard box of cones with one cone behind you as the defender. A partner passes in and you take one touch out of the box away from it.",
+          "reps": "4 sets of 8"
+        },
+        "success": "He receives facing space instead of getting closed down."
+      },
+      {
+        "title": "One move you own",
+        "why": "Skill 3 is enough for one move, and the inside-outside push is the easiest one that actually works. You do not need a second one this season.",
+        "cues": ["Push it inside, then outside", "Two quick steps afterward", "Head up before the move"],
+        "drill": {
+          "name": "One-move gate",
+          "setup": "A cone as the defender 10 yards away with a gate three yards to its side. Walk in, do the move, exit the gate and pass to a cone.",
+          "reps": "3 sets of 10"
+        },
+        "success": "He gets past the first defender once or twice every game."
+      },
+      {
+        "title": "Simple side-foot finish",
+        "why": "Shot 3 is plenty from 10 yards if you place it. Endurance 2 means your minutes are short, so make the one chance you get count.",
+        "cues": ["Inside of the foot, ankle locked", "Aim just inside the post", "Low, never over the bar"],
+        "drill": {
+          "name": "Ten-yard placement",
+          "setup": "Cones a yard inside each post, or a one-yard gate, with a ball 10 yards out. A partner rolls it in and you side-foot it into the target.",
+          "reps": "4 sets of 8"
+        },
+        "success": "Close-range shots go in the corner along the ground."
+      }
+    ]
+  },
+  "Ryan Jenkins": {
+    "position": "FWD/wide",
+    "one_thing": "One clean touch, one push past your man, one shot on target: build the whole season on those three wins.",
+    "focus": [
+      {
+        "title": "Cushion the first touch",
+        "why": "Control 1 is the number holding you back, and it is also the fastest one to improve with reps. Size 3 lets you shield the ball once your touch keeps it close.",
+        "cues": ["Watch the ball all the way in", "Relax your foot as it arrives", "Touch it a yard in front"],
+        "drill": {
+          "name": "Wall cushion",
+          "setup": "Stand six yards from a wall or a partner. Pass, then cushion the return with the inside of your foot so it stops within a yard of you.",
+          "reps": "4 sets of 12 touches"
+        },
+        "success": "The ball stays under his control instead of bouncing away."
+      },
+      {
+        "title": "Nudge it and run",
+        "why": "Skill 1 and speed 2 mean tricks are not the answer, but endurance 3 means you keep running when other players stop. Push the ball into space and chase it.",
+        "cues": ["Push it into the empty space", "Run at it, do not wait", "Keep going after the touch"],
+        "drill": {
+          "name": "Push and chase",
+          "setup": "Two cones 12 yards apart. Push the ball past the first cone, sprint after it, control it before the second cone, then turn and repeat.",
+          "reps": "4 sets of 6"
+        },
+        "success": "He wins loose balls and gains ground instead of stopping on contact."
+      },
+      {
+        "title": "Side-foot from six yards",
+        "why": "Shot 1 sounds discouraging, but close-range placement is technique and not power. Ten minutes of this each week and you will score this season.",
+        "cues": ["Inside of the foot, ankle locked", "Aim just inside the post", "Push it, do not blast it"],
+        "drill": {
+          "name": "Six-yard placement",
+          "setup": "A ball six yards from a goal or from two cones three yards apart. A partner rolls it across and you side-foot each one in.",
+          "reps": "4 sets of 8 shots"
+        },
+        "success": "He hits the target nearly every time from close range."
+      }
+    ]
+  }
+};
+var COACH_OPEN = {};
+var COACH_GROUPS = [["GOALKEEPERS","GK"],["DEFENDERS","Defenders"],["MIDFIELDERS","Midfielders"],["FORWARDS","Forwards"]];
+
+/* ---------- eight-session practice plan ---------- */
+var SESSIONS = [
+  { n:1, theme:"Triangles and building out", pics:["triangles","build-out"], tech:"Receiving on the half-turn, two-touch passing off both feet", game:"Rondo to two goals — one triangle before a goal counts" },
+  { n:2, theme:"Defending the wing", pics:["wing-defend"], tech:"Contain and jockey stations, front-foot tackle, recovery runs", game:"Wing-channel 6v6, goals from crosses only" },
+  { n:3, theme:"Attacking through the middle", pics:["middle-attack"], tech:"One-touch combinations, lay-offs, first touch into space", game:"Three-zone game, a goal from the pocket counts double" },
+  { n:4, theme:"Dropping back", pics:["drop-back"], tech:"Long driven passes, overlaps with the fullbacks", game:"Transition 6v6+GK, five seconds to win it back" },
+  { n:5, theme:"High press and finishing", pics:["high-press","gk-angles"], tech:"Finishing from cutbacks and near-post runs; keepers on angles", game:"6v4 press to score, attackers play out through a gate" },
+  { n:6, theme:"Defending the middle", pics:["middle-defend"], tech:"1v1 dribbling, shielding, turning away from pressure", game:"3v2+GK centre channel, eight-second clock" },
+  { n:7, theme:"Full counter attack", pics:["build-out","middle-attack"], tech:"Timing the run, weight of the through ball", game:"Full-field counter 7v7, ten-second rule" },
+  { n:8, theme:"Rehearsal", pics:["build-out","high-press","drop-back","wing-defend","middle-defend","middle-attack","triangles"], tech:"Position stations, coach's choice from the week's gaps", game:"11v11 scrimmage, one picture called every five minutes" }
+];
+
 var state = { player:"kiefer", tab:"roster" };
 
 /* ---------- live data (server-injected) ----------
@@ -1030,7 +2494,10 @@ function renderProfile(){
        '<p class="measure">' + esc(p.note) + '</p>' +
        compareHtml(p) + '</div>';
 
+  h += coachCardHtml(p);
+
   el("profile").innerHTML = h;
+  wireCoachCard(p);
 }
 
 /* ---------- pitches ---------- */
@@ -1096,6 +2563,445 @@ function renderMinis(){
     s += '</svg>';
     host.innerHTML = s;
   });
+}
+
+/* ---------- TacticPicture: one renderer for every animated pitch ---------- */
+function tpReduced(){
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch (e) { return false; }
+}
+function r1(n){ return Math.round(n * 10) / 10; }
+
+function tpView(pic){
+  var half = pic.view === "half";
+  return { w:330, h:half ? 268 : 460, pad:12, y0:half ? 75 : 0, y1:150, half:half };
+}
+function tpPoint(view, xy){
+  var x = view.pad + (xy[0] / 100) * (view.w - view.pad * 2);
+  var y = view.pad + ((xy[1] - view.y0) / (view.y1 - view.y0)) * (view.h - view.pad * 2);
+  return [r1(x), r1(y)];
+}
+
+/* Half pitch, our goal at the bottom, halfway line along the top edge. */
+function tpHalfPitchSvg(view){
+  var inset = view.pad, w = view.w, h = view.h;
+  var x = inset, y = inset, pw = w - inset * 2, ph = h - inset * 2, cx = w / 2;
+  var stroke = "rgba(232,237,245,0.20)";
+  var st = 'stroke="' + stroke + '" fill="none" stroke-width="1"';
+  var s = '<rect x="' + x + '" y="' + y + '" width="' + pw + '" height="' + ph + '" fill="#0E1A26"></rect>';
+  for (var b = 0; b < 4; b++) {
+    if (b % 2 === 0) {
+      s += '<rect x="' + x + '" y="' + r1(y + b * ph / 4) + '" width="' + pw + '" height="' + r1(ph / 4) + '" fill="rgba(63,169,107,0.055)"></rect>';
+    }
+  }
+  s += '<rect x="' + x + '" y="' + y + '" width="' + pw + '" height="' + ph + '" ' + st + '></rect>';
+  var cr = r1(pw * 0.135);
+  s += '<path d="M' + r1(cx - cr) + ',' + y + ' A' + cr + ',' + cr + ' 0 0 0 ' + r1(cx + cr) + ',' + y + '" ' + st + '></path>';
+  var pbW = pw * 0.56, pbH = ph * 0.307, gbW = pw * 0.28, gbH = ph * 0.12;
+  s += '<rect x="' + r1(cx - pbW / 2) + '" y="' + r1(y + ph - pbH) + '" width="' + r1(pbW) + '" height="' + r1(pbH) + '" ' + st + '></rect>';
+  s += '<rect x="' + r1(cx - gbW / 2) + '" y="' + r1(y + ph - gbH) + '" width="' + r1(gbW) + '" height="' + r1(gbH) + '" ' + st + '></rect>';
+  s += '<circle cx="' + cx + '" cy="' + r1(y + ph - ph * 0.24) + '" r="1.8" fill="' + stroke + '"></circle>';
+  s += '<line x1="' + r1(cx - gbW / 2) + '" y1="' + r1(y + ph) + '" x2="' + r1(cx + gbW / 2) + '" y2="' + r1(y + ph) + '" stroke="rgba(232,237,245,0.55)" stroke-width="3"></line>';
+  return s;
+}
+
+/* Frames inherit whatever they do not restate, so the data lists only changes. */
+function tpFrames(pic){
+  if (pic._frames) { return pic._frames; }
+  var out = [], lions = {}, opps = [], ball = [50,75];
+  pic.frames.forEach(function(f){
+    var next = {};
+    Object.keys(lions).forEach(function(k){ next[k] = lions[k]; });
+    Object.keys(f.lions || {}).forEach(function(k){ next[k] = f.lions[k]; });
+    lions = next;
+    opps = f.opps || opps;
+    ball = f.ball || ball;
+    out.push({
+      caption: f.caption || "",
+      lions: lions, opps: opps, ball: ball,
+      passes: f.passes || [], runs: f.runs || [], shapes: f.shapes || []
+    });
+  });
+  pic._frames = out;
+  return out;
+}
+function tpLionNames(pic){
+  if (!pic._names) { pic._names = Object.keys(tpFrames(pic)[0].lions); }
+  return pic._names;
+}
+function tpOppCount(pic){
+  if (pic._oppCount === undefined) {
+    var n = 0;
+    tpFrames(pic).forEach(function(f){ if (f.opps.length > n) { n = f.opps.length; } });
+    pic._oppCount = n;
+  }
+  return pic._oppCount;
+}
+function tpOpp(f, i){ return f.opps[i] || f.opps[f.opps.length - 1] || [50,75]; }
+
+function tpRef(view, f, ref){
+  if (ref === "ball") { return tpPoint(view, f.ball); }
+  if (typeof ref === "string") {
+    if (/^o[0-9]+$/.test(ref)) { return tpPoint(view, tpOpp(f, parseInt(ref.slice(1), 10))); }
+    return tpPoint(view, f.lions[ref] || [50,75]);
+  }
+  return tpPoint(view, ref);
+}
+function tpTrim(a, b, pad){
+  var dx = b[0] - a[0], dy = b[1] - a[1];
+  var d = Math.sqrt(dx * dx + dy * dy);
+  if (d < pad * 2 + 6) { return [a, b]; }
+  var ux = dx / d, uy = dy / d;
+  return [[r1(a[0] + ux * pad), r1(a[1] + uy * pad)], [r1(b[0] - ux * pad), r1(b[1] - uy * pad)]];
+}
+function tpLayerHtml(pic, f){
+  var view = tpView(pic);
+  var s = "";
+  (f.shapes || []).forEach(function(sh){
+    var pts = (sh && sh.pts) ? sh.pts : sh;
+    var kind = (sh && sh.kind) ? sh.kind : "triangle";
+    var coords = pts.map(function(ref){ var p = tpRef(view, f, ref); return p[0] + "," + p[1]; }).join(" ");
+    if (kind === "bad") { s += '<polyline class="tp-bad" points="' + coords + '"></polyline>'; }
+    else { s += '<polygon class="' + (kind === "cone" ? "tp-cone" : "tp-shape") + '" points="' + coords + '"></polygon>'; }
+  });
+  (f.passes || []).forEach(function(pair){
+    var seg = tpTrim(tpRef(view, f, pair[0]), tpRef(view, f, pair[1]), 9);
+    s += '<line class="tp-pass" x1="' + seg[0][0] + '" y1="' + seg[0][1] + '" x2="' + seg[1][0] + '" y2="' + seg[1][1] + '"></line>';
+  });
+  (f.runs || []).forEach(function(pair){
+    var seg = tpTrim(tpRef(view, f, pair[0]), tpRef(view, f, pair[1]), 9);
+    s += '<line class="tp-run" x1="' + seg[0][0] + '" y1="' + seg[0][1] + '" x2="' + seg[1][0] + '" y2="' + seg[1][1] +
+      '" marker-end="url(#tp-' + pic.id + '-arrow)"></line>';
+  });
+  return s;
+}
+
+function tpSvgHtml(pic){
+  var view = tpView(pic), frames = tpFrames(pic), f0 = frames[0];
+  var s = '<svg class="tp-svg" viewBox="0 0 ' + view.w + ' ' + view.h + '" role="img" aria-label="' +
+    esc(pic.title) + ". " + esc(pic.thesis) + ' Our goal at the bottom.">';
+  s += '<defs><marker id="tp-' + pic.id + '-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto">' +
+    '<path d="M0,0 L10,5 L0,10 z" fill="#E0A93A"></path></marker></defs>';
+  s += view.half ? tpHalfPitchSvg(view) : pitchLines(view.w, view.h, view.pad, "rgba(232,237,245,0.20)");
+  s += '<g id="tp-' + pic.id + '-layer">' + tpLayerHtml(pic, f0) + '</g>';
+  tpLionNames(pic).forEach(function(name){
+    var p = tpPoint(view, f0.lions[name]);
+    s += '<g class="tp-lion' + (TP_KEEPERS[name] ? " tp-keeper" : "") + '" id="tp-' + pic.id + '-lion-' + slugify(name) +
+      '" transform="translate(' + p[0] + ',' + p[1] + ')">' +
+      '<circle r="7"></circle>' +
+      '<text class="tp-name" x="0" y="17" text-anchor="middle">' + esc(name) + '</text></g>';
+  });
+  for (var i = 0; i < tpOppCount(pic); i++) {
+    var op = tpPoint(view, tpOpp(f0, i));
+    s += '<g class="tp-opp" id="tp-' + pic.id + '-opp-' + i + '" transform="translate(' + op[0] + ',' + op[1] + ')">' +
+      '<circle r="7"></circle></g>';
+  }
+  var b = tpPoint(view, f0.ball);
+  s += '<g class="tp-ball" id="tp-' + pic.id + '-ball" transform="translate(' + b[0] + ',' + b[1] + ')">' +
+    '<circle r="3.6"></circle></g>';
+  s += '</svg>';
+  return s;
+}
+
+function tpTargets(pic, f){
+  var view = tpView(pic), out = [];
+  tpLionNames(pic).forEach(function(name){
+    var p = tpPoint(view, f.lions[name]);
+    out.push({ key:"lion-" + slugify(name), x:p[0], y:p[1] });
+  });
+  for (var i = 0; i < tpOppCount(pic); i++) {
+    var op = tpPoint(view, tpOpp(f, i));
+    out.push({ key:"opp-" + i, x:op[0], y:op[1] });
+  }
+  var b = tpPoint(view, f.ball);
+  out.push({ key:"ball", x:b[0], y:b[1] });
+  return out;
+}
+function tpPlace(id, key, x, y){
+  var g = el("tp-" + id + "-" + key);
+  if (g && g.setAttribute) { g.setAttribute("transform", "translate(" + r1(x) + "," + r1(y) + ")"); }
+}
+function tpMove(id, targets, animate){
+  var st = TP_STATE[id];
+  st.anim += 1;
+  var token = st.anim;
+  var from = {};
+  targets.forEach(function(t){ from[t.key] = st.pos[t.key] || [t.x, t.y]; });
+  function apply(p){
+    targets.forEach(function(t){
+      var a = from[t.key];
+      var x = a[0] + (t.x - a[0]) * p;
+      var y = a[1] + (t.y - a[1]) * p;
+      st.pos[t.key] = (p >= 1) ? [t.x, t.y] : [x, y];
+      tpPlace(id, t.key, x, y);
+    });
+  }
+  var raf = null;
+  try { raf = (typeof window.requestAnimationFrame === "function") ? window.requestAnimationFrame : null; } catch (e) { raf = null; }
+  if (!animate || !raf) { apply(1); return; }
+  var t0 = null;
+  var step = function(ts){
+    if (st.anim !== token) { return; }
+    var now = (typeof ts === "number") ? ts : Date.now();
+    if (t0 === null) { t0 = now; }
+    var p = Math.min(1, (now - t0) / 700);
+    apply(1 - Math.pow(1 - p, 3));
+    if (p < 1) { raf(step); }
+  };
+  raf(step);
+}
+
+function tpSyncControls(id){
+  var st = TP_STATE[id], pic = TP_BY_ID[id], n = tpFrames(pic).length;
+  var play = el("tp-" + id + "-play");
+  if (play) {
+    play.setAttribute("aria-pressed", st.playing ? "true" : "false");
+    play.textContent = st.playing ? "Pause" : "Play";
+  }
+  for (var i = 0; i < n; i++) {
+    var dot = el("tp-" + id + "-dot-" + i);
+    if (dot) { dot.setAttribute("aria-current", i === st.frame ? "true" : "false"); }
+  }
+  var count = el("tp-" + id + "-count");
+  if (count) { count.textContent = (st.frame + 1) + " / " + n; }
+}
+
+function tpGo(id, idx, animate){
+  var pic = TP_BY_ID[id], st = TP_STATE[id];
+  if (!pic || !st) { return; }
+  var frames = tpFrames(pic), n = frames.length;
+  st.frame = ((idx % n) + n) % n;
+  var f = frames[st.frame];
+  tpMove(id, tpTargets(pic, f), !!animate && !tpReduced());
+  var layer = el("tp-" + id + "-layer");
+  if (layer) { layer.innerHTML = tpLayerHtml(pic, f); }
+  var cap = el("tp-" + id + "-cap");
+  if (cap) { cap.textContent = f.caption; }
+  tpSyncControls(id);
+}
+
+function tpStop(id){
+  var st = TP_STATE[id];
+  if (!st) { return; }
+  st.playing = false;
+  if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+  tpSyncControls(id);
+}
+function tpStopAll(except){
+  Object.keys(TP_STATE).forEach(function(k){ if (k !== except) { tpStop(k); } });
+}
+function tpTick(id){
+  var st = TP_STATE[id];
+  st.timer = setTimeout(function(){
+    st.timer = null;
+    if (!st.playing) { return; }
+    tpGo(id, st.frame + 1, true);
+    tpTick(id);
+  }, 2200);
+}
+function tpPlay(id){
+  if (tpReduced()) { return; }
+  tpStopAll(id);
+  var st = TP_STATE[id];
+  if (!st) { return; }
+  st.playing = true;
+  tpSyncControls(id);
+  tpTick(id);
+}
+function tpToggle(id){
+  var st = TP_STATE[id];
+  if (!st) { return; }
+  if (st.playing) { tpStop(id); } else { tpPlay(id); }
+}
+function tpStep(id, delta){
+  tpStop(id);
+  tpGo(id, TP_STATE[id].frame + delta, true);
+}
+
+function tpCardHtml(pic, label){
+  var frames = tpFrames(pic), n = frames.length, reduced = tpReduced();
+  var h = '<article class="tp-card" id="tp-' + pic.id + '-card">';
+  h += '<div><p class="eyebrow eyebrow-gold">' + esc(label) + '</p>';
+  h += '<h4 class="tp-title">' + esc(pic.title) + '</h4>';
+  h += '<p class="tp-thesis">' + esc(pic.thesis) + '</p></div>';
+  h += '<div class="tp-body">';
+  h += '<div class="tp-stagecol">';
+  h += '<div class="tp-stage" id="tp-' + pic.id + '-stage">' + tpSvgHtml(pic) + '</div>';
+  h += '<p class="tp-cap" id="tp-' + pic.id + '-cap" aria-live="polite">' + esc(frames[0].caption) + '</p>';
+  h += '<div class="tp-ctl">';
+  h += '<button type="button" class="btn-gold" id="tp-' + pic.id + '-play" aria-pressed="false"' + (reduced ? " disabled" : "") + '>Play</button>';
+  h += '<button type="button" class="btn-quiet" id="tp-' + pic.id + '-prev">Prev</button>';
+  h += '<button type="button" class="btn-quiet" id="tp-' + pic.id + '-next">Next</button>';
+  h += '<div class="tp-dots" id="tp-' + pic.id + '-dots" role="group" aria-label="Frames">';
+  for (var i = 0; i < n; i++) {
+    h += '<button type="button" class="tp-dot" id="tp-' + pic.id + '-dot-' + i + '" aria-current="' + (i === 0 ? "true" : "false") +
+      '" aria-label="Frame ' + (i + 1) + ' of ' + n + '"></button>';
+  }
+  h += '</div>';
+  h += '<span class="tp-count" id="tp-' + pic.id + '-count">1 / ' + n + '</span>';
+  if (reduced) { h += '<span class="tp-motion">Motion off &middot; step the frames</span>'; }
+  h += '</div></div>';
+  h += '<div class="tp-text">';
+  h += '<div><p class="tp-h">Coaching points</p><ul class="tp-points">' +
+    pic.points.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join("") + '</ul></div>';
+  h += '<div class="tp-drill"><p class="tp-h">Practice it</p><span class="tp-drill-name">' + esc(pic.drill.name) + '</span>' +
+    [].concat(pic.drill.setup).map(function(t){ return '<p>' + esc(t) + '</p>'; }).join("") + '</div>';
+  h += '</div></div></article>';
+  return h;
+}
+
+function tpInit(pic){
+  var view = tpView(pic), f0 = tpFrames(pic)[0];
+  var pos = {};
+  tpTargets(pic, f0).forEach(function(t){ pos[t.key] = [t.x, t.y]; });
+  TP_STATE[pic.id] = { frame:0, playing:false, timer:null, anim:0, pos:pos };
+}
+function tpWire(pic){
+  var id = pic.id, n = tpFrames(pic).length;
+  var play = el("tp-" + id + "-play");
+  if (play) { play.addEventListener("click", function(){ tpToggle(id); }); }
+  var prev = el("tp-" + id + "-prev");
+  if (prev) { prev.addEventListener("click", function(){ tpStep(id, -1); }); }
+  var next = el("tp-" + id + "-next");
+  if (next) { next.addEventListener("click", function(){ tpStep(id, 1); }); }
+  for (var i = 0; i < n; i++) {
+    (function(idx){
+      var dot = el("tp-" + id + "-dot-" + idx);
+      if (dot) { dot.addEventListener("click", function(){ tpStop(id); tpGo(id, idx, true); }); }
+    })(i);
+  }
+}
+
+/* ---------- coaching by player ---------- */
+function coachOpen(slug){ return COACH_OPEN[slug] === undefined ? 0 : COACH_OPEN[slug]; }
+function coachFocus(p){
+  var c = COACHING[p.name];
+  return (c && c.focus && c.focus.length) ? c.focus : null;
+}
+function coachCardHtml(p){
+  var c = COACHING[p.name], focus = coachFocus(p);
+  var h = '<div class="note-card" id="coach-card"><p class="eyebrow eyebrow-gold">Coaching focus</p>';
+  if (!focus) {
+    return h + '<p class="cf-empty">Coaching plan coming.</p></div>';
+  }
+  if (c.one_thing) {
+    h += '<p class="cf-one"><b>One thing</b><br>' + esc(c.one_thing) + '</p>';
+  }
+  h += '<div class="cf-items">';
+  focus.forEach(function(f, i){
+    var open = coachOpen(p.slug) === i;
+    var bid = "cf-" + p.slug + "-" + i;
+    h += '<div class="cf-item">';
+    h += '<button type="button" class="cf-head" id="' + bid + '" aria-expanded="' + (open ? "true" : "false") +
+      '" aria-controls="' + bid + '-body">' +
+      '<span class="cf-head-title">' + esc(f.title || ("Focus " + (i + 1))) + '</span>' +
+      '<span class="cf-head-why">' + esc(f.why || "") + '</span></button>';
+    h += '<div class="cf-body" id="' + bid + '-body"' + (open ? "" : " hidden") + '>';
+    if (f.cues && f.cues.length) {
+      h += '<ul class="cf-cues">' + f.cues.map(function(q){ return '<li>' + esc(q) + '</li>'; }).join("") + '</ul>';
+    }
+    if (f.drill) {
+      h += '<p class="cf-drill"><b>' + esc(f.drill.name || "Drill") + '</b> &mdash; ' + esc(f.drill.setup || "") +
+        (f.drill.reps ? ' <span class="mono">' + esc(f.drill.reps) + '</span>' : '') + '</p>';
+    }
+    if (f.success) { h += '<p class="cf-success">Success: ' + esc(f.success) + '</p>'; }
+    h += '</div></div>';
+  });
+  h += '</div></div>';
+  return h;
+}
+function coachToggle(slug, i){
+  var p = BY_SLUG[slug];
+  if (!p) { return; }
+  var focus = coachFocus(p);
+  if (!focus) { return; }
+  var next = coachOpen(slug) === i ? -1 : i;
+  COACH_OPEN[slug] = next;
+  for (var j = 0; j < focus.length; j++) {
+    var head = el("cf-" + slug + "-" + j), body = el("cf-" + slug + "-" + j + "-body");
+    if (head) { head.setAttribute("aria-expanded", j === next ? "true" : "false"); }
+    if (body) { body.hidden = j !== next; }
+  }
+}
+function wireCoachCard(p){
+  var focus = coachFocus(p);
+  if (!focus) { return; }
+  focus.forEach(function(_f, i){
+    var head = el("cf-" + p.slug + "-" + i);
+    if (head) { head.addEventListener("click", function(){ coachToggle(p.slug, i); }); }
+  });
+}
+
+function renderCoachGrid(){
+  var html = "";
+  COACH_GROUPS.forEach(function(g){
+    var group = PLAYERS.filter(function(p){ return p.line === g[0]; });
+    if (!group.length) { return; }
+    html += '<p class="coach-group">' + g[1] + ' &middot; ' + group.length + '</p><div class="coach-grid">';
+    group.forEach(function(p){
+      var focus = coachFocus(p);
+      html += '<button type="button" class="cbp" id="cbp-' + p.slug + '" data-slug="' + p.slug +
+        '" aria-label="Open the coaching plan for ' + esc(p.name) + '">';
+      html += '<span class="cbp-name">' + esc(p.name) + '</span>';
+      html += '<span class="cbp-pos">' + p.pos + (p.sec ? " / " + p.sec : "") + '</span>';
+      if (focus) {
+        html += '<ol class="cbp-list">' + focus.map(function(f){ return '<li>' + esc(f.title || "") + '</li>'; }).join("") + '</ol>';
+      } else {
+        html += '<span class="cbp-empty">Coaching plan coming.</span>';
+      }
+      html += '</button>';
+    });
+    html += '</div>';
+  });
+  el("coach-by-player").innerHTML = html;
+}
+function wireCoachGrid(){
+  PLAYERS.forEach(function(p){
+    var card = el("cbp-" + p.slug);
+    if (card) {
+      card.addEventListener("click", function(){ setTab("roster", false); selectPlayer(p.slug, true); });
+    }
+  });
+}
+
+/* ---------- practice plan ---------- */
+function renderSessions(){
+  var html = "";
+  SESSIONS.forEach(function(s){
+    var links = s.pics.map(function(pid){
+      var pic = TP_BY_ID[pid];
+      return pic ? '<a href="#tp-' + pic.id + '-card">' + esc(pic.title) + '</a>' : "";
+    }).join("<br>");
+    html += '<tr>';
+    html += '<td class="s">' + s.n + '</td>';
+    html += '<td class="th">' + esc(s.theme) + '</td>';
+    html += '<td>' + links + '</td>';
+    html += '<td>' + esc(s.tech) + '</td>';
+    html += '<td>' + esc(s.game) + '</td>';
+    html += '</tr>';
+  });
+  el("ses-rows").innerHTML = html;
+}
+
+/* ---------- training tab ---------- */
+function renderTraining(){
+  TP_ALL.forEach(function(pic){ tpInit(pic); });
+
+  el("training-pictures").innerHTML = TACTICS.map(function(pic, i){
+    return tpCardHtml(pic, "Picture " + (i + 1) + " of " + TACTICS.length);
+  }).join("");
+  el("training-gk-picture").innerHTML = tpCardHtml(GK_PICTURE, "Keepers &middot; picture");
+
+  el("gk-stations").innerHTML = GK_STATIONS.map(function(s){
+    return '<div class="gk-station"><span class="gk-station-name">' + esc(s.name) + '</span><p>' + esc(s.line) + '</p></div>';
+  }).join("");
+
+  renderCoachGrid();
+  renderSessions();
+
+  TP_ALL.forEach(function(pic){ tpWire(pic); });
+  wireCoachGrid();
 }
 
 /* ---------- schedule data ---------- */
@@ -1312,7 +3218,7 @@ function renderSchedule(){
 }
 
 /* ---------- tabs ---------- */
-var TABS = ["roster","xi","formations","schedule","cuts"];
+var TABS = ["roster","xi","training","formations","schedule","cuts"];
 function setTab(name, focus){
   state.tab = name;
   TABS.forEach(function(t){
@@ -1321,6 +3227,7 @@ function setTab(name, focus){
     btn.setAttribute("aria-selected", on ? "true" : "false");
     pan.hidden = !on;
   });
+  if (name !== "training") { tpStopAll(); }
   if (focus) { el("tab-" + name).focus(); }
   persist();
 }
@@ -1409,6 +3316,7 @@ function start(data){
   renderProfile();
   renderXiPitch();
   renderMinis();
+  renderTraining();
   renderSchedule();
   renderAlerts();
   setTab(state.tab, false);
