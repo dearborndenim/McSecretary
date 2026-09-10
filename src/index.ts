@@ -46,7 +46,12 @@ import {
   getRecentSmsMessages,
   setBriefingPreviewCacheProvider,
   setSpineHttpHandler,
+  setLionsHttpHandler,
 } from './api.js';
+import { createLionsRouter } from './lions/routes.js';
+import { runLionsCheck, formatScheduleForTelegram } from './lions/check.js';
+import { getActiveAlerts, getLatestSnapshot } from './lions/store.js';
+import { lionsConfig } from './lions/config.js';
 import { buildSpine } from './spine/wiring.js';
 import { createTelegramTransport } from './spine/telegram-card.js';
 import { parseAgentKeys } from './spine/agent-keys.js';
@@ -334,6 +339,25 @@ async function handleTrustMonthlySummary(): Promise<void> {
   if (!summary) return;
   try { await sendMessageToUser(config.spine.monthlySummaryUserId, summary, false); }
   catch (err) { console.error('Trust summary failed:', err); }
+}
+
+/**
+ * South Loop Lions schedule check (see src/lions/). Runs on its own cron
+ * entries; the check itself owns the Telegram alert, so this wrapper only logs.
+ */
+async function handleLionsCheck(): Promise<void> {
+  const result = await runLionsCheck({ db });
+  if (!result.ok) {
+    console.error(`Lions schedule check failed: ${result.error}`);
+    return;
+  }
+  if (result.baseline) {
+    console.log(`Lions schedule check: baseline stored (${result.games} games)`);
+    return;
+  }
+  console.log(
+    `Lions schedule check: sheetChanged=${result.sheetChanged} changes=${result.changes.length} notified=${result.notified}`,
+  );
 }
 
 async function handleInviteReminders(): Promise<void> {
@@ -686,6 +710,19 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
       `#${r.id} [${r.status}] ${r.project ? `(${r.project}) ` : ''}${r.description.slice(0, 60)}`
     ).join('\n');
     return `Your requests:\n${list}`;
+  }
+
+  // South Loop Lions schedule + any active schedule-change alerts.
+  if (lowerText === '/lions' && user.role === 'admin') {
+    const snapshot = getLatestSnapshot(db);
+    const reply = formatScheduleForTelegram(
+      snapshot?.games ?? [],
+      getActiveAlerts(db),
+      snapshot?.taken_at ?? null,
+      lionsConfig(process.env).baseUrl,
+    );
+    insertConversationMessage(db, user.id, today, 'secretary', reply);
+    return reply;
   }
 
   // Admin-only: /review, /approve, /reject
@@ -1563,6 +1600,14 @@ async function main() {
   });
   setSpineHttpHandler(spine.handleHttp);
 
+  // Public team page + JSON, admin check/clear. Mounted before the legacy routes.
+  setLionsHttpHandler(createLionsRouter({
+    db,
+    apiSecret: config.api.secret,
+    runCheck: () => runLionsCheck({ db }),
+    now: () => new Date().toISOString(),
+  }));
+
   bot.on('callback_query:data', async (ctx) => {
     const data = ctx.callbackQuery.data;
     if (!data.startsWith('prop:')) return;
@@ -1661,6 +1706,8 @@ async function main() {
     { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
     { name: 'Spine Sweep', schedule: '0 5 * * *', handler: handleSpineSweep, description: 'Daily 5 AM CT — expire stale proposals, report undrained events and failed runs' },
     { name: 'Trust Monthly Summary', schedule: '0 7 1 * *', handler: handleTrustMonthlySummary, description: '1st of month 7 AM CT — per-agent trust ledger summary for promotion decisions' },
+    { name: 'Lions Schedule Check', schedule: '0 6,12,18 * * *', handler: handleLionsCheck, description: '6 AM / noon / 6 PM CT — diff the CPS SCORE! sheet for South Loop Lions changes' },
+    { name: 'Lions Schedule Check (Fri PM)', schedule: '0 20 * * 5', handler: handleLionsCheck, description: 'Friday 8 PM CT — last look before Saturday games' },
   ]);
   startSchedulerFromDb(db);
 

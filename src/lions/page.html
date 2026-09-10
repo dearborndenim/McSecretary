@@ -1,0 +1,1483 @@
+<title>South Loop Lions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#0B1220;
+    --panel:#121C2E;
+    --panel-2:#182640;
+    --line:rgba(232,237,245,0.10);
+    --line-strong:rgba(232,237,245,0.22);
+    --ink:#E8EDF5;
+    --ink-muted:#8B96AA;
+    --gold:#E0A93A;
+    --gold-deep:#B8842A;
+    --pitch:#3FA96B;
+    --cut:#A85A4A;
+    --gk:#5B8DEF;
+    --alert:#C8352B;
+
+    --display:"Big Shoulders Display","Haettenschweiler","Arial Narrow",sans-serif;
+    --body:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+    --mono:"IBM Plex Mono","SFMono-Regular",Menlo,monospace;
+
+    --fs-hero:clamp(2.4rem,6.4vw,4rem);
+    --fs-h1:clamp(1.7rem,3.6vw,2.4rem);
+    --fs-h2:1.35rem;
+    --fs-h3:1.05rem;
+    --fs-body:0.95rem;
+    --fs-small:0.8rem;
+    --fs-eyebrow:0.7rem;
+
+    --sp-1:6px; --sp-2:10px; --sp-3:16px; --sp-4:24px; --sp-5:36px; --sp-6:56px;
+  }
+
+  *,*::before,*::after{ box-sizing:border-box; }
+
+  body{
+    background:var(--ground);
+    color:var(--ink);
+    font-family:var(--body);
+    font-size:var(--fs-body);
+    line-height:1.55;
+    margin:0;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+
+  h1,h2,h3,h4{ font-family:var(--display); font-weight:900; letter-spacing:-0.01em; line-height:0.95; margin:0; text-wrap:balance; }
+
+  a{ color:var(--gold); }
+
+  .mono{ font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:var(--fs-eyebrow);
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--ink-muted);
+    margin:0;
+  }
+  .eyebrow-gold{ color:var(--gold); }
+
+  .wrap{ width:100%; max-width:1180px; margin:0 auto; padding-inline:16px; }
+
+  :where(button,select,textarea,[tabindex]):focus-visible{
+    outline:2px solid var(--gold);
+    outline-offset:2px;
+  }
+  .plate:focus-visible{ outline:none; }
+  .plate:focus-visible rect{ stroke:var(--ink); stroke-width:2.5; }
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:30;
+    background:var(--ground);
+    border-bottom:1px solid var(--line);
+  }
+  .topbar-in{
+    display:flex; align-items:flex-end; justify-content:space-between;
+    gap:var(--sp-3); flex-wrap:wrap;
+    padding-block:12px;
+  }
+  .wordmark{
+    font-family:var(--display); font-weight:900;
+    font-size:clamp(1.35rem,3.4vw,1.85rem);
+    text-transform:uppercase; letter-spacing:0.01em; line-height:0.92;
+    color:var(--ink);
+    display:block;
+  }
+  .wordmark .lion{ color:var(--gold); }
+  .subline{
+    font-family:var(--mono); font-size:0.66rem; letter-spacing:0.08em;
+    text-transform:uppercase; color:var(--ink-muted); margin-top:4px;
+  }
+  .bar-right{ display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+
+  .tabs{ display:flex; gap:2px; overflow-x:auto; max-width:100%; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar{ display:none; }
+  .tab{
+    appearance:none; background:transparent; border:0; border-bottom:2px solid transparent;
+    color:var(--ink-muted); font-family:var(--display); font-weight:700; font-size:1rem;
+    text-transform:uppercase; letter-spacing:0.03em;
+    padding:8px 12px 7px; cursor:pointer; white-space:nowrap;
+  }
+  .tab:hover{ color:var(--ink); }
+  .tab[aria-selected="true"]{ color:var(--gold); border-bottom-color:var(--gold); }
+
+  .btn-gold{
+    appearance:none; cursor:pointer;
+    background:transparent; color:var(--gold);
+    border:1px solid var(--gold-deep); border-radius:2px;
+    font-family:var(--mono); font-size:0.72rem; letter-spacing:0.08em; text-transform:uppercase;
+    padding:8px 12px;
+  }
+  .btn-gold:hover{ background:rgba(224,169,58,0.10); border-color:var(--gold); }
+
+  .btn-quiet{
+    appearance:none; cursor:pointer;
+    background:var(--panel-2); color:var(--ink);
+    border:1px solid var(--line); border-radius:2px;
+    font-family:var(--mono); font-size:0.72rem; letter-spacing:0.08em; text-transform:uppercase;
+    padding:7px 11px;
+  }
+  .btn-quiet:hover{ border-color:var(--line-strong); }
+
+  /* ---------- csv panel ---------- */
+  #csv-panel{
+    border-bottom:1px solid var(--line);
+    background:var(--panel);
+  }
+  .csv-in{ padding-block:var(--sp-3); display:grid; gap:var(--sp-2); }
+  .csv-head{ display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+  #csv-text{
+    width:100%; min-height:150px; resize:vertical;
+    background:var(--ground); color:var(--ink);
+    border:1px solid var(--line); border-radius:2px;
+    font-family:var(--mono); font-size:0.72rem; line-height:1.5;
+    padding:10px; white-space:pre;
+  }
+  .csv-hint{ color:var(--ink-muted); font-size:var(--fs-small); margin:0; }
+  #csv-status{ font-family:var(--mono); font-size:0.7rem; letter-spacing:0.06em; color:var(--pitch); text-transform:uppercase; }
+
+  /* ---------- panels / sections ---------- */
+  .panel-pad{ padding-block:var(--sp-4) var(--sp-6); }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:3px; }
+
+  .section-head{ display:flex; align-items:baseline; gap:var(--sp-3); flex-wrap:wrap; margin-bottom:var(--sp-3); }
+  .section-head h2{ font-size:var(--fs-h1); text-transform:uppercase; }
+
+  /* ---------- roster layout ---------- */
+  .roster-grid{ display:grid; grid-template-columns:300px minmax(0,1fr); gap:var(--sp-4); align-items:start; }
+
+  .rail-head{ display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2); margin-bottom:var(--sp-2); }
+  #roster-sort{
+    appearance:none; background:var(--panel-2); color:var(--ink);
+    border:1px solid var(--line); border-radius:2px;
+    font-family:var(--mono); font-size:0.72rem; padding:5px 8px;
+  }
+  .rail{
+    background:var(--panel); border:1px solid var(--line); border-radius:3px;
+    position:sticky; top:88px; max-height:calc(100vh - 120px); overflow-y:auto;
+  }
+  .rail-group{
+    font-family:var(--mono); font-size:0.64rem; letter-spacing:0.1em; text-transform:uppercase;
+    color:var(--ink-muted); padding:12px 12px 6px; border-top:1px solid var(--line);
+  }
+  .rail-group:first-child{ border-top:0; }
+  .prow{
+    appearance:none; width:100%; text-align:left; cursor:pointer;
+    background:transparent; border:0; border-left:3px solid transparent;
+    display:grid; grid-template-columns:1fr auto; align-items:center; gap:2px 8px;
+    padding:8px 12px 8px 11px; color:var(--ink);
+  }
+  .prow:hover{ background:var(--panel-2); }
+  .prow[aria-current="true"]{ border-left-color:var(--gold); background:var(--panel-2); }
+  .prow-name{ font-family:var(--display); font-weight:700; font-size:1.05rem; line-height:1.05; letter-spacing:0.005em; display:flex; align-items:center; gap:6px; }
+  .prow-ovr{ font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:0.95rem; grid-row:span 2; align-self:center; color:var(--ink); }
+  .prow[aria-current="true"] .prow-ovr{ color:var(--gold); }
+  .prow-meta{ display:flex; align-items:center; gap:6px; }
+  .dot{ width:6px; height:6px; border-radius:50%; background:var(--gold); flex:0 0 auto; }
+  .ring{ width:6px; height:6px; border-radius:50%; border:1.5px solid var(--cut); background:transparent; flex:0 0 auto; }
+  .rail-legend{ display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:0.62rem; letter-spacing:0.04em; color:var(--ink-muted); margin:0 0 var(--sp-2); padding:0 2px; }
+  .rail-legend .ring{ margin-left:10px; }
+  .chip{
+    font-family:var(--mono); font-size:0.6rem; letter-spacing:0.06em;
+    border:1px solid var(--line); border-radius:2px; padding:1px 5px; color:var(--ink-muted);
+  }
+  .tag-pos{ font-family:var(--mono); font-size:0.66rem; letter-spacing:0.06em; color:var(--ink-muted); }
+  .tag-gk{ color:var(--gk); border-color:rgba(91,141,239,0.4); }
+
+  /* ---------- profile ---------- */
+  .profile{ display:grid; gap:var(--sp-4); }
+  .p-head{ display:grid; gap:var(--sp-2); }
+  .p-name{ font-size:var(--fs-hero); text-transform:uppercase; line-height:0.88; }
+  .badges{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .badge{
+    font-family:var(--mono); font-size:0.68rem; letter-spacing:0.07em; text-transform:uppercase;
+    border:1px solid var(--line); border-radius:2px; padding:3px 7px; color:var(--ink-muted);
+    background:var(--panel);
+  }
+  .badge-primary{ color:var(--ink); border-color:var(--line-strong); }
+  .badge-star{ color:var(--ground); background:var(--gold); border-color:var(--gold); font-weight:500; }
+  .badge-gk{ color:var(--gk); border-color:rgba(91,141,239,0.45); }
+  .badge-risk{ color:var(--cut); background:rgba(168,90,74,0.14); border-color:rgba(168,90,74,0.45); }
+
+  .two-up{ display:grid; grid-template-columns:minmax(0,460px) minmax(0,1fr); gap:var(--sp-4); align-items:start; }
+
+  .radar-box{ background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:var(--sp-3); }
+  .radar-svg{ display:block; width:100%; max-width:460px; height:auto; margin:0 auto; }
+  .legend{ display:flex; gap:var(--sp-3); flex-wrap:wrap; margin-top:var(--sp-2); }
+  .legend span{ font-family:var(--mono); font-size:0.66rem; letter-spacing:0.06em; color:var(--ink-muted); display:flex; align-items:center; gap:6px; }
+  .swatch{ width:14px; height:0; border-top:2px solid var(--gold); }
+  .swatch-ghost{ border-top:2px dashed var(--line-strong); }
+
+  .ax{ fill:var(--ink-muted); font-family:var(--mono); font-size:11px; letter-spacing:0.09em; }
+  .axv{ fill:var(--gold); font-family:var(--mono); font-size:11px; font-weight:500; }
+
+  .radar-shape{ animation:radar-in 520ms cubic-bezier(.2,.8,.25,1) both; transform-origin:260px 222px; }
+  @keyframes radar-in{ from{ transform:scale(.55); opacity:0; } to{ transform:scale(1); opacity:1; } }
+  @media (prefers-reduced-motion:reduce){ .radar-shape{ animation:none; } }
+
+  .stat-col{ display:grid; gap:var(--sp-3); }
+  .bars{ display:grid; gap:9px; }
+  .bar-row{ display:grid; grid-template-columns:88px 34px minmax(0,1fr); align-items:center; gap:10px; }
+  .bar-label{ font-family:var(--mono); font-size:0.66rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-muted); }
+  .bar-val{ font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:0.78rem; color:var(--ink); }
+  .bar-track{ position:relative; height:10px; background:var(--panel-2); border:1px solid var(--line); border-radius:1px; }
+  .bar-fill{ position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg,var(--gold-deep),var(--gold)); }
+  .bar-tick{ position:absolute; top:-3px; bottom:-3px; width:1px; background:var(--line-strong); }
+
+  .ovr-tile{
+    display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:var(--sp-3);
+    border:1px solid var(--gold-deep); border-radius:3px; background:var(--panel);
+    padding:var(--sp-3);
+  }
+  .ovr-num{ font-family:var(--display); font-weight:900; font-size:3.4rem; line-height:0.8; color:var(--gold); font-variant-numeric:tabular-nums; }
+  .ovr-side{ display:grid; gap:2px; }
+  .ovr-raw{ font-family:var(--mono); font-size:0.75rem; color:var(--ink-muted); font-variant-numeric:tabular-nums; }
+  .ovr-rank{ font-family:var(--mono); font-size:0.75rem; color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  .note-card{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--gold-deep); border-radius:3px; padding:var(--sp-3); display:grid; gap:var(--sp-2); }
+  .measure{ max-width:65ch; }
+  .note-card p{ margin:0; }
+  .cmp{ font-size:var(--fs-small); color:var(--ink-muted); margin:0; }
+  .cmp b{ font-family:var(--mono); font-weight:500; color:var(--ink); font-size:0.75rem; }
+  .cmp .up{ color:var(--pitch); }
+  .cmp .down{ color:var(--cut); }
+
+  /* ---------- starting XI ---------- */
+  .xi-grid{ display:grid; grid-template-columns:minmax(0,460px) minmax(0,1fr); gap:var(--sp-4); align-items:start; }
+  .pitch-wrap{ background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:var(--sp-2); }
+  .pitch-svg{ display:block; width:100%; max-width:460px; height:auto; margin:0 auto; }
+  .plate-name{ font-family:var(--display); font-weight:700; font-size:14px; fill:var(--ground); }
+  .plate-pos{ font-family:var(--mono); font-size:9px; letter-spacing:0.08em; fill:rgba(11,18,32,0.72); }
+  .plate{ cursor:pointer; }
+  .plate rect{ fill:var(--gold); stroke:var(--gold-deep); stroke-width:1; }
+  .plate:hover rect{ fill:#EFC162; }
+  .plate-gk rect{ fill:var(--gk); stroke:#3E6BC4; }
+  .plate-gk .plate-name{ fill:#0B1220; }
+  .plate-gk .plate-pos{ fill:rgba(11,18,32,0.7); }
+
+  .xi-side{ display:grid; gap:var(--sp-4); }
+  .bench-list{ display:grid; gap:var(--sp-2); margin:0; padding:0; list-style:none; }
+  .bench-list li{ display:grid; gap:2px; padding-bottom:var(--sp-2); border-bottom:1px solid var(--line); }
+  .bench-list li:last-child{ border-bottom:0; padding-bottom:0; }
+  .bench-role{ font-family:var(--mono); font-size:0.64rem; letter-spacing:0.09em; text-transform:uppercase; color:var(--gold); }
+  .rot{ counter-reset:rot; margin:0; padding:0; list-style:none; display:grid; gap:var(--sp-2); }
+  .rot li{ counter-increment:rot; display:grid; grid-template-columns:26px minmax(0,1fr); gap:8px; }
+  .rot li::before{ content:counter(rot); font-family:var(--mono); font-size:0.78rem; color:var(--gold); font-variant-numeric:tabular-nums; }
+
+  .sub-head{ font-size:var(--fs-h2); text-transform:uppercase; margin-bottom:var(--sp-2); }
+
+  /* ---------- formations ---------- */
+  .form-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--sp-4); }
+  .form-card{ background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:var(--sp-3); display:grid; gap:var(--sp-3); align-content:start; }
+  .form-card.rec{ border-color:var(--gold-deep); }
+  .form-name{ font-size:2rem; line-height:0.9; }
+  .mini-wrap{ background:var(--ground); border:1px solid var(--line); border-radius:2px; padding:6px; }
+  .mini-svg{ display:block; width:100%; max-width:300px; height:auto; margin:0 auto; }
+  .mini-name{ font-family:var(--mono); font-size:7.5px; fill:var(--ink); }
+  .best-when{ font-size:var(--fs-small); margin:0; }
+  .best-when b{ font-family:var(--mono); font-size:0.66rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-muted); font-weight:500; }
+  .pc{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--sp-3); }
+  .pc h4{ font-family:var(--mono); font-weight:500; font-size:0.66rem; letter-spacing:0.09em; text-transform:uppercase; margin-bottom:6px; }
+  .pc .pros h4{ color:var(--pitch); }
+  .pc .cons h4{ color:var(--cut); }
+  .pc ul{ margin:0; padding-left:14px; display:grid; gap:5px; font-size:var(--fs-small); color:var(--ink); }
+  .pc li::marker{ color:var(--ink-muted); }
+  .lineup{ font-family:var(--mono); font-size:0.72rem; line-height:1.6; color:var(--ink-muted); border-top:1px solid var(--line); padding-top:var(--sp-2); margin:0; }
+  .lineup b{ color:var(--ink); font-weight:500; }
+
+  /* ---------- cut list ---------- */
+  .table-scroll{ overflow-x:auto; }
+  table.cuts{ border-collapse:collapse; width:100%; max-width:520px; }
+  table.cuts th{
+    text-align:left; font-family:var(--mono); font-weight:500; font-size:0.66rem;
+    letter-spacing:0.09em; text-transform:uppercase; color:var(--ink-muted);
+    border-bottom:1px solid var(--line-strong); padding:8px 12px 8px 0;
+  }
+  table.cuts td{ border-bottom:1px solid var(--line); padding:9px 12px 9px 0; }
+  table.cuts td.n{ font-family:var(--display); font-weight:700; font-size:1.05rem; }
+  table.cuts td.g{ font-family:var(--mono); font-size:0.8rem; color:var(--ink-muted); width:80px; }
+  .dot-cut{ width:6px; height:6px; border-radius:50%; background:var(--cut); display:inline-block; margin-right:8px; vertical-align:middle; }
+
+  /* ---------- schedule ---------- */
+  .sched-empty{ font-size:var(--fs-small); color:var(--ink-muted); border:1px solid var(--line); border-radius:3px; padding:10px 12px; }
+  .sched-month{ font-family:var(--mono); font-size:0.7rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-muted); padding:14px 2px 8px; border-top:1px solid var(--line); }
+  .sched-month:first-child{ border-top:0; padding-top:0; }
+  .sched-list{ display:grid; }
+  .sched-head{
+    display:grid; grid-template-columns:52px 90px minmax(0,1fr) minmax(0,1.3fr); gap:var(--sp-3);
+    padding:0 10px 8px; font-family:var(--mono); font-weight:500; font-size:0.64rem;
+    letter-spacing:0.09em; text-transform:uppercase; color:var(--ink-muted);
+    border-bottom:1px solid var(--line-strong);
+  }
+  .sched-row{
+    display:grid; grid-template-columns:52px 90px minmax(0,1fr) minmax(0,1.3fr); gap:var(--sp-3);
+    padding:12px 10px; border-bottom:1px solid var(--line); align-items:start;
+    border-left:3px solid var(--gold); padding-left:8px; background:rgba(224,169,58,0.05);
+  }
+  .sched-row:last-child{ border-bottom:0; }
+  .sched-date{ display:grid; text-align:center; font-family:var(--mono); line-height:1.1; }
+  .sched-wd{ font-size:0.62rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink-muted); }
+  .sched-day{ font-size:1.2rem; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .sched-time{ font-family:var(--mono); font-size:0.75rem; color:var(--ink-muted); }
+  .sched-game{ display:grid; gap:3px; }
+  .sched-title{ font-family:var(--display); font-weight:900; font-size:1.05rem; }
+  .sched-where{ font-size:var(--fs-small); color:var(--ink-muted); }
+  .sched-note{ font-size:var(--fs-small); color:var(--ink-muted); margin-top:2px; }
+  .sched-conflict{ display:grid; gap:6px; font-size:var(--fs-small); }
+  .sched-conflict.is-none{ color:var(--ink-muted); }
+  .conflict-line{ display:flex; align-items:flex-start; gap:7px; }
+  .conflict-line.oh{ color:var(--ink-muted); }
+  .conflict-line.kicks{ color:var(--cut); }
+  .conflict-note{ display:block; color:var(--ink-muted); margin-top:2px; }
+  .dot-oh{ width:6px; height:6px; margin-top:5px; border-radius:1px; background:var(--ink-muted); display:inline-block; flex:0 0 auto; }
+  .pill{ font-family:var(--mono); font-size:0.6rem; letter-spacing:0.07em; text-transform:uppercase; border:1px solid var(--line); border-radius:2px; padding:2px 6px; flex:0 0 auto; }
+  .pill-check{ color:var(--ground); background:var(--gold); border-color:var(--gold); margin-left:8px; vertical-align:middle; }
+  .pill-changed{ color:#FFF; background:var(--alert); border-color:var(--alert); margin-left:8px; vertical-align:middle; }
+
+  /* ---------- schedule-change alert ---------- */
+  .alert-banner{
+    position:fixed; top:0; left:0; right:0; z-index:80;
+    background:var(--alert); color:#FFF;
+    border-bottom:1px solid rgba(0,0,0,0.35);
+    box-shadow:0 8px 24px rgba(0,0,0,0.35);
+    animation:alert-in 180ms ease-out;
+  }
+  @keyframes alert-in{ from{ transform:translateY(-100%); } to{ transform:translateY(0); } }
+  @media (prefers-reduced-motion:reduce){ .alert-banner{ animation:none; } }
+  .alert-in{
+    display:flex; align-items:flex-start; justify-content:space-between;
+    gap:var(--sp-3); padding-block:12px;
+  }
+  .alert-head{
+    font-family:var(--display); font-weight:900; letter-spacing:0.02em;
+    text-transform:uppercase; font-size:1.25rem; line-height:1.05; margin:0 0 4px;
+    color:#FFF;
+  }
+  .alert-list{ margin:0; padding:0; list-style:none; display:grid; gap:3px; }
+  .alert-list li{ font-size:var(--fs-small); line-height:1.45; color:#FFF; }
+  .alert-close{
+    flex:0 0 auto; cursor:pointer;
+    font-family:var(--mono); font-size:0.7rem; letter-spacing:0.08em; text-transform:uppercase;
+    color:#FFF; background:rgba(0,0,0,0.22);
+    border:1px solid rgba(255,255,255,0.5); border-radius:2px;
+    padding:6px 10px;
+  }
+  .alert-close:hover{ background:rgba(0,0,0,0.38); }
+  .alert-close:focus-visible{ outline:2px solid #FFF; outline-offset:2px; }
+
+  [hidden]{ display:none !important; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width:1000px){
+    .two-up{ grid-template-columns:minmax(0,1fr); }
+    .xi-grid{ grid-template-columns:minmax(0,1fr); }
+  }
+  @media (max-width:860px){
+    .roster-grid{ grid-template-columns:minmax(0,1fr); }
+    .rail{ position:static; max-height:340px; }
+    .form-grid{ grid-template-columns:minmax(0,1fr); }
+    .sched-head, .sched-row{ grid-template-columns:52px 84px minmax(0,1fr); }
+    .sched-conflict{ grid-column:1 / -1; padding-left:calc(52px + 84px + var(--sp-3) * 2); }
+  }
+  @media (max-width:520px){
+    .topbar-in{ align-items:flex-start; }
+    .bar-right{ width:100%; justify-content:space-between; }
+    .bar-row{ grid-template-columns:76px 30px minmax(0,1fr); gap:8px; }
+    .ovr-num{ font-size:2.8rem; }
+    .pc{ grid-template-columns:minmax(0,1fr); }
+    .sched-head{ display:none; }
+    .sched-row{ grid-template-columns:minmax(0,1fr); gap:6px; padding-left:9px; }
+    .sched-date{ display:flex; align-items:baseline; gap:6px; text-align:left; }
+    .sched-conflict{ padding-left:0; }
+  }
+</style>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <div>
+      <span class="wordmark">South Loop <span class="lion">Lions</span></span>
+      <div class="subline">7th&ndash;8th grade &middot; Fall 2026</div>
+    </div>
+    <div class="bar-right">
+      <nav class="tabs" role="tablist" aria-label="Team sections">
+        <button class="tab" id="tab-roster" role="tab" aria-selected="true" aria-controls="panel-roster" type="button">Roster</button>
+        <button class="tab" id="tab-xi" role="tab" aria-selected="false" aria-controls="panel-xi" type="button">Starting XI</button>
+        <button class="tab" id="tab-formations" role="tab" aria-selected="false" aria-controls="panel-formations" type="button">Formations</button>
+        <button class="tab" id="tab-schedule" role="tab" aria-selected="false" aria-controls="panel-schedule" type="button">Schedule</button>
+        <button class="tab" id="tab-cuts" role="tab" aria-selected="false" aria-controls="panel-cuts" type="button">Cut List</button>
+      </nav>
+      <button class="btn-gold" id="csv-download" type="button">Download CSV</button>
+    </div>
+  </div>
+</header>
+
+<div class="alert-banner" id="alert-banner" role="alert" aria-live="assertive" hidden>
+  <div class="wrap alert-in">
+    <div>
+      <h2 class="alert-head">SCHEDULE CHANGE</h2>
+      <ul class="alert-list" id="alert-list"></ul>
+    </div>
+    <button class="alert-close" id="alert-close" type="button"><span aria-hidden="true">&times;</span> Close</button>
+  </div>
+</div>
+
+<section id="csv-panel" hidden>
+  <div class="wrap csv-in">
+    <div class="csv-head">
+      <p class="eyebrow eyebrow-gold">Active roster &middot; 23 players</p>
+      <button class="btn-quiet" id="csv-copy" type="button">Copy CSV</button>
+      <span id="csv-status" aria-live="polite"></span>
+      <button class="btn-quiet" id="csv-close" type="button">Hide</button>
+    </div>
+    <textarea id="csv-text" readonly spellcheck="false" aria-label="Active roster CSV"></textarea>
+    <p class="csv-hint">If the download didn&rsquo;t start, copy the text and paste it into a .csv file.</p>
+  </div>
+</section>
+
+<main>
+  <!-- ================= ROSTER ================= -->
+  <div class="wrap panel-pad" id="panel-roster" role="tabpanel" aria-labelledby="tab-roster">
+    <div class="roster-grid">
+      <div>
+        <div class="rail-head">
+          <p class="eyebrow">Roster &middot; 23</p>
+          <label class="eyebrow" for="roster-sort" style="position:absolute;left:-9999px;">Sort roster</label>
+          <select id="roster-sort">
+            <option value="line" selected>By line</option>
+            <option value="overall">By overall</option>
+            <option value="name">By name</option>
+          </select>
+        </div>
+        <p class="rail-legend"><span class="dot" aria-hidden="true"></span>Starter<span class="ring" aria-hidden="true"></span>Kicks club (availability risk)</p>
+        <div class="rail" id="rail"></div>
+      </div>
+      <div class="profile" id="profile"></div>
+    </div>
+  </div>
+
+  <!-- ================= STARTING XI ================= -->
+  <div class="wrap panel-pad" id="panel-xi" role="tabpanel" aria-labelledby="tab-xi" hidden>
+    <div class="section-head">
+      <h2>Starting XI</h2>
+      <p class="eyebrow eyebrow-gold">4-2-3-1 &middot; click a name to open the profile</p>
+    </div>
+    <div class="xi-grid">
+      <div class="pitch-wrap" id="xi-pitch"></div>
+      <div class="xi-side">
+        <div>
+          <h3 class="sub-head">Why this shape</h3>
+          <p class="measure">The roster&rsquo;s strength is five elite technicians in the middle (Kiefer, Mat, Gabe, Wit, Adrian) and its weakness is center-back pace (Adham 2, Dickey covers). A double pivot of Adrian and Kiefer sits in front of the back four, so the slowest part of the team is never exposed on counters. Mat plays free as the 10, Wit gets isolated one-on-one on the left with George overlapping, and Caleb is a fixed target who does not have to chase. Substitutions slot in without changing the shape.</p>
+        </div>
+        <div class="card" style="padding:16px;">
+          <h3 class="sub-head">Bench by role</h3>
+          <ul class="bench-list">
+            <li>
+              <span class="bench-role">First subs</span>
+              <span>Maceo Wright (either wing), Jayden Cheung (striker when Caleb rests), William Strimple (midfield or fullback), Anthony Berni (center back).</span>
+            </li>
+            <li>
+              <span class="bench-role">Center-back rotation</span>
+              <span>Micah Lumpkins, Drayman Mcgee, Bennie Sims, Oskar Riendeau.</span>
+            </li>
+            <li>
+              <span class="bench-role">Wide stints</span>
+              <span>Courtney Ayeo, Emmett Dauer, Ryan Jenkins.</span>
+            </li>
+            <li>
+              <span class="bench-role">Keeper</span>
+              <span>Nicholas Farrcor.</span>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="sub-head">Rotation plan</h3>
+          <ol class="rot measure">
+            <li><span>Caleb comes off at 20&ndash;25 minutes for Jayden; Wit stays wide unless Jayden tires, then Wit moves central and Maceo takes the left.</span></li>
+            <li><span>Maceo rotates with Gabe and Wit in 12&ndash;15 minute stints; Gabe drops into center midfield whenever Kiefer or Mat rests.</span></li>
+            <li><span>William is the first change for Adrian, Kiefer, George or Kayden Martin.</span></li>
+            <li><span>Berni first for either center back; Micah when the opponent has a fast forward; Drayman, Bennie and Oskar when sitting deep to protect a lead.</span></li>
+            <li><span>Courtney, Emmett and Ryan get 10&ndash;12 minute stints on the wings, never both wings at once.</span></li>
+            <li><span>Spread minutes: middle-school leagues usually allow unlimited re-entry, so no starter needs to play 60 straight minutes.</span></li>
+          </ol>
+        </div>
+        <div class="card" style="padding:16px;">
+          <p class="eyebrow eyebrow-gold">Four lineups &middot; pick by Thursday</p>
+          <p class="measure" style="margin-top:8px;">Attendance decides the shape. Four of the eleven starters play Kicks club (Adrian, Gabe, Caleb, Wit) and two more probably do (Antonio, Kiefer); both keepers are 8th graders. Confirm who is coming by Thursday and pick the matching lineup.</p>
+
+          <div style="margin-top:20px;">
+            <h4 class="bench-role" style="font-size:0.72rem;">A &mdash; Full attendance &middot; 4-2-3-1</h4>
+            <div class="mini-wrap"><div data-mini="f1"></div></div>
+            <p class="lineup"><b>Lineup</b><br>Antonio; George, Adham, Dickey, K. Martin; Adrian, Kiefer; Wit, Mat, Gabe; Caleb.</p>
+            <p class="measure" style="margin-top:8px;">The default. Bench in order of first use: Maceo, Jayden, William, Berni, then Micah, Drayman, Bennie, Oskar, Courtney, Emmett, Ryan, Nicholas.</p>
+          </div>
+
+          <div style="margin-top:20px;">
+            <h4 class="bench-role" style="font-size:0.72rem;">B &mdash; No Kicks players &middot; 4-4-2 flat</h4>
+            <div class="mini-wrap"><div data-mini="pc"></div></div>
+            <p class="lineup"><b>Lineup</b><br>Nicholas; George, Adham, Dickey, K. Martin; Maceo, Mat, William, Courtney; Jayden, Emmett.</p>
+            <p class="measure" style="margin-top:8px;">Mat drops in as the organizer, Adham plays out, Dickey and Micah handle pace. Two banks of four; win it on set pieces with the big bodies. Bench: Berni, Micah, Drayman, Bennie, Oskar, Ryan. If Antonio and Kiefer do show, they replace Nicholas and William and Kiefer runs the midfield.</p>
+          </div>
+
+          <div style="margin-top:20px;">
+            <h4 class="bench-role" style="font-size:0.72rem;">C &mdash; No 7th graders &middot; 3-5-2</h4>
+            <div class="mini-wrap"><div data-mini="lc"></div></div>
+            <p class="lineup"><b>Lineup</b><br>Antonio; Bennie, Adham, Dickey; Micah (LWB), K. Martin (RWB); William, Kiefer, Mat (tip); Drayman, Nicholas. Sub: Ryan.</p>
+            <p class="measure" style="margin-top:8px;">Big and slow with two technicians, so the shape fits the bodies: three center backs stay compact, the two athletes run the flanks, Kiefer and Mat run the middle, and the ball goes direct into Drayman with everyone on second balls. Nicholas starts on the field over Ryan because he rates higher everywhere but size. If Antonio or Kiefer has a Kicks conflict the same day, this is ten players and needs a 7th grader.</p>
+          </div>
+
+          <div style="margin-top:20px;">
+            <h4 class="bench-role" style="font-size:0.72rem;">D &mdash; No 8th graders &middot; 4-2-3-1</h4>
+            <div class="mini-wrap"><div data-mini="ld"></div></div>
+            <p class="lineup"><b>Lineup</b><br>Oskar (GK); George, Berni, Adrian, Jayden; Gabe, Courtney; Wit, Emmett, Maceo; Caleb. No subs.</p>
+            <p class="measure" style="margin-top:8px;">Both keepers are 8th graders, so Oskar goes in goal: biggest body on the team and his endurance stops mattering. Give him keeper reps at practice now. Adrian moves to center back as the best remaining defender, Emmett gets the one role where tackle 1 does not matter, and Gabe does the defending in the pivot. With no subs, swap Caleb and Wit at about 25 minutes so Caleb stops chasing center backs. This lineup needs four Kicks players, so on a Kicks weekend it is seven kids and no game.</p>
+          </div>
+
+          <p class="measure" style="margin-top:20px;color:var(--ink-muted);">Thin spots the four lineups expose: no keeper outside 8th grade, and center-back pace everywhere. One more keeper option and one more 7th-grade defender would cover both.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= FORMATIONS ================= -->
+  <div class="wrap panel-pad" id="panel-formations" role="tabpanel" aria-labelledby="tab-formations" hidden>
+    <div class="section-head">
+      <h2>Formations</h2>
+      <p class="eyebrow">Five shapes this roster can play</p>
+    </div>
+    <div style="margin-bottom:var(--sp-4);">
+      <p class="eyebrow eyebrow-gold">Availability</p>
+      <p class="measure" style="margin-top:6px;">The 4-4-2 diamond and 3-5-2 lean hardest on Kicks club players (Adrian, Gabe, Wit, Caleb). The 4-2-3-1 and flat 4-4-2 survive absences best because every slot has a like-for-like substitute.</p>
+    </div>
+    <div class="form-grid">
+
+      <article class="form-card rec">
+        <div>
+          <p class="eyebrow eyebrow-gold">Recommended</p>
+          <h3 class="form-name">4-2-3-1</h3>
+        </div>
+        <div class="mini-wrap"><div data-mini="f1"></div></div>
+        <p class="best-when"><b>Best when</b><br>The default for any opponent.</p>
+        <div class="pc">
+          <div class="pros">
+            <h4>Pros</h4>
+            <ul>
+              <li>Double pivot shields the slow center backs on counters.</li>
+              <li>Mat gets a free role behind the striker.</li>
+              <li>Wit is isolated one-on-one wide with an overlapping fullback.</li>
+              <li>Caleb can be a fixed reference point and does not chase.</li>
+              <li>Every substitution has a like-for-like slot.</li>
+            </ul>
+          </div>
+          <div class="cons">
+            <h4>Cons</h4>
+            <ul>
+              <li>A lone striker with endurance 2 needs a 20&ndash;25 minute rotation.</li>
+              <li>Wingers must track back, which Wit and Gabe (endurance 5) can do but Maceo (tackle 2) does less well.</li>
+              <li>When the wingers cut inside, the only width is George and Martin, neither a natural crosser.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="lineup"><b>Lineup</b><br>Antonio; George, Adham, Dickey, Martin; Adrian, Kiefer; Wit, Mat, Gabe; Caleb.</p>
+      </article>
+
+      <article class="form-card">
+        <div>
+          <p class="eyebrow">Alternate</p>
+          <h3 class="form-name">4-4-2 Diamond</h3>
+        </div>
+        <div class="mini-wrap"><div data-mini="f2"></div></div>
+        <p class="best-when"><b>Best when</b><br>Chasing a game, or against a team that packs its own midfield.</p>
+        <div class="pc">
+          <div class="pros">
+            <h4>Pros</h4>
+            <ul>
+              <li>Wit and Caleb as a pair: Caleb pins the center backs, Wit runs in behind them.</li>
+              <li>All four elite midfielders on the field centrally; at this age, owning the middle usually decides the game.</li>
+              <li>Natural passing triangles.</li>
+            </ul>
+          </div>
+          <div class="cons">
+            <h4>Cons</h4>
+            <ul>
+              <li>No natural width; George and Martin must supply all of it.</li>
+              <li>A team with fast wingers drags Adham wide, where he is weakest.</li>
+              <li>Kiefer and Gabe shuttle constantly.</li>
+              <li>Three of its four elite midfielders and both strikers play Kicks club.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="lineup"><b>Lineup</b><br>Antonio; George, Adham, Dickey, Martin; Adrian (base), Kiefer (left), Gabe (right), Mat (tip); Wit, Caleb.</p>
+      </article>
+
+      <article class="form-card">
+        <div>
+          <p class="eyebrow">Alternate</p>
+          <h3 class="form-name">4-3-3</h3>
+        </div>
+        <div class="mini-wrap"><div data-mini="f3"></div></div>
+        <p class="best-when"><b>Best when</b><br>Pressing a weaker team high up the field.</p>
+        <div class="pc">
+          <div class="pros">
+            <h4>Pros</h4>
+            <ul>
+              <li>Natural width and a three-man press.</li>
+              <li>Maceo slots in directly on the right.</li>
+              <li>Fullbacks are freed to stay home.</li>
+            </ul>
+          </div>
+          <div class="cons">
+            <h4>Cons</h4>
+            <ul>
+              <li>A single pivot leaves Adrian alone in front of slow center backs on the counter.</li>
+              <li>Kiefer and Mat must defend as 8s.</li>
+              <li>A high press needs endurance from the striker, and Caleb has 2.</li>
+              <li>Similar to the 4-2-3-1 with more risk and little extra reward.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="lineup"><b>Lineup</b><br>Antonio; George, Adham, Dickey, Martin; Adrian; Kiefer, Mat; Wit, Caleb, Gabe (or Maceo).</p>
+      </article>
+
+      <article class="form-card">
+        <div>
+          <p class="eyebrow">Alternate</p>
+          <h3 class="form-name">3-5-2</h3>
+        </div>
+        <div class="mini-wrap"><div data-mini="f4"></div></div>
+        <p class="best-when"><b>Best when</b><br>Protecting a lead against a big target striker, or a tournament day when center-back legs are the depth you have.</p>
+        <div class="pc">
+          <div class="pros">
+            <h4>Pros</h4>
+            <ul>
+              <li>Uses the roster&rsquo;s surplus of big center backs (seven of them) and keeps them fresh.</li>
+              <li>George and Martin have the endurance (5) to own a flank.</li>
+              <li>Two strikers.</li>
+            </ul>
+          </div>
+          <div class="cons">
+            <h4>Cons</h4>
+            <ul>
+              <li>Three center backs with speed 3, 2 and 4; one fast winger isolating Adham or Berni is a problem.</li>
+              <li>A beaten wingback has no cover behind him.</li>
+              <li>The most complex shape for 12&ndash;13 year olds; the back three must slide as a unit.</li>
+              <li>Both strikers and the base of midfield play Kicks club.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="lineup"><b>Lineup</b><br>Antonio; Berni, Adham, Dickey; George (LWB), Martin (RWB); Adrian, Kiefer, Mat; Wit, Caleb.</p>
+      </article>
+
+      <article class="form-card">
+        <div>
+          <p class="eyebrow">Alternate</p>
+          <h3 class="form-name">4-4-2 Flat</h3>
+        </div>
+        <div class="mini-wrap"><div data-mini="f5"></div></div>
+        <p class="best-when"><b>Best when</b><br>New players are in the lineup, a tough away game, or teaching shape early in the season.</p>
+        <div class="pc">
+          <div class="pros">
+            <h4>Pros</h4>
+            <ul>
+              <li>Every player has one zone to learn.</li>
+              <li>Two banks of four are the hardest thing to break down at this level.</li>
+              <li>Mat drops off Caleb for the second ball.</li>
+            </ul>
+          </div>
+          <div class="cons">
+            <h4>Cons</h4>
+            <ul>
+              <li>Mat is under-used as a second striker.</li>
+              <li>Wide midfielders do two jobs.</li>
+              <li>Center midfield is 2 v 3 against any diamond or 4-3-3 team, so Kiefer and Adrian get outnumbered.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="lineup"><b>Lineup</b><br>Antonio; George, Adham, Dickey, Martin; Wit (LM), Adrian, Kiefer, Gabe (RM); Mat (withdrawn), Caleb.</p>
+      </article>
+
+    </div>
+  </div>
+
+  <!-- ================= SCHEDULE ================= -->
+  <div class="wrap panel-pad" id="panel-schedule" role="tabpanel" aria-labelledby="tab-schedule" hidden>
+    <div class="section-head">
+      <h2>Schedule</h2>
+      <p class="eyebrow eyebrow-gold">South Loop Lions &middot; Fall 2026 &middot; all times CT</p>
+    </div>
+
+    <div id="sched-calendar"></div>
+  </div>
+
+  <!-- ================= CUT LIST ================= -->
+  <div class="wrap panel-pad" id="panel-cuts" role="tabpanel" aria-labelledby="tab-cuts" hidden>
+    <div class="section-head">
+      <h2>Cut List</h2>
+      <p class="eyebrow">9 players</p>
+    </div>
+    <p class="measure" style="color:var(--ink-muted);margin-top:0;">Tried out, not on the 2026 roster. No ratings were recorded.</p>
+    <div class="table-scroll" style="margin-top:24px;">
+      <table class="cuts">
+        <thead>
+          <tr><th scope="col">Name</th><th scope="col">Grade</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="n"><span class="dot-cut"></span>Daxton</td><td class="g">7th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Adam Khalil</td><td class="g">8th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Luca Laughlin</td><td class="g">7th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Johan Lopez</td><td class="g">8th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Nathan Johnson</td><td class="g">8th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Odai Almohammadi</td><td class="g">8th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Julian Lovely</td><td class="g">8th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Ray Oliver</td><td class="g">8th</td></tr>
+          <tr><td class="n"><span class="dot-cut"></span>Sarvesh</td><td class="g">7th</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script id="lions-data" type="application/json">{"games":[],"alerts":[],"checkedAt":null,"live":false}</script>
+
+<script>
+/* @csvregion */
+var RAW = [
+  ["Antonio De Marco","Antonio","8th","Yes?",[4,2,3,3,3,3,3,3],"GK","CB","GOALKEEPERS",1,"Coach-designated starting keeper. Size 4 gives him presence in the box and field ratings are solid enough for center back in a pinch. Probably on the Kicks club roster, so confirm his availability each week and keep Nicholas warm."],
+  ["Nicholas Farrcor","Nicholas","8th","",[2,2,2,2,2,2,3,3],"GK","CB","GOALKEEPERS",0,"Coach-designated backup keeper. Tackle 3 and endurance 3 are his best field marks, so when he is not in goal, use him as a deep-block center back in short stints."],
+
+  ["Adham Ali","Adham","8th","",[5,2,4,3,4,4,3,3],"CB","CDM","DEFENDERS",1,"Ball-playing center back. Size 5 with skill, pass and control at 4 makes him the one who organizes the line and plays out from the back. Speed 2 means he needs a fast partner beside him. Backup number 6."],
+  ["Kayden Dickey","Dickey","8th","",[5,4,1,1,1,1,4,4],"CB","RB","DEFENDERS",1,"Stopper. Size 5, speed 4 and tackle 4 are exactly what Adham lacks; the two cover each other. Skill 1 across the board, so his rule is simple: win it, clear it, never dribble. Adham plays the ball."],
+  ["George McMillan","George","7th","No",[2,4,2,2,3,3,5,4],"LB","RB","DEFENDERS",1,"Fullback profile: speed 4, endurance 5, and tackle 4 puts him among the top five tacklers on the team. Size 2 says keep him wide, not central. Overlaps behind Wit all game."],
+  ["Kayden Martin","K. Martin","8th","",[4,4,3,2,3,3,5,3],"RB","CM","DEFENDERS",1,"Athletic fullback. Size 4, speed 4, endurance 5. Can run the right flank for a full game and cover center midfield when needed."],
+  ["Anthony Berni","Berni","7th","",[4,3,2,2,3,2,3,4],"CB","RB","DEFENDERS",0,"Third center back. Size 4 and tackle 4 make him the first defender off the bench, and a starter in any back-three shape."],
+  ["Micah Lumpkins","Micah","8th","",[5,4,1,1,1,1,5,2],"CB","RB","DEFENDERS",0,"Pure athlete: size 5, speed 4, endurance 5. Tackle 2 is the gap, so coach him to stay on his feet and delay rather than dive in. Recovery pace makes him useful as a covering center back. Set-piece target in the other box."],
+  ["Drayman Mcgee","Drayman","8th","",[5,2,2,2,2,2,3,3],"CB","ST","DEFENDERS",0,"Deep-block center back. Size 5 and tackle 3, speed 2. Zone defender when the team sits in. An aerial threat on corners."],
+  ["Bennie Sims","Bennie","8th","",[5,2,2,2,2,2,3,3],"CB","ST","DEFENDERS",0,"Same profile as Drayman: size 5, tackle 3, speed 2. Rotate the two of them together in deep-block stretches. Aerial option on set pieces."],
+  ["Oskar Riendeau","Oskar","7th","No",[5,2,2,2,2,2,2,3],"CB","","DEFENDERS",0,"Size 5 and tackle 3 but endurance 2, so short stints at center back. Best used when protecting a lead late."],
+
+  ["Kiefer","Kiefer","8th","Yes?",[4,4,5,4,4,5,5,4],"CM","CAM","MIDFIELDERS",1,"Best player on the roster and the engine. Skill 5, control 5, endurance 5 and tackle 4 make him a two-way midfielder. Plays beside Adrian in the pivot with freedom to drive forward. Possibly on Kicks club; confirm weekly. If he is out, Mat drops into center midfield and William starts beside him."],
+  ["Mat Alija","Mat","8th","",[3,4,5,4,4,5,5,3],"CAM","CM","MIDFIELDERS",1,"The playmaker. Skill 5, control 5, pass 4. Plays between the lines behind the striker and delivers the final ball. Keep him high; do not waste him as a striker."],
+  ["Gabe Campeau","Gabe","7th","Yes",[3,4,5,4,4,5,5,3],"RW","CM","MIDFIELDERS",1,"Third elite technician. Skill 5, control 5, endurance 5. Starts as an inverted right winger to get him on the field with Kiefer and Mat; slides into center midfield when either rests. Plays Kicks club; when he is out, Maceo takes the right wing."],
+  ["Adrian Barber","Adrian","7th","Yes",[3,4,4,4,4,4,5,4],"CDM","CB","MIDFIELDERS",1,"Most balanced player on the team: nothing below 3, tackle 4, endurance 5. Screens the center backs, is the first outlet, and is the emergency center back. Plays Kicks club, so expect conflicts; when he is out, Kiefer drops to the 6 and William Strimple comes in."],
+  ["William Strimple","William","8th","",[3,3,3,3,3,3,4,3],"CM","FB","MIDFIELDERS",0,"Utility. A 3 in everything with endurance 4. First substitute for either center midfielder or either fullback without changing the shape."],
+  ["Courtney Ayeo","Courtney","7th","No",[2,3,3,3,3,4,3,2],"LM","RM","MIDFIELDERS",0,"Wide midfielder. Control 4 is her best mark; keeps the ball wide and simple. Fits best in a flat 4-4-2 where wide mids have a fullback behind them."],
+
+  ["Caleb Campbell","Caleb","7th","Yes",[5,2,4,5,3,4,2,3],"ST","CAM","FORWARDS",1,"Target striker and best finisher on the team: size 5, shot 5, skill 4. Speed 2 and endurance 2 mean he plays in 20–25 minute stints and does not chase. Pin the center backs, hold the ball, let Wit and Mat arrive. Plays Kicks club; when he is out, Jayden Cheung starts as a running striker."],
+  ["Wit","Wit","7th","Yes",[3,5,5,4,3,5,5,3],"LW","ST","FORWARDS",1,"Fastest player on the roster (speed 5) with skill 5 and control 5. Starts wide left so he faces goal at pace with George overlapping. Moves to striker when Caleb rests. Plays Kicks club; when he is out, Maceo moves to the left and Courtney or Jayden takes the right."],
+  ["Maceo Wright","Maceo","7th","No",[3,4,4,4,3,3,4,2],"RW","LW","FORWARDS",0,"Pure winger: speed 4, skill 4, shot 4. Tackle 2, so he defends by running, not tackling. First attacker off the bench for either wing."],
+  ["Jayden Cheung","Jayden","7th","No",[2,3,3,4,3,3,4,3],"ST","RW","FORWARDS",0,"Shot 4 and endurance 4. Runs the channels when Caleb rests, which changes the striker from a target to a runner and gives defenders a different problem."],
+  ["Emmett Dauer","Emmett","7th","No",[2,2,3,3,3,3,2,1],"FWD","CAM","FORWARDS",0,"Skill, shot and pass at 3; tackle 1 and endurance 2. Play him high, where a lost ball costs least, in short stints."],
+  ["Ryan Jenkins","Ryan","8th","",[3,2,1,1,1,1,3,1],"FWD","LM","FORWARDS",0,"Developing player. Give him minutes wide and high, where errors are least costly, next to Wit or Gabe who can cover. Endurance 3 and size 3 are the marks to build on."]
+];
+
+var KICK_LABEL = { "Yes":"Yes", "No":"No", "Yes?":"Maybe", "":"Unknown" };
+
+function slugify(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,""); }
+
+var PLAYERS = RAW.map(function(r){
+  var total = r[4].reduce(function(a,b){ return a+b; }, 0);
+  return {
+    name:r[0], short:r[1], grade:r[2], kicks:r[3], a:r[4],
+    pos:r[5], sec:r[6], line:r[7], starter:!!r[8], note:r[9],
+    slug:slugify(r[0]), total:total, overall:Math.floor((total*100+20)/40),
+    kick:KICK_LABEL[r[3]]
+  };
+});
+
+function csvCell(v){
+  var s = String(v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+
+function buildCsv(){
+  var header = "Name,Grade,Position,Secondary,Kicks Club,Size,Speed,Skill,Shot,Pass,Control,Endurance,Tackle,Total,Overall,Starter";
+  var lines = [header];
+  PLAYERS.forEach(function(p){
+    var row = [p.name, p.grade, p.pos, p.sec, p.kick]
+      .concat(p.a)
+      .concat([p.total, p.overall, p.starter ? "Yes" : "No"]);
+    lines.push(row.map(csvCell).join(","));
+  });
+  return lines.join("\n") + "\n";
+}
+/* @endcsvregion */
+
+var AXES = ["Size","Speed","Skill","Shot","Pass","Control","Endurance","Tackle"];
+var LINES = ["GOALKEEPERS","DEFENDERS","MIDFIELDERS","FORWARDS"];
+var POS_NAMES = {
+  GK:"Goalkeeper", CB:"Center back", LB:"Left back", RB:"Right back", FB:"Fullback",
+  CDM:"Holding midfielder", CM:"Center midfielder", CAM:"Attacking midfielder",
+  LM:"Left midfielder", RM:"Right midfielder", LW:"Left winger", RW:"Right winger",
+  ST:"Striker", FWD:"Forward"
+};
+
+var AVG = AXES.map(function(_, i){
+  var s = PLAYERS.reduce(function(t,p){ return t + p.a[i]; }, 0);
+  return s / PLAYERS.length;
+});
+
+var RANKED = PLAYERS.slice().sort(function(a,b){
+  return (b.total - a.total) || a.name.localeCompare(b.name);
+});
+var RANK = {};
+RANKED.forEach(function(p,i){ RANK[p.slug] = i + 1; });
+
+var BY_SLUG = {};
+PLAYERS.forEach(function(p){ BY_SLUG[p.slug] = p; });
+
+var XI = [
+  ["antonio-de-marco","GK",230,548],
+  ["george-mcmillan","LB",78,455],
+  ["adham-ali","CB",172,472],
+  ["kayden-dickey","CB",290,472],
+  ["kayden-martin","RB",384,455],
+  ["adrian-barber","CDM",152,358],
+  ["kiefer","CM",302,358],
+  ["wit","LW",78,214],
+  ["mat-alija","CAM",230,252],
+  ["gabe-campeau","RW",384,214],
+  ["caleb-campbell","ST",230,118]
+];
+
+var MINIS = {
+  f1:[["Antonio",110,238],["George",30,192],["Adham",82,203],["Dickey",138,203],["K. Martin",190,192],["Adrian",76,152],["Kiefer",144,152],["Wit",30,82],["Mat",110,97],["Gabe",190,82],["Caleb",110,42]],
+  f2:[["Antonio",110,238],["George",30,196],["Adham",82,206],["Dickey",138,206],["K. Martin",190,196],["Adrian",110,166],["Kiefer",56,128],["Gabe",164,128],["Mat",110,93],["Wit",76,44],["Caleb",146,44]],
+  f3:[["Antonio",110,238],["George",30,196],["Adham",82,206],["Dickey",138,206],["K. Martin",190,196],["Adrian",110,168],["Kiefer",68,132],["Mat",152,132],["Wit",30,62],["Caleb",110,44],["Gabe",190,62]],
+  f4:[["Antonio",110,238],["Berni",58,206],["Adham",110,212],["Dickey",162,206],["George",26,150],["K. Martin",194,150],["Adrian",110,172],["Kiefer",64,128],["Mat",156,128],["Wit",80,48],["Caleb",142,48]],
+  f5:[["Antonio",110,238],["George",30,200],["Adham",82,208],["Dickey",138,208],["K. Martin",190,200],["Wit",28,140],["Adrian",84,148],["Kiefer",136,148],["Gabe",192,140],["Mat",92,72],["Caleb",134,44]],
+  pc:[["Nicholas",110,238],["George",30,200],["Adham",82,208],["Dickey",138,208],["K. Martin",190,200],["Maceo",28,140],["Mat",84,148],["William",136,148],["Courtney",192,140],["Jayden",92,72],["Emmett",134,44]],
+  lc:[["Antonio",110,238],["Bennie",58,206],["Adham",110,212],["Dickey",162,206],["Micah",26,150],["K. Martin",194,150],["William",64,168],["Kiefer",156,168],["Mat",110,120],["Drayman",80,48],["Nicholas",142,48]],
+  ld:[["Oskar",110,238],["George",30,192],["Berni",82,203],["Adrian",138,203],["Jayden",190,192],["Gabe",76,152],["Courtney",144,152],["Wit",30,82],["Emmett",110,97],["Maceo",190,82],["Caleb",110,42]]
+};
+
+var state = { player:"kiefer", tab:"roster" };
+
+/* ---------- live data (server-injected) ----------
+   The server replaces the JSON inside <script id="lions-data"> on GET /lions.
+   When it is absent or live:false the static SCHEDULE below is what renders, so
+   this file still works as a standalone artifact. */
+var LIVE = (function(){
+  try {
+    var node = document.getElementById("lions-data");
+    if (!node) { return { games:[], alerts:[], checkedAt:null, live:false }; }
+    var parsed = JSON.parse(node.textContent || "{}");
+    return {
+      games: (parsed && parsed.games) || [],
+      alerts: (parsed && parsed.alerts) || [],
+      checkedAt: (parsed && parsed.checkedAt) || null,
+      live: !!(parsed && parsed.live)
+    };
+  } catch (e) {
+    return { games:[], alerts:[], checkedAt:null, live:false };
+  }
+})();
+var ALERT_STORE_KEY = "slLionsAlertsSeen";
+var CHANGED_WEEKS = {};
+var SCHED_IS_LIVE = false;
+
+/* ---------- helpers ---------- */
+function esc(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function el(id){ return document.getElementById(id); }
+function fx(n){ return (Math.round(n*10)/10).toFixed(1); }
+
+/* ---------- roster rail ---------- */
+function kicksRisk(p){ return p.kicks === "Yes" || p.kicks === "Yes?"; }
+
+function rowHtml(p){
+  var isGk = p.pos === "GK";
+  return '<button type="button" class="prow" id="player-' + p.slug + '" data-slug="' + p.slug + '" aria-current="' + (state.player === p.slug ? "true" : "false") + '">' +
+    '<span class="prow-name">' + (p.starter ? '<span class="dot" aria-hidden="true"></span>' : '') + (kicksRisk(p) ? '<span class="ring" aria-hidden="true" title="Plays club soccer; schedule conflicts likely"></span>' : '') + esc(p.name) + '</span>' +
+    '<span class="prow-ovr">' + p.overall + '</span>' +
+    '<span class="prow-meta"><span class="chip">' + p.grade + '</span><span class="tag-pos' + (isGk ? ' tag-gk' : '') + '">' + p.pos + '</span></span>' +
+  '</button>';
+}
+
+function renderRail(){
+  var mode = el("roster-sort").value;
+  var html = "";
+  if (mode === "line") {
+    LINES.forEach(function(line){
+      var group = PLAYERS.filter(function(p){ return p.line === line; });
+      html += '<div class="rail-group">' + line + ' &middot; ' + group.length + '</div>';
+      group.forEach(function(p){ html += rowHtml(p); });
+    });
+  } else {
+    var list = PLAYERS.slice();
+    if (mode === "overall") {
+      list.sort(function(a,b){ return (b.total - a.total) || a.name.localeCompare(b.name); });
+      html += '<div class="rail-group">By overall &middot; 23</div>';
+    } else {
+      list.sort(function(a,b){ return a.name.localeCompare(b.name); });
+      html += '<div class="rail-group">A to Z &middot; 23</div>';
+    }
+    list.forEach(function(p){ html += rowHtml(p); });
+  }
+  el("rail").innerHTML = html;
+}
+
+/* ---------- radar ---------- */
+var CX = 260, CY = 222, R = 132, LR = 166;
+function pt(i, r){
+  var a = -Math.PI/2 + i * Math.PI/4;
+  return [CX + r * Math.cos(a), CY + r * Math.sin(a)];
+}
+function polyPoints(vals){
+  return vals.map(function(v,i){
+    var p = pt(i, R * v / 5);
+    return (Math.round(p[0]*10)/10) + "," + (Math.round(p[1]*10)/10);
+  }).join(" ");
+}
+var ANCHORS = ["middle","start","start","start","middle","end","end","end"];
+var DYS = [-8, -2, 4, 12, 16, 12, 4, -2];
+
+function radarSvg(p){
+  var s = '<svg class="radar-svg" viewBox="0 0 520 444" role="img" aria-label="Attribute radar for ' + esc(p.name) + '">';
+  for (var ring = 1; ring <= 5; ring++) {
+    var vals = [ring,ring,ring,ring,ring,ring,ring,ring];
+    s += '<polygon points="' + polyPoints(vals) + '" fill="none" stroke="rgba(232,237,245,0.10)" stroke-width="1"></polygon>';
+  }
+  for (var i = 0; i < 8; i++) {
+    var e = pt(i, R);
+    s += '<line x1="' + CX + '" y1="' + CY + '" x2="' + (Math.round(e[0]*10)/10) + '" y2="' + (Math.round(e[1]*10)/10) + '" stroke="rgba(232,237,245,0.07)" stroke-width="1"></line>';
+  }
+  s += '<polygon points="' + polyPoints(AVG) + '" fill="none" stroke="rgba(232,237,245,0.30)" stroke-width="1.5" stroke-dasharray="5 4"></polygon>';
+  s += '<g class="radar-shape">';
+  s += '<polygon points="' + polyPoints(p.a) + '" fill="rgba(224,169,58,0.28)" stroke="#E0A93A" stroke-width="2" style="filter:drop-shadow(0 0 10px rgba(224,169,58,0.45));"></polygon>';
+  for (var j = 0; j < 8; j++) {
+    var v = pt(j, R * p.a[j] / 5);
+    s += '<circle cx="' + (Math.round(v[0]*10)/10) + '" cy="' + (Math.round(v[1]*10)/10) + '" r="3" fill="#E0A93A"></circle>';
+  }
+  s += '</g>';
+  for (var k = 0; k < 8; k++) {
+    var lp = pt(k, LR);
+    s += '<text x="' + (Math.round(lp[0])) + '" y="' + (Math.round(lp[1]) + DYS[k]) + '" text-anchor="' + ANCHORS[k] + '">' +
+      '<tspan class="ax">' + AXES[k].toUpperCase() + '</tspan>' +
+      '<tspan class="axv" dx="6">' + p.a[k] + '</tspan></text>';
+  }
+  s += '</svg>';
+  return s;
+}
+
+/* ---------- profile ---------- */
+function barsHtml(p){
+  var h = '<div class="bars">';
+  AXES.forEach(function(ax, i){
+    h += '<div class="bar-row">' +
+      '<span class="bar-label">' + ax.toUpperCase() + '</span>' +
+      '<span class="bar-val">' + p.a[i] + '/5</span>' +
+      '<span class="bar-track" title="Squad average ' + fx(AVG[i]) + '">' +
+        '<span class="bar-fill" style="width:' + (p.a[i]/5*100) + '%"></span>' +
+        '<span class="bar-tick" style="left:' + (AVG[i]/5*100) + '%"></span>' +
+      '</span></div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function compareHtml(p){
+  var up = [], down = [];
+  AXES.forEach(function(ax,i){
+    var d = p.a[i] - AVG[i];
+    if (d >= 1) up.push(ax + " +" + fx(d));
+    if (d <= -1) down.push(ax + " " + fx(d));
+  });
+  return '<p class="cmp">' +
+    '<span class="up">Above squad</span> <b>' + (up.length ? esc(up.join("  ")) : "none") + '</b><br>' +
+    '<span class="down">Below squad</span> <b>' + (down.length ? esc(down.join("  ")) : "none") + '</b></p>';
+}
+
+function renderProfile(){
+  var p = BY_SLUG[state.player] || PLAYERS[0];
+  var posName = POS_NAMES[p.pos] || p.pos;
+  var secName = p.sec ? (POS_NAMES[p.sec] || p.sec) : "";
+  var h = "";
+
+  h += '<div class="p-head">';
+  h += '<p class="eyebrow">' + p.line + ' &middot; #' + RANK[p.slug] + ' of ' + PLAYERS.length + ' by total</p>';
+  h += '<h1 class="p-name">' + esc(p.name) + '</h1>';
+  h += '<div class="badges">';
+  h += '<span class="badge">' + p.grade + ' grade</span>';
+  h += '<span class="badge badge-primary' + (p.pos === "GK" ? " badge-gk" : "") + '">' + p.pos + ' &middot; ' + esc(posName) + '</span>';
+  if (p.sec) { h += '<span class="badge">2nd ' + p.sec + ' &middot; ' + esc(secName) + '</span>'; }
+  var isKicksRisk = kicksRisk(p);
+  h += '<span class="badge' + (isKicksRisk ? " badge-risk" : "") + '"' +
+       (isKicksRisk ? ' title="Plays club soccer; schedule conflicts likely"' : '') +
+       '>Kicks club: ' + p.kick + '</span>';
+  if (p.starter) { h += '<span class="badge badge-star">Starter</span>'; }
+  h += '</div></div>';
+
+  h += '<div class="two-up">';
+  h += '<div class="radar-box"><p class="eyebrow" style="margin-bottom:8px;">Attribute profile &middot; 1 to 5</p>' + radarSvg(p) +
+       '<div class="legend"><span><span class="swatch"></span>' + esc(p.short) + '</span>' +
+       '<span><span class="swatch swatch-ghost"></span>Squad average (23)</span></div></div>';
+
+  h += '<div class="stat-col">';
+  h += '<div class="ovr-tile"><span class="ovr-num">' + p.overall + '</span>' +
+       '<span class="ovr-side"><span class="eyebrow">Overall out of 100</span>' +
+       '<span class="ovr-raw">' + p.total + ' / 40 raw</span>' +
+       '<span class="ovr-rank">Rank #' + RANK[p.slug] + ' of ' + PLAYERS.length + '</span></span></div>';
+  h += barsHtml(p);
+  h += '</div>';
+  h += '</div>';
+
+  h += '<div class="note-card"><p class="eyebrow eyebrow-gold">Best position &middot; ' + p.pos + ' ' + esc(posName) +
+       (p.sec ? ' (also ' + p.sec + ')' : '') + '</p>' +
+       '<p class="measure">' + esc(p.note) + '</p>' +
+       compareHtml(p) + '</div>';
+
+  el("profile").innerHTML = h;
+}
+
+/* ---------- pitches ---------- */
+function pitchLines(w, h, inset, strokeVar){
+  var x = inset, y = inset, pw = w - inset*2, ph = h - inset*2;
+  var cx = w/2, my = y + ph/2;
+  var st = 'stroke="' + strokeVar + '" fill="none" stroke-width="1"';
+  var s = '<rect x="' + x + '" y="' + y + '" width="' + pw + '" height="' + ph + '" fill="#0E1A26"></rect>';
+  var bands = 8;
+  for (var b = 0; b < bands; b++) {
+    if (b % 2 === 0) {
+      s += '<rect x="' + x + '" y="' + (y + b*ph/bands) + '" width="' + pw + '" height="' + (ph/bands) + '" fill="rgba(63,169,107,0.055)"></rect>';
+    }
+  }
+  s += '<rect x="' + x + '" y="' + y + '" width="' + pw + '" height="' + ph + '" ' + st + '></rect>';
+  s += '<line x1="' + x + '" y1="' + my + '" x2="' + (x+pw) + '" y2="' + my + '" ' + st + '></line>';
+  s += '<circle cx="' + cx + '" cy="' + my + '" r="' + (pw*0.135) + '" ' + st + '></circle>';
+  s += '<circle cx="' + cx + '" cy="' + my + '" r="2" fill="' + strokeVar + '"></circle>';
+  var pbW = pw*0.56, pbH = ph*0.155, gbW = pw*0.28, gbH = ph*0.062;
+  s += '<rect x="' + (cx-pbW/2) + '" y="' + (y+ph-pbH) + '" width="' + pbW + '" height="' + pbH + '" ' + st + '></rect>';
+  s += '<rect x="' + (cx-gbW/2) + '" y="' + (y+ph-gbH) + '" width="' + gbW + '" height="' + gbH + '" ' + st + '></rect>';
+  s += '<rect x="' + (cx-pbW/2) + '" y="' + y + '" width="' + pbW + '" height="' + pbH + '" ' + st + '></rect>';
+  s += '<rect x="' + (cx-gbW/2) + '" y="' + y + '" width="' + gbW + '" height="' + gbH + '" ' + st + '></rect>';
+  s += '<circle cx="' + cx + '" cy="' + (y+ph-pbH*0.62) + '" r="1.8" fill="' + strokeVar + '"></circle>';
+  s += '<line x1="' + (cx-gbW/2) + '" y1="' + (y+ph) + '" x2="' + (cx+gbW/2) + '" y2="' + (y+ph) + '" stroke="rgba(232,237,245,0.55)" stroke-width="3"></line>';
+  return s;
+}
+
+function renderXiPitch(){
+  var W = 460, H = 600;
+  var s = '<svg class="pitch-svg" viewBox="0 0 460 600" role="group" aria-label="4-2-3-1 starting eleven on the pitch, our goal at the bottom">';
+  s += pitchLines(W, H, 18, "rgba(232,237,245,0.22)");
+  XI.forEach(function(row){
+    var p = BY_SLUG[row[0]], role = row[1], cx = row[2], cy = row[3];
+    var w = Math.max(84, p.short.length * 8.6 + 26);
+    var x = cx - w/2;
+    if (x < 22) { x = 22; }
+    if (x + w > W - 22) { x = W - 22 - w; }
+    var mid = x + w/2;
+    s += '<g class="plate' + (role === "GK" ? " plate-gk" : "") + '" data-slug="' + p.slug + '" role="button" tabindex="0" aria-label="Open profile for ' + esc(p.name) + '">' +
+      '<rect x="' + x + '" y="' + (cy-19) + '" width="' + w + '" height="38" rx="19"></rect>' +
+      '<text class="plate-name" x="' + mid + '" y="' + (cy-2) + '" text-anchor="middle">' + esc(p.short) + '</text>' +
+      '<text class="plate-pos" x="' + mid + '" y="' + (cy+11) + '" text-anchor="middle">' + role + '</text>' +
+    '</g>';
+  });
+  s += '</svg>';
+  el("xi-pitch").innerHTML = '<p class="eyebrow" style="padding:6px 6px 8px;">Our goal at the bottom</p>' + s;
+}
+
+function renderMinis(){
+  Object.keys(MINIS).forEach(function(key){
+    var host = document.querySelector('[data-mini="' + key + '"]');
+    if (!host) { return; }
+    var W = 220, H = 280;
+    var s = '<svg class="mini-svg" viewBox="0 0 220 280" role="img" aria-label="Lineup diagram">';
+    s += pitchLines(W, H, 10, "rgba(232,237,245,0.18)");
+    MINIS[key].forEach(function(d){
+      var nm = d[0], x = d[1], y = d[2];
+      var tx = Math.min(Math.max(x, 26), 194);
+      s += '<circle cx="' + x + '" cy="' + y + '" r="4.5" fill="#E0A93A" stroke="#B8842A" stroke-width="1"></circle>';
+      s += '<text class="mini-name" x="' + tx + '" y="' + (y + 14) + '" text-anchor="middle">' + esc(nm) + '</text>';
+    });
+    s += '</svg>';
+    host.innerHTML = s;
+  });
+}
+
+/* ---------- schedule data ---------- */
+var SCHED_CRANE = "Crane HS, 2245 W. Jackson Blvd";
+var SCHEDULE = [
+  // League games: add { date:"2026-MM-DD", time:"H:MM AM", kind:"game", title:"vs Opponent", where:"Field" } rows here
+  { date:"2026-09-19", time:"2:00 PM", kind:"game", title:"vs STEM", where:SCHED_CRANE, home:true },
+  { date:"2026-09-26", time:"10:00 AM", kind:"game", title:"at Suder", where:SCHED_CRANE, home:false },
+  { date:"2026-10-03", time:"1:00 PM", kind:"game", title:"at Rowe", where:SCHED_CRANE, home:false, note:"Payton open house ends at 1 PM; leave Payton by noon for a 1 PM kickoff at Crane." },
+  { date:"2026-10-10", time:"10:00 AM", kind:"game", title:"vs Talcott", where:SCHED_CRANE, home:true },
+  { date:"2026-10-17", time:"1:00 PM", kind:"game", title:"vs Skinner", where:SCHED_CRANE, home:true },
+  { date:"2026-10-24", time:"9:00 AM", kind:"game", title:"at STEM", where:SCHED_CRANE, home:false, note:"Game ends about 10 AM; a coach holds a place in the Jones line from before 10 so the team walks in together." },
+  { date:"2026-10-31", time:"TBD", kind:"game", title:"Network 6 playoffs", where:"Park TBD", note:"The CPS sheet lists this as ‘Saturday October 26’ (Oct 26 is a Monday); Saturday 10/31 assumed. Confirm with the network." },
+  { date:"2026-11-07", time:"TBD", kind:"game", title:"SCORE! City Championship (if qualified)", where:"TBD", note:"13-network city tournament starts this Saturday." },
+
+  { date:"2026-09-12", time:"4:00 PM", kind:"kicks", title:"Kicks U13 game", where:"Stuarts Sports Complex" },
+  { date:"2026-09-13", time:"4:30 PM", kind:"kicks", title:"Kicks U13 game", where:"Seven Gables Park" },
+  { date:"2026-09-19", time:"4:00 PM", kind:"kicks", title:"Kicks U13 game", where:"St. Ignatius Turf" },
+  { date:"2026-10-11", time:"6:00 PM", kind:"kicks", title:"Kicks U13 game", where:"Ignatius Large" },
+  { date:"2026-10-17", time:"12:30 PM", kind:"kicks", title:"Kicks U13 game", where:"Willow Hill Turf" },
+  { date:"2026-10-18", time:"11:00 AM", kind:"kicks", title:"Kicks U13 game", where:"McKinley Turf" },
+  { date:"2026-11-01", time:"12:00 PM", kind:"kicks", title:"Kicks U13 game", where:"Willow Hill Turf" },
+  { date:"2026-11-07", time:"6:00 PM", kind:"kicks", title:"Kicks U13 game", where:"St. Ignatius Turf" },
+
+  { date:"2026-10-03", time:"9:00 AM–1:00 PM", kind:"openhouse", title:"Payton open house", where:"Walter Payton College Prep, 1034 N. Wells St.", note:"Should not conflict with a game. No RSVP, first-come." },
+  { date:"2026-10-17", time:"10:00 AM–1:00 PM", timeTbd:true, kind:"openhouse", title:"Hancock open house", where:"Hancock College Prep", note:"Should not conflict with a game. Same day as a Kicks game at 12:30 PM." },
+  { date:"2026-10-18", time:"10:00 AM (Academic Center) · 12:30–3:00 PM (high school)", kind:"openhouse", title:"Whitney Young open house", where:"Whitney M. Young Magnet HS, 211 S. Laflin St.", note:"Academic Center session (7th–8th grade) at 10 AM; high-school presentations every half hour 12:30–3 PM. Same day as a Kicks game at 11 AM." },
+  { date:"2026-10-24", time:"10:00 AM–3:00 PM", kind:"openhouse", title:"Jones College Prep open house", where:"Jones College Prep, 700 S. State St.", note:"The big one. First-come, first-served, no registration. 7th graders need to be in line first thing in the morning. Plan: a coach sets up early and holds a spot in line so the whole team gets in at 10 AM.", emphasis:true }
+];
+var SCHED_SOURCE_NOTE = "Source: CPS SCORE! Boys Soccer 7/8th Fall 2026 master schedule, Network 6 Crane HS tab, pulled 2026-09-09. Scores and standings live on the CPS sheet.";
+
+var MONTH_NAMES = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];
+var WD_NAMES = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+var SCHED_KICKS_NAMES = "Adrian, Gabe, Caleb, Wit";
+
+function schedDateParts(iso){
+  var bits = iso.split("-");
+  var y = +bits[0], m = +bits[1], d = +bits[2];
+  var wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return { d:d, wd:WD_NAMES[wd], month:MONTH_NAMES[m - 1] };
+}
+function schedTimeSortKey(t){
+  var mm = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(t);
+  if (!mm) { return 0; }
+  var h = parseInt(mm[1], 10) % 12;
+  if (/pm/i.test(mm[3])) { h += 12; }
+  return h * 60 + parseInt(mm[2], 10);
+}
+
+function schedConflictHtml(r, allRows){
+  var sameDay = allRows.filter(function(x){ return x.date === r.date && x !== r && x.kind !== "game"; });
+  var ohRows = sameDay.filter(function(x){ return x.kind === "openhouse"; });
+  var kicksRows = sameDay.filter(function(x){ return x.kind === "kicks"; });
+  var hasConflict = ohRows.length > 0 || kicksRows.length > 0;
+
+  var h = '<div class="sched-conflict' + (hasConflict ? '' : ' is-none') + '">';
+  if (!hasConflict) {
+    h += 'None known.';
+  } else {
+    ohRows.forEach(function(x){
+      h += '<div class="conflict-line oh"><span class="dot-oh" aria-hidden="true"></span><span>Open house: '
+        + esc(x.title) + ' ' + esc(x.time) + ' &mdash; potential conflict for 7th graders.'
+        + (x.note ? '<span class="conflict-note">' + esc(x.note) + '</span>' : '')
+        + '</span></div>';
+    });
+    kicksRows.forEach(function(x){
+      h += '<div class="conflict-line kicks"><span class="dot-cut" aria-hidden="true"></span><span>Kicks game '
+        + esc(x.time) + ' at ' + esc(x.where) + ' &mdash; potential conflict for 7th-grade Kicks players: '
+        + esc(SCHED_KICKS_NAMES) + '.</span></div>';
+    });
+  }
+  h += '</div>';
+  return { html:h, hasConflict:hasConflict };
+}
+
+function schedRowHtml(r, allRows){
+  var parts = schedDateParts(r.date);
+  var conflict = schedConflictHtml(r, allRows);
+
+  var h = '<div class="sched-row">';
+  h += '<div class="sched-date"><span class="sched-wd">' + parts.wd + '</span><span class="sched-day">' + parts.d + '</span></div>';
+  h += '<div class="sched-time">' + esc(r.time) + (r.timeTbd ? ' &middot; time to confirm' : '') + '</div>';
+  h += '<div class="sched-game">';
+  var changedPill = (r.kind === "game" && r.week && CHANGED_WEEKS[r.week]) ? ' <span class="pill pill-changed">Changed</span>' : '';
+  h += '<div class="sched-title">' + esc(r.title) + changedPill + (conflict.hasConflict ? ' <span class="pill pill-check">Check</span>' : '') + '</div>';
+  h += '<div class="sched-where">' + esc(r.where) + (r.home ? ' &middot; Home' : (r.home === false ? ' &middot; Away' : '')) + '</div>';
+  if (r.note) { h += '<div class="sched-note">' + esc(r.note) + '</div>'; }
+  h += '</div>';
+  h += conflict.html;
+  h += '</div>';
+  return h;
+}
+
+/* ---------- live schedule + alerts ---------- */
+var LIVE_ACRONYMS = { STEM:1, ES:1, HS:1, II:1, III:1, IV:1 };
+function liveTeamLabel(raw){
+  return String(raw || "").trim().split(/\s+/).filter(Boolean).map(function(w){
+    return LIVE_ACRONYMS[w.toUpperCase()] ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join(" ");
+}
+/* Crane is the only venue the sheet names, and the static row carries its
+   street address; keep the richer string when they agree. */
+function liveWhere(venue){
+  var v = String(venue || "").trim();
+  if (!v) { return SCHED_CRANE; }
+  return SCHED_CRANE.indexOf(v) === 0 ? SCHED_CRANE : v;
+}
+function schedCheckedLabel(iso){
+  try {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) { return String(iso); }
+    return d.toLocaleString("en-US", { timeZone:"America/Chicago", month:"short", day:"numeric", hour:"numeric", minute:"2-digit" });
+  } catch (e) { return String(iso); }
+}
+
+/* Replace the static league games with the live ones. Kicks and open-house rows
+   are untouched so conflict detection keeps working, the two hand-written game
+   notes are carried by date, and the TBD playoff/championship rows stay. */
+function applyLiveSchedule(){
+  if (!LIVE.live || !LIVE.games.length) { return false; }
+  var oldGames = SCHEDULE.filter(function(r){ return r.kind === "game"; });
+  var notesByDate = {};
+  oldGames.forEach(function(r){ if (r.note && r.time !== "TBD") { notesByDate[r.date] = r.note; } });
+  var keepTbd = oldGames.filter(function(r){ return r.time === "TBD"; });
+  var live = LIVE.games.map(function(g){
+    var row = {
+      date: g.date,
+      time: g.time,
+      kind: "game",
+      title: (g.isHome ? "vs " : "at ") + liveTeamLabel(g.opponent),
+      where: liveWhere(g.venue),
+      home: !!g.isHome,
+      week: g.week
+    };
+    if (notesByDate[g.date]) { row.note = notesByDate[g.date]; }
+    return row;
+  });
+  SCHEDULE = SCHEDULE.filter(function(r){ return r.kind !== "game"; }).concat(live, keepTbd);
+  SCHED_IS_LIVE = true;
+  return true;
+}
+
+function readSeenAlertIds(){
+  try {
+    var raw = localStorage.getItem(ALERT_STORE_KEY);
+    var arr = raw ? JSON.parse(raw) : [];
+    return Object.prototype.toString.call(arr) === "[object Array]" ? arr.map(String) : [];
+  } catch (e) { return []; }
+}
+function writeSeenAlertIds(ids){
+  try { localStorage.setItem(ALERT_STORE_KEY, JSON.stringify(ids)); } catch (e) {}
+}
+function alertIds(){
+  return (LIVE.alerts || []).map(function(a, i){ return String(a && a.id != null ? a.id : "i" + i); });
+}
+function markChangedWeeks(){
+  CHANGED_WEEKS = {};
+  (LIVE.alerts || []).forEach(function(a){ if (a && a.week) { CHANGED_WEEKS[a.week] = true; } });
+}
+function renderAlerts(){
+  var banner = el("alert-banner"), list = el("alert-list");
+  if (!banner || !list) { return; }
+  var alerts = LIVE.alerts || [];
+  if (!alerts.length) { banner.hidden = true; return; }
+  list.innerHTML = alerts.map(function(a){
+    return '<li>' + esc(a && a.summary ? a.summary : "The CPS sheet changed.") + '</li>';
+  }).join("");
+  var ids = alertIds();
+  var seen = readSeenAlertIds();
+  var fresh = ids.filter(function(id){ return seen.indexOf(id) === -1; });
+  banner.hidden = fresh.length === 0;
+}
+function dismissAlerts(){
+  var banner = el("alert-banner");
+  if (banner) { banner.hidden = true; }
+  var seen = readSeenAlertIds();
+  alertIds().forEach(function(id){ if (seen.indexOf(id) === -1) { seen.push(id); } });
+  writeSeenAlertIds(seen.slice(-200));
+}
+
+function renderSchedule(){
+  var rows = SCHEDULE.slice().sort(function(a, b){
+    if (a.date !== b.date) { return a.date < b.date ? -1 : 1; }
+    return schedTimeSortKey(a.time) - schedTimeSortKey(b.time);
+  });
+  var games = rows.filter(function(r){ return r.kind === "game"; });
+
+  var html = "";
+  if (!games.length) {
+    html = '<p class="sched-empty">No league games entered yet.</p>';
+  } else {
+    html += '<div class="sched-head" aria-hidden="true"><span>Date</span><span>Time</span><span>Game</span><span>Potential conflict</span></div>';
+    var order = [];
+    var byMonth = {};
+    games.forEach(function(r){
+      var month = schedDateParts(r.date).month;
+      if (!byMonth[month]) { byMonth[month] = []; order.push(month); }
+      byMonth[month].push(r);
+    });
+    order.forEach(function(month){
+      html += '<div class="sched-month">' + month + '</div><div class="sched-list">';
+      byMonth[month].forEach(function(r){ html += schedRowHtml(r, rows); });
+      html += '</div>';
+    });
+    html += '<p class="sched-note" style="margin-top:var(--sp-3);">' + esc(SCHED_SOURCE_NOTE) + '</p>';
+    if (SCHED_IS_LIVE) {
+      html += '<p class="sched-note">Live from the CPS sheet' + (LIVE.checkedAt ? ' &middot; Checked ' + esc(schedCheckedLabel(LIVE.checkedAt)) + ' CT' : '') + '</p>';
+    }
+  }
+
+  el("sched-calendar").innerHTML = html;
+}
+
+/* ---------- tabs ---------- */
+var TABS = ["roster","xi","formations","schedule","cuts"];
+function setTab(name, focus){
+  state.tab = name;
+  TABS.forEach(function(t){
+    var btn = el("tab-" + t), pan = el("panel-" + t);
+    var on = (t === name);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+    pan.hidden = !on;
+  });
+  if (focus) { el("tab-" + name).focus(); }
+  persist();
+}
+
+function selectPlayer(slug, scroll){
+  if (!BY_SLUG[slug]) { return; }
+  state.player = slug;
+  var rows = document.querySelectorAll(".prow");
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].setAttribute("aria-current", rows[i].getAttribute("data-slug") === slug ? "true" : "false");
+  }
+  renderProfile();
+  if (scroll) {
+    var top = el("panel-roster").getBoundingClientRect().top + window.pageYOffset - 90;
+    window.scrollTo({ top: top < 0 ? 0 : top, behavior:"auto" });
+  }
+  persist();
+}
+
+/* ---------- csv controls ---------- */
+function showCsv(){
+  var panel = el("csv-panel");
+  el("csv-text").value = buildCsv();
+  panel.hidden = false;
+}
+function tryDownload(){
+  var csv = buildCsv();
+  var name = "south-loop-lions-active-roster.csv";
+  var status = el("csv-status");
+  var useCap = (window.claude && typeof window.claude.use === "function") ? window.claude.use("downloads") : Promise.resolve(null);
+  Promise.resolve(useCap).then(function(downloads){
+    if (downloads && typeof downloads.save === "function") {
+      status.textContent = "Confirm the download in the prompt.";
+      return downloads.save({ filename: name, data: csv }).then(function(){
+        status.textContent = "Saved " + name;
+      }, function(err){
+        var code = err && err.code;
+        if (code === "declined") { status.textContent = "Download cancelled. The CSV text is below."; }
+        else if (code === "rate_limited") { status.textContent = "A download prompt is already open."; }
+        else { status.textContent = "Download unavailable here. Copy the CSV text below."; }
+      });
+    }
+    try {
+      var blob = new Blob([csv], { type:"text/csv;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    } catch (e) { /* the panel below is the path */ }
+  }).catch(function(){ /* never throw from a click */ });
+}
+
+/* ---------- persistence ---------- */
+function persist(){
+  try { if (window.claude && window.claude.hot && window.claude.hot.snapshot) { window.claude.hot.snapshot(function(){ return state; }); } } catch (e) {}
+  try { localStorage.setItem("slLions", JSON.stringify(state)); } catch (e) {}
+}
+
+/* ---------- boot ---------- */
+var started = false;
+function start(data){
+  if (started) { return; }
+  started = true;
+
+  var restored = null;
+  try { if (data && data.player) { restored = data; } } catch (e) {}
+  if (!restored) {
+    try {
+      var raw = localStorage.getItem("slLions");
+      if (raw) { restored = JSON.parse(raw); }
+    } catch (e) {}
+  }
+  if (restored) {
+    if (restored.player && BY_SLUG[restored.player]) { state.player = restored.player; }
+    if (restored.tab && TABS.indexOf(restored.tab) !== -1) { state.tab = restored.tab; }
+  }
+
+  applyLiveSchedule();
+  markChangedWeeks();
+
+  renderRail();
+  renderProfile();
+  renderXiPitch();
+  renderMinis();
+  renderSchedule();
+  renderAlerts();
+  setTab(state.tab, false);
+
+  if (el("alert-close")) {
+    el("alert-close").addEventListener("click", function(){ dismissAlerts(); });
+  }
+
+  el("roster-sort").addEventListener("change", function(){ renderRail(); });
+
+  el("rail").addEventListener("click", function(ev){
+    var row = ev.target.closest ? ev.target.closest(".prow") : null;
+    if (row) { selectPlayer(row.getAttribute("data-slug"), false); }
+  });
+
+  TABS.forEach(function(t){
+    el("tab-" + t).addEventListener("click", function(){ setTab(t, false); });
+    el("tab-" + t).addEventListener("keydown", function(ev){
+      var i = TABS.indexOf(t);
+      if (ev.key === "ArrowRight") { ev.preventDefault(); setTab(TABS[(i+1) % TABS.length], true); }
+      if (ev.key === "ArrowLeft") { ev.preventDefault(); setTab(TABS[(i-1+TABS.length) % TABS.length], true); }
+    });
+  });
+
+  el("xi-pitch").addEventListener("click", function(ev){
+    var g = ev.target.closest ? ev.target.closest(".plate") : null;
+    if (g) { setTab("roster", false); selectPlayer(g.getAttribute("data-slug"), true); }
+  });
+  el("xi-pitch").addEventListener("keydown", function(ev){
+    if (ev.key !== "Enter" && ev.key !== " ") { return; }
+    var g = ev.target.closest ? ev.target.closest(".plate") : null;
+    if (g) { ev.preventDefault(); setTab("roster", false); selectPlayer(g.getAttribute("data-slug"), true); }
+  });
+
+  el("csv-download").addEventListener("click", function(){
+    el("csv-status").textContent = "";
+    showCsv();
+    tryDownload();
+    el("csv-text").focus();
+  });
+  el("csv-copy").addEventListener("click", function(){
+    var ta = el("csv-text");
+    var done = function(){ el("csv-status").textContent = "Copied"; };
+    var fallback = function(){
+      ta.focus(); ta.select();
+      try { document.execCommand("copy"); done(); }
+      catch (e) { el("csv-status").textContent = "Press Cmd+C to copy"; }
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(ta.value).then(done, fallback);
+      } else { fallback(); }
+    } catch (e) { fallback(); }
+  });
+  el("csv-close").addEventListener("click", function(){
+    el("csv-panel").hidden = true;
+    el("csv-status").textContent = "";
+    el("csv-download").focus();
+  });
+
+  persist();
+}
+
+try {
+  if (window.claude && window.claude.hot && window.claude.hot.ready) {
+    window.claude.hot.ready(start);
+    setTimeout(function(){ start({}); }, 400);
+  } else {
+    start((window.claude && window.claude.hot && window.claude.hot.data) ? window.claude.hot.data : {});
+  }
+} catch (e) {
+  start({});
+}
+</script>
