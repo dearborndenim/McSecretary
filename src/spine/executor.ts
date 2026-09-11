@@ -3,6 +3,7 @@ import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
 import { resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
+import { validateGraphPayload, runGraphDispatch } from './graph-hand.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -255,6 +256,27 @@ export async function executeProposal(
     const recorded = recordExecution(db, id, 'executed', result);
     if (recorded) emitExecutedEvent(db, row, payload, payload.body, deps);
     return { ok: true, http_status: 200, body: payload.body, recorded };
+  }
+
+  // Built-in "graph" hand: an approved chat dispatch becomes spine events for
+  // the Mac mini's urgent poll. No HTTP request — the plan on the body is
+  // re-validated and turned into design_request / vendor_contact /
+  // run_request_<agent> rows. A brand may register its own `graph` hand in
+  // config to override this.
+  if (payload.hand === 'graph' && !Object.hasOwn(brand.hands, 'graph')) {
+    const valid = validateGraphPayload(payload, deps.now());
+    if (!valid.ok) return fail(valid.error);
+    let body: unknown;
+    try {
+      body = runGraphDispatch(db, {
+        proposalId: row.id, brandId: row.brand_id, plan: valid.plan, nowIso: deps.now(),
+      });
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    const recorded = recordExecution(db, id, 'executed', { http_status: 200, body, at: deps.now() });
+    if (recorded) emitExecutedEvent(db, row, payload, body, deps);
+    return { ok: true, http_status: 200, body, recorded };
   }
 
   // Built-in "email" hand: the ONLY way a message leaves Robert's mailbox

@@ -4,6 +4,7 @@ import { agentForBearer } from './agent-keys.js';
 import { loadBrandConfig, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
+import { validateGraphPayload } from './graph-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
 import { insertEvent, drainEvents, countPendingByType } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
@@ -106,6 +107,10 @@ function validateProposal(b: Record<string, unknown>): string | null {
     const emailCheck = validateEmailPayload(payload);
     if (!emailCheck.ok) return emailCheck.error;
   }
+  if (payload.hand === 'graph') {
+    const graphCheck = validateGraphPayload(payload);
+    if (!graphCheck.ok) return graphCheck.error;
+  }
   if (typeof b.reason !== 'string' || b.reason.length === 0 || b.reason.length > 2000) return 'reason must be a string of 1–2000 chars';
   if (!isPlainObject(b.evidence)) return 'evidence must be an object';
   if (typeof b.cost_usd !== 'number' || !Number.isFinite(b.cost_usd) || b.cost_usd < 0) return 'cost_usd must be a non-negative number';
@@ -119,14 +124,15 @@ function validateProposal(b: Record<string, unknown>): string | null {
 /**
  * The brand must have a config file and the hand must be registered in it, or
  * Robert would approve a card that can only fail. Exceptions: `notes` and
- * `email` are built-in hands available to every brand that hasn't registered
- * its own hand of that name — `notes` never makes an HTTP call and `email`
- * goes out through Microsoft Graph, so neither needs a config entry.
+ * `email`/`graph` are built-in hands available to every brand that hasn't
+ * registered its own hand of that name — `notes` and `graph` never make an
+ * HTTP call and `email` goes out through Microsoft Graph, so none of them
+ * needs a config entry.
  */
 function validateBrandAndHand(brandsDir: string, brandId: string, hand: string): string | null {
   let brand;
   try { brand = loadBrandConfig(brandsDir, brandId); } catch { return `Unknown brand: ${brandId}`; }
-  if ((hand === 'notes' || hand === 'email') && !Object.hasOwn(brand.hands, hand)) return null;
+  if ((hand === 'notes' || hand === 'email' || hand === 'graph') && !Object.hasOwn(brand.hands, hand)) return null;
   if (!Object.hasOwn(brand.hands, hand)) return `Unknown hand for ${brandId}: ${hand}`;
   return null;
 }

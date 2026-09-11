@@ -21,6 +21,8 @@ export const PINNED_ACTION_TYPES: ReadonlyArray<string> = Object.freeze([
   'shopify_execute',
   // finance
   'policy_change',
+  // chat
+  'graph_dispatch',
 ]);
 
 const PINNED = new Set(PINNED_ACTION_TYPES);

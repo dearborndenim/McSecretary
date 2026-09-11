@@ -22,3 +22,10 @@ describe('gates', () => {
     expect(Object.isFrozen(PINNED_ACTION_TYPES)).toBe(true);
   });
 });
+
+describe('the chat dispatch gate', () => {
+  it('graph_dispatch is pinned so a chat dispatch can never auto-execute', () => {
+    expect(isPinned('graph_dispatch')).toBe(true);
+    expect(PINNED_ACTION_TYPES).toContain('graph_dispatch');
+  });
+});
