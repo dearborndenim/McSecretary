@@ -153,6 +153,24 @@ export function initializeSpineSchema(db: Database.Database): void {
   // sender as a vendor reply — see src/email/rfq-intake.ts matchRfqReply.
   if (!rfqCols.includes('conversation_id')) db.exec('ALTER TABLE rfq_messages ADD COLUMN conversation_id TEXT');
 
+  // Additive migration: rfq_messages.vendor_slug / vendor_name (2026-09 vendor
+  // attribution fix). A vendor's reply used to be filed under whatever the
+  // sender signed the mail as (or the raw address) -- a self-test from Robert's
+  // own mailbox created a vendor called "Robert McMillan", and a real reply
+  // from an individual at Carr Textile would have created a vendor named after
+  // that person instead of attaching to Carr Textile. Both columns are set at
+  // send time by the email hand: vendor_slug is the sending proposal's
+  // evidence.vendor (the registry slug Sourcing named, e.g. "carr-textile"),
+  // kept for traceability only; vendor_name is the display name the reply's
+  // vendor quotes are actually filed under -- the email hand body's own
+  // vendor_name when Sourcing supplied one, else the recipient's domain
+  // title-cased (see resolveVendorName/deriveVendorNameFromDomain in
+  // src/spine/email-hand.ts). The RFQ reply matcher then reads vendor_name off
+  // the matched outbound row -- never the inbound reply's sender display name
+  // (see vendorNameFor in src/email/rfq-intake.ts).
+  if (!rfqCols.includes('vendor_slug')) db.exec('ALTER TABLE rfq_messages ADD COLUMN vendor_slug TEXT');
+  if (!rfqCols.includes('vendor_name')) db.exec('ALTER TABLE rfq_messages ADD COLUMN vendor_name TEXT');
+
   const seed = db.prepare(
     'INSERT OR IGNORE INTO outcome_maturity (lane, metric, lag_days) VALUES (?, ?, ?)',
   );

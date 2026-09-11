@@ -51,6 +51,15 @@ export interface RfqMatch {
   rfq_id: string;
   vendor_email: string;
   vendor_domain: string;
+  /**
+   * The display name recorded on the outbound row at send time (the email
+   * hand's `vendor_name`, else the recipient's domain title-cased — see
+   * `resolveVendorName`, `src/spine/email-hand.ts`). Empty string for a row
+   * sent before this column existed. Every vendor quote a reply produces is
+   * filed under this — never the inbound reply's own sender display name
+   * (see `vendorNameFor`, below).
+   */
+  vendor_name: string;
   intents: string[];
   proposal_id: number | null;
   brand_id: string;
@@ -63,6 +72,7 @@ function toMatch(row: RfqMessageRow, matchedBy: 'tag' | 'domain'): RfqMatch {
     rfq_id: row.rfq_id,
     vendor_email: row.vendor_email,
     vendor_domain: row.vendor_domain,
+    vendor_name: row.vendor_name || '',
     intents: parseIntents(row.intents),
     proposal_id: row.proposal_id ?? null,
     brand_id: row.brand_id || '',
@@ -297,12 +307,16 @@ export interface VendorQuoteBody {
 /** The product-dev `POST /api/integration/vendor-quotes` body for one option on one intent. */
 export function buildVendorQuoteBody(
   option: RfqOption,
-  ctx: { fabricIntentId: string; vendorName: string; rfqId: string; attachments: QuoteAttachment[] },
+  ctx: { fabricIntentId: string; vendorName: string; rfqId: string; attachments: QuoteAttachment[]; senderAddress: string },
 ): VendorQuoteBody {
   return {
     fabricIntentId: ctx.fabricIntentId,
     vendorName: ctx.vendorName,
-    description: `${option.style_number} — ${ctx.vendorName}`,
+    // The sender's address, not the vendor name — vendorName is attributed
+    // (the RFQ row's own vendor_name, never the reply's own display name),
+    // but the address of the person who actually sent this reply is worth
+    // keeping verbatim for traceability.
+    description: `${option.style_number} — ${ctx.senderAddress}`,
     pricePerUnit: option.price_per_yard_usd,
     unit: 'yard',
     moq: option.moq,
@@ -316,10 +330,18 @@ export function buildVendorQuoteBody(
   };
 }
 
-/** The vendor's display name: what they signed the mail as, else their domain. */
+/**
+ * The vendor's display name for every quote this reply produces: the matched
+ * RFQ row's own `vendor_name` (set at send time — see `resolveVendorName`,
+ * `src/spine/email-hand.ts`), falling back to the row's vendor domain, or the
+ * reply's own sender domain/address for a row sent before this column
+ * existed. Never the reply's `senderName` — that is text the vendor wrote
+ * themselves (a self-test reply from Robert's own mailbox used to file a
+ * vendor called "Robert McMillan"; a reply from an individual at a vendor
+ * would file one named after that person instead of the vendor).
+ */
 export function vendorNameFor(email: RawEmail, match: RfqMatch): string {
-  const name = email.senderName?.trim();
-  if (name && !name.includes('@')) return name;
+  if (match.vendor_name) return match.vendor_name;
   return match.vendor_domain || emailDomain(email.sender) || email.sender;
 }
 
@@ -406,6 +428,7 @@ export async function processRfqReply(
           vendorName: vendor,
           rfqId: match.rfq_id,
           attachments,
+          senderAddress: email.sender,
         });
         try {
           const posted = await deps.postVendorQuote(body);

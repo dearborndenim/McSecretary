@@ -5,6 +5,7 @@ import { insertProposal, getProposalById } from '../../src/db/proposal-queries.j
 import { executeProposal, type ExecutorDeps } from '../../src/spine/executor.js';
 import {
   sendHandEmail, validateEmailPayload, buildSendMailPayload, contentTypeFor, fromAddress, mailboxAddress, resolveRfqId,
+  resolveVendorName, deriveVendorNameFromDomain,
   type EmailHandBody, type EmailHandDeps,
 } from '../../src/spine/email-hand.js';
 import { listRfqMessages } from '../../src/db/rfq-queries.js';
@@ -48,7 +49,13 @@ describe('validateEmailPayload', () => {
       expect(v.body.cc).toEqual([]);
       expect(v.body.attachments).toEqual([]);
       expect(v.body.rfq_id).toBeNull();
+      expect(v.body.vendor_name).toBeNull();
     }
+  });
+
+  it('trims and accepts an explicit vendor_name', () => {
+    const v = validateEmailPayload({ method: 'POST', path: '/send', body: { ...BODY, vendor_name: '  Carr Textile  ' } });
+    expect(v.ok && v.body.vendor_name).toBe('Carr Textile');
   });
 
   it('accepts an array of recipients and a cc list', () => {
@@ -70,6 +77,8 @@ describe('validateEmailPayload', () => {
     [{ body: { ...BODY, attachments: [{ url: 'file:///etc/passwd', name: 'x' }] } }, /http\(s\) url/],
     [{ body: { ...BODY, attachments: Array.from({ length: 6 }, () => ({ url: 'https://x/y', name: 'n' })) } }, /at most 5/],
     [{ body: { ...BODY, rfq_id: 42 } }, /rfq_id must be/],
+    [{ body: { ...BODY, vendor_name: '   ' } }, /vendor_name must be/],
+    [{ body: { ...BODY, vendor_name: 'x'.repeat(201) } }, /vendor_name must be/],
   ])('refuses %j', (over, pattern) => {
     const v = validateEmailPayload({ method: 'POST', path: '/send', body: BODY, ...over } as never);
     expect(v.ok).toBe(false);
@@ -210,6 +219,8 @@ describe('sendHandEmail', () => {
       brand_id: 'dearborn-denim',
       intents: 'fi_1,fi_2',
       conversation_id: null,
+      vendor_slug: 'Carr Textiles',
+      vendor_name: 'Carrtextiles',
     });
   });
 
@@ -237,6 +248,55 @@ describe('sendHandEmail', () => {
     const rows = listRfqMessages(db, 'linen-spring27-carr-20260910');
     expect(rows.map((r) => r.vendor_domain)).toEqual(['one.example', 'two.example']);
     expect(rows[0]!.intents).toBe('fi_1');
+  });
+
+  // --- Vendor attribution (2026-09 fix): a vendor's reply used to be filed
+  // under whatever the sender signed the mail as — a self-test reply from
+  // Robert's own mailbox created a vendor called "Robert McMillan", and a
+  // reply from an individual at a real vendor would have created a vendor
+  // named after that person instead of attaching to the vendor. Fix: the
+  // display name is decided at *send* time and stored on the outbound row. ---
+
+  it('records evidence.vendor as vendor_slug (traceability only) and derives vendor_name from the recipient domain when the body carries none', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 202 }));
+    await sendHandEmail(db, {
+      proposalId: 1, brandId: 'dearborn-denim',
+      evidence: { rfq_id: 'r1', intents: ['fi_1'], vendor: 'carr-textile' },
+      body: normalized({ rfq_id: 'r1', attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    const rows = listRfqMessages(db, 'r1');
+    expect(rows[0]).toMatchObject({ vendor_slug: 'carr-textile', vendor_name: 'Carrtextiles' });
+  });
+
+  it('uses the body\'s own vendor_name verbatim over the domain fallback', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 202 }));
+    await sendHandEmail(db, {
+      proposalId: 1, brandId: 'dearborn-denim',
+      evidence: { rfq_id: 'r1', intents: ['fi_1'], vendor: 'carr-textile' },
+      body: normalized({ rfq_id: 'r1', attachments: [], vendor_name: 'Carr Textile' }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    const rows = listRfqMessages(db, 'r1');
+    expect(rows[0]!.vendor_name).toBe('Carr Textile');
+  });
+
+  it('leaves vendor_slug null when evidence carries no vendor field', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 202 }));
+    await sendHandEmail(db, {
+      proposalId: 1, brandId: 'dearborn-denim', evidence: {},
+      body: normalized({ attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    const rows = listRfqMessages(db, 'linen-spring27-carr-20260910');
+    expect(rows[0]!.vendor_slug).toBeNull();
+  });
+
+  it('derives a distinct vendor_name per recipient domain when the body names none', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 202 }));
+    await sendHandEmail(db, {
+      proposalId: 1, brandId: 'dearborn-denim', evidence: { intents: ['fi_1'] },
+      body: normalized({ to: ['sales@heritagelinen.example', 'orders@coastal-linen.example'], attachments: [] }),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    const rows = listRfqMessages(db, 'linen-spring27-carr-20260910');
+    expect(rows.map((r) => r.vendor_name)).toEqual(['Heritagelinen', 'Coastal-linen']);
   });
 
   it('skips an attachment that 404s and names it in notify, still sending the mail', async () => {
@@ -423,6 +483,24 @@ describe('sendHandEmail', () => {
       // Never surfaced anywhere in the response.
       expect(JSON.stringify(r.body)).not.toMatch(/dm-secret-key/);
     });
+  });
+});
+
+describe('resolveVendorName / deriveVendorNameFromDomain', () => {
+  it.each([
+    ['carrtextile.com', 'Carrtextile'],
+    ['CarrTextile.COM', 'Carrtextile'],
+    ['coastal-linen.example', 'Coastal-linen'],
+  ])('titles %s → %s', (domain, expected) => expect(deriveVendorNameFromDomain(domain)).toBe(expected));
+
+  it('resolveVendorName prefers the body\'s vendor_name over the domain', () => {
+    const body = normalized({ vendor_name: 'Carr Textile' });
+    expect(resolveVendorName(body, 'someone@carrtextile.com')).toBe('Carr Textile');
+  });
+
+  it('resolveVendorName falls back to the recipient\'s own domain when the body carries none', () => {
+    const body = normalized();
+    expect(resolveVendorName(body, 'sales@heritagelinen.example')).toBe('Heritagelinen');
   });
 });
 

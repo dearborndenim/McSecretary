@@ -29,6 +29,7 @@ const TEXT_MAX = 20_000;
 const HTML_MAX = 100_000;
 const RFQ_ID_MAX = 128;
 const NAME_MAX = 200;
+const VENDOR_NAME_MAX = 200;
 
 export interface EmailAttachmentRef {
   url: string;
@@ -43,6 +44,16 @@ export interface EmailHandBody {
   html?: string;
   attachments: EmailAttachmentRef[];
   rfq_id: string | null;
+  /**
+   * The vendor's display name, when the sender (Sourcing) knows it — e.g. the
+   * registry's `name` for the vendor an RFQ went to. Recorded on the outbound
+   * `rfq_messages` row and used verbatim as `vendorName` on every quote a
+   * reply to this RFQ produces (see `vendorNameFor`, `src/email/rfq-intake.ts`).
+   * Never the sender's own display name — that is untrusted, vendor-supplied
+   * text. Absent (or blank), the row falls back to the recipient's domain,
+   * title-cased.
+   */
+  vendor_name: string | null;
 }
 
 const EMAIL_RE = /^[^\s@<>,]+@[^\s@<>,.]+(\.[^\s@<>,.]+)+$/;
@@ -94,6 +105,10 @@ export function validateEmailPayload(
       && (typeof body.rfq_id !== 'string' || body.rfq_id.length === 0 || body.rfq_id.length > RFQ_ID_MAX)) {
     return { ok: false, error: `rfq_id must be a string of 1–${RFQ_ID_MAX} chars` };
   }
+  if (body.vendor_name !== undefined && body.vendor_name !== null
+      && (typeof body.vendor_name !== 'string' || body.vendor_name.trim().length === 0 || body.vendor_name.length > VENDOR_NAME_MAX)) {
+    return { ok: false, error: `vendor_name must be a string of 1–${VENDOR_NAME_MAX} chars` };
+  }
 
   const attachments: EmailAttachmentRef[] = [];
   if (body.attachments !== undefined) {
@@ -124,6 +139,7 @@ export function validateEmailPayload(
       html: typeof body.html === 'string' ? body.html : undefined,
       attachments,
       rfq_id: typeof body.rfq_id === 'string' ? body.rfq_id : null,
+      vendor_name: typeof body.vendor_name === 'string' ? body.vendor_name.trim() : null,
     },
   };
 }
@@ -284,6 +300,39 @@ function evidenceIntents(evidence: Record<string, unknown>): string {
   return '';
 }
 
+/** The proposal's `evidence.vendor` (a registry slug, e.g. "carr-textile") — recorded for traceability only, never used to name a vendor quote. */
+function evidenceVendorSlug(evidence: Record<string, unknown>): string | null {
+  const v = evidence.vendor;
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+}
+
+/**
+ * Title-case the registrable part of a domain: `carrtextile.com` → `Carrtextile`,
+ * `mail.carrtextile.co.uk` → `Co` (a multi-label suffix is not special-cased —
+ * this is a last-resort fallback for when Sourcing did not supply a
+ * `vendor_name`, not an attempt at real domain parsing).
+ */
+export function deriveVendorNameFromDomain(domain: string): string {
+  const parts = domain.split('.').filter((p) => p.length > 0);
+  if (parts.length === 0) return domain;
+  const label = parts.length > 1 ? parts[parts.length - 2]! : parts[0]!;
+  return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
+}
+
+/**
+ * The display name a reply to this vendor's quotes get filed under
+ * (`vendorNameFor`, `src/email/rfq-intake.ts` reads it off the resulting
+ * `rfq_messages` row) — the body's own `vendor_name` when Sourcing supplied
+ * one, else the recipient's own domain, title-cased. Never the sender's
+ * display name; that is decided later, from the *inbound* reply, and is
+ * untrusted vendor-supplied text.
+ */
+export function resolveVendorName(body: EmailHandBody, vendorEmail: string): string {
+  if (body.vendor_name) return body.vendor_name;
+  const domain = vendorEmail.slice(vendorEmail.lastIndexOf('@') + 1).trim().toLowerCase();
+  return domain ? deriveVendorNameFromDomain(domain) : vendorEmail;
+}
+
 /**
  * The brand's own `design-module` hand — url + bearer — when the brand config names one
  * and its env vars are set; `null` otherwise (no hand registered, or misconfigured). Never
@@ -437,6 +486,7 @@ export async function sendHandEmail(
   const conversationId = res.headers.get('conversation-id');
   const rfqId = resolveRfqId(req.body, req.evidence);
   const sentAt = deps.now();
+  const vendorSlug = evidenceVendorSlug(req.evidence);
   for (const vendorEmail of req.body.to) {
     insertRfqMessage(db, {
       rfq_id: rfqId,
@@ -448,6 +498,8 @@ export async function sendHandEmail(
       brand_id: req.brandId,
       intents: evidenceIntents(req.evidence),
       conversation_id: conversationId,
+      vendor_slug: vendorSlug,
+      vendor_name: resolveVendorName(req.body, vendorEmail),
     });
   }
 

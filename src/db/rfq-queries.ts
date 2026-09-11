@@ -12,6 +12,10 @@ export interface RfqMessageInput {
   intents: string;
   /** Graph's conversationId for the outbound send, when Graph returns one (it doesn't for a plain sendMail). Null otherwise. */
   conversation_id?: string | null;
+  /** The sending proposal's `evidence.vendor` (a registry slug, e.g. "carr-textile"). Traceability only — never used to name a vendor quote. */
+  vendor_slug?: string | null;
+  /** The display name a reply's vendor quotes get filed under: the email hand body's own `vendor_name`, else the recipient's domain title-cased. */
+  vendor_name?: string | null;
 }
 
 export interface RfqMessageRow extends RfqMessageInput {
@@ -22,6 +26,8 @@ export interface RfqMessageRow extends RfqMessageInput {
   /** When the acknowledgement for `ack_message_id` was sent. Null until then. */
   acknowledged_at: string | null;
   conversation_id: string | null;
+  vendor_slug: string | null;
+  vendor_name: string | null;
 }
 
 /** Lowercased domain part of an email address, or '' when it isn't one. */
@@ -34,8 +40,8 @@ export function emailDomain(address: string): string {
 export function insertRfqMessage(db: Database.Database, m: RfqMessageInput): number {
   const r = db.prepare(`
     INSERT INTO rfq_messages
-      (rfq_id, vendor_email, vendor_domain, subject, graph_message_id, sent_at, proposal_id, brand_id, intents, conversation_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (rfq_id, vendor_email, vendor_domain, subject, graph_message_id, sent_at, proposal_id, brand_id, intents, conversation_id, vendor_slug, vendor_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     m.rfq_id,
     m.vendor_email,
@@ -47,6 +53,8 @@ export function insertRfqMessage(db: Database.Database, m: RfqMessageInput): num
     m.brand_id,
     m.intents,
     m.conversation_id ?? null,
+    m.vendor_slug ?? null,
+    m.vendor_name ?? null,
   );
   return Number(r.lastInsertRowid);
 }

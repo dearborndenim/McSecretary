@@ -155,8 +155,13 @@ describe('buildSpine', () => {
     expect(r.routed).toBe('executed');
     expect(calls).toEqual(['https://graph.microsoft.com/v1.0/users/rob%40dearborndenim.com/sendMail']);
     expect(bot.sent.at(-1)!.text).toMatch(/Sent to sales@carr\.example: \[DD-RFQ-r1\]/);
-    const rows = db.prepare('SELECT rfq_id, vendor_domain, intents, graph_message_id FROM rfq_messages').all();
-    expect(rows).toEqual([{ rfq_id: 'r1', vendor_domain: 'carr.example', intents: 'fi_1', graph_message_id: 'g-7' }]);
+    const rows = db.prepare('SELECT rfq_id, vendor_domain, intents, graph_message_id, vendor_slug, vendor_name FROM rfq_messages').all();
+    // No evidence.vendor and no body.vendor_name on this proposal — vendor_slug stays null
+    // and vendor_name falls back to the recipient's own domain, title-cased.
+    expect(rows).toEqual([{
+      rfq_id: 'r1', vendor_domain: 'carr.example', intents: 'fi_1', graph_message_id: 'g-7',
+      vendor_slug: null, vendor_name: 'Carr',
+    }]);
   });
 
   it('fails an email proposal when no Graph token is wired, without calling out', async () => {

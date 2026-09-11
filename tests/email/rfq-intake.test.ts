@@ -242,10 +242,11 @@ describe('buildVendorQuoteBody', () => {
     expect(buildVendorQuoteBody(option, {
       fabricIntentId: 'fi_1', vendorName: 'Carr Textiles', rfqId: RFQ_ID,
       attachments: [{ url: 'https://mcs.example/files/rfq/aaaa/sw.png', name: 'sw.png', kind: 'image' }],
+      senderAddress: 'sales@carrtextiles.example',
     })).toEqual({
       fabricIntentId: 'fi_1',
       vendorName: 'Carr Textiles',
-      description: 'CT-4410 — Carr Textiles',
+      description: 'CT-4410 — sales@carrtextiles.example',
       pricePerUnit: 6.75,
       unit: 'yard',
       moq: 300,
@@ -262,20 +263,36 @@ describe('buildVendorQuoteBody', () => {
   it('passes unquoted fields through as null rather than inventing them', () => {
     const body = buildVendorQuoteBody(
       { ...option, price_per_yard_usd: null, moq: null, lead_days: null, width_in: null, weight_oz: null },
-      { fabricIntentId: 'fi_1', vendorName: 'V', rfqId: RFQ_ID, attachments: [] },
+      { fabricIntentId: 'fi_1', vendorName: 'V', rfqId: RFQ_ID, attachments: [], senderAddress: 'sales@v.example' },
     );
     expect(body).toMatchObject({ pricePerUnit: null, moq: null, leadDays: null, widthIn: null, weightOz: null });
+  });
+
+  it('keeps the description keyed on the sender address, never the vendor name, for traceability', () => {
+    const body = buildVendorQuoteBody(option, {
+      fabricIntentId: 'fi_1', vendorName: 'Carr Textiles', rfqId: RFQ_ID, attachments: [],
+      senderAddress: 'someone-at-carr@carrtextiles.example',
+    });
+    expect(body.description).toBe('CT-4410 — someone-at-carr@carrtextiles.example');
   });
 });
 
 describe('vendorNameFor', () => {
-  const match = { vendor_domain: 'carrtextiles.example' } as RfqMatch;
-  it('uses the signed display name', () => {
-    expect(vendorNameFor(reply(), match)).toBe('Carr Textiles');
+  it('uses the RFQ row\'s own vendor_name, never the reply\'s sender display name', () => {
+    const match = { vendor_domain: 'carrtextiles.example', vendor_name: 'Carr Textile' } as RfqMatch;
+    expect(vendorNameFor(reply(), match)).toBe('Carr Textile');
+    expect(vendorNameFor(reply({ senderName: 'Someone Else Entirely' }), match)).toBe('Carr Textile');
   });
-  it('falls back to the domain when the display name is just the address', () => {
-    expect(vendorNameFor(reply({ senderName: 'sales@carrtextiles.example' }), match)).toBe('carrtextiles.example');
-    expect(vendorNameFor(reply({ senderName: '' }), match)).toBe('carrtextiles.example');
+
+  it('falls back to the row\'s vendor_domain when vendor_name is empty (a row sent before the column existed)', () => {
+    const match = { vendor_domain: 'carrtextiles.example', vendor_name: '' } as RfqMatch;
+    expect(vendorNameFor(reply(), match)).toBe('carrtextiles.example');
+  });
+
+  it('falls back to the reply\'s own sender domain/address when the row carries neither', () => {
+    const match = { vendor_domain: '', vendor_name: '' } as RfqMatch;
+    expect(vendorNameFor(reply(), match)).toBe('carrtextiles.example');
+    expect(vendorNameFor(reply({ sender: 'not-an-address' }), match)).toBe('not-an-address');
   });
 });
 
@@ -295,6 +312,7 @@ const MATCH: RfqMatch = {
   rfq_id: RFQ_ID,
   vendor_email: 'sales@carrtextiles.example',
   vendor_domain: 'carrtextiles.example',
+  vendor_name: 'Carr Textiles',
   intents: ['fi_1', 'fi_2'],
   proposal_id: 12,
   brand_id: 'dearborn-denim',
@@ -343,7 +361,8 @@ describe('processRfqReply', () => {
     expect(h.quotes.map((q) => q.fabricIntentId)).toEqual(['fi_1', 'fi_2']);
     expect(h.quotes[0]).toMatchObject({
       styleNumber: 'CT-4410', pricePerUnit: 6.75, priceStatus: 'quoted', unit: 'yard', rfqId: RFQ_ID,
-      description: 'CT-4410 — Carr Textiles',
+      vendorName: 'Carr Textiles',
+      description: 'CT-4410 — sales@carrtextiles.example',
       attachments: [{ url: 'https://mcs.example/files/rfq/abc/sw.png', name: 'sw.png', kind: 'image' }],
     });
     expect(r.quotes).toEqual(['q1', 'q2']);

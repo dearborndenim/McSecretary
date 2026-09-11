@@ -30,7 +30,10 @@ describe('spine schema', () => {
     const db = new Database(':memory:');
     initializeSchema(db);
     const cols = (db.prepare('PRAGMA table_info(rfq_messages)').all() as { name: string }[]).map((c) => c.name);
-    for (const name of ['rfq_id', 'vendor_email', 'vendor_domain', 'subject', 'graph_message_id', 'sent_at', 'proposal_id', 'brand_id', 'intents']) {
+    for (const name of [
+      'rfq_id', 'vendor_email', 'vendor_domain', 'subject', 'graph_message_id', 'sent_at', 'proposal_id',
+      'brand_id', 'intents', 'vendor_slug', 'vendor_name',
+    ]) {
       expect(cols, name).toContain(name);
     }
   });
