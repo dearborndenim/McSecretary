@@ -146,6 +146,13 @@ export function initializeSpineSchema(db: Database.Database): void {
   if (!rfqCols.includes('ack_message_id')) db.exec('ALTER TABLE rfq_messages ADD COLUMN ack_message_id TEXT');
   if (!rfqCols.includes('acknowledged_at')) db.exec('ALTER TABLE rfq_messages ADD COLUMN acknowledged_at TEXT');
 
+  // Additive migration: rfq_messages.conversation_id — Graph's conversationId
+  // for the outbound RFQ send, when Graph returns one. The RFQ reply matcher's
+  // domain fallback requires the inbound reply to be in this same conversation
+  // (or carry the [DD-RFQ-…] subject tag) before it will treat a same-domain
+  // sender as a vendor reply — see src/email/rfq-intake.ts matchRfqReply.
+  if (!rfqCols.includes('conversation_id')) db.exec('ALTER TABLE rfq_messages ADD COLUMN conversation_id TEXT');
+
   const seed = db.prepare(
     'INSERT OR IGNORE INTO outcome_maturity (lane, metric, lag_days) VALUES (?, ?, ?)',
   );

@@ -428,6 +428,13 @@ export async function sendHandEmail(
   }
 
   const graphMessageId = res.headers.get('request-id') ?? clientRequestId;
+  // Graph's plain sendMail answers 202 with no body and never a conversationId
+  // header — there is nothing to read here today. The column exists so a
+  // future switch to a create-then-send flow (which does return one) can
+  // populate it without another migration; until then this is always null and
+  // the RFQ reply matcher's domain fallback falls back to requiring the
+  // [DD-RFQ-…] tag instead (see matchRfqReply).
+  const conversationId = res.headers.get('conversation-id');
   const rfqId = resolveRfqId(req.body, req.evidence);
   const sentAt = deps.now();
   for (const vendorEmail of req.body.to) {
@@ -440,6 +447,7 @@ export async function sendHandEmail(
       proposal_id: req.proposalId,
       brand_id: req.brandId,
       intents: evidenceIntents(req.evidence),
+      conversation_id: conversationId,
     });
   }
 

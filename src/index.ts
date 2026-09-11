@@ -403,7 +403,7 @@ async function runRfqScan(messages: EmailSummary[]): Promise<RfqScanSummary | nu
   const handler = getRfqIntakeHandler();
   if (!handler) return null;
   const rawEmails = messages.filter((e) => e.body !== undefined).map(toRawEmail);
-  return intakeRfqRepliesFrom(rawEmails, { db, now: () => new Date().toISOString(), handler });
+  return intakeRfqRepliesFrom(rawEmails, { db, now: () => new Date().toISOString(), handler, env: process.env });
 }
 
 async function handleEmailScan(): Promise<void> {

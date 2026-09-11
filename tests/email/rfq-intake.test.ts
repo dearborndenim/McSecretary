@@ -7,7 +7,7 @@ import {
 import {
   matchRfqReply, extractRfqTag, parseRfqExtraction, buildVendorQuoteBody, vendorNameFor,
   processRfqReply, setRfqIntakeHandler, getRfqIntakeHandler, buildExtractionPrompt, classifyRfqReply,
-  intakeRfqRepliesFrom,
+  intakeRfqRepliesFrom, resolveOwnDomains,
   type RfqExtraction, type RfqIntakeDeps, type RfqIntakeHandler, type RfqIntakeResult, type RfqMatch,
   type RfqOption, type VendorQuoteBody,
 } from '../../src/email/rfq-intake.js';
@@ -70,6 +70,11 @@ describe('extractRfqTag', () => {
     expect(extractRfqTag(null, 'no tag', `body [DD-RFQ-${RFQ_ID}] here`)).toBe(RFQ_ID);
     expect(extractRfqTag('nothing', undefined)).toBeNull();
   });
+
+  it('matches an id carrying "+" (Sourcing self-test ids), and a "." join alongside it', () => {
+    expect(extractRfqTag('Re: [DD-RFQ-carr-fall-women-s-self-test-p1ozu+y5wl+s7tma] Fabric request')).toBe('carr-fall-women-s-self-test-p1ozu+y5wl+s7tma');
+    expect(extractRfqTag('Re: [DD-RFQ-carr.fall.women.self-test.p1ozu] Fabric request')).toBe('carr.fall.women.self-test.p1ozu');
+  });
 });
 
 describe('matchRfqReply', () => {
@@ -96,14 +101,14 @@ describe('matchRfqReply', () => {
     expect(m?.matched_by).toBe('tag');
   });
 
-  it('matches by sender domain when the vendor strips the tag', () => {
-    seedSend(db);
+  it('matches by sender domain when the vendor strips the tag, given the same Graph conversation', () => {
+    seedSend(db, { conversation_id: 'thread-1' });
     const m = matchRfqReply(db, reply({ subject: 'Our linen range', bodyPreview: 'attached' }), '2026-09-12T09:00:00.000Z');
     expect(m).toMatchObject({ rfq_id: RFQ_ID, matched_by: 'domain' });
   });
 
   it('does not match a domain outside the 60-day window', () => {
-    seedSend(db, { sent_at: '2026-06-01T00:00:00.000Z' });
+    seedSend(db, { sent_at: '2026-06-01T00:00:00.000Z', conversation_id: 'thread-1' });
     const m = matchRfqReply(db, reply({ subject: 'Our linen range', bodyPreview: '' }), '2026-09-12T09:00:00.000Z');
     expect(m).toBeNull();
   });
@@ -116,9 +121,74 @@ describe('matchRfqReply', () => {
 
   it('takes the most recent send for a domain that was mailed twice', () => {
     seedSend(db, { rfq_id: 'old-rfq', sent_at: '2026-08-01T00:00:00.000Z', intents: 'fi_9' });
-    seedSend(db, { rfq_id: 'new-rfq', sent_at: '2026-09-09T00:00:00.000Z', intents: 'fi_7' });
+    seedSend(db, { rfq_id: 'new-rfq', sent_at: '2026-09-09T00:00:00.000Z', intents: 'fi_7', conversation_id: 'thread-1' });
     const m = matchRfqReply(db, reply({ subject: 'no tag', bodyPreview: '' }), '2026-09-10T00:00:00.000Z');
     expect(m).toMatchObject({ rfq_id: 'new-rfq', intents: ['fi_7'] });
+  });
+
+  // --- Own-domain fallback bug fix (2026-09): a self-test RFQ sent to
+  // rob@dearborndenim.com must never let unrelated internal mail from that
+  // domain false-match as a vendor reply. ---
+
+  it('own-domain sender without the tag: no match, even with a matching thread', () => {
+    seedSend(db, { vendor_email: 'rob@dearborndenim.com', conversation_id: 'thread-1' });
+    const m = matchRfqReply(
+      db,
+      reply({ sender: 'rob@dearborndenim.com', subject: 'Weekly production notes', bodyPreview: '', threadId: 'thread-1' }),
+      '2026-09-12T09:00:00.000Z',
+      { ownDomains: ['dearborndenim.com'] },
+    );
+    expect(m).toBeNull();
+  });
+
+  it('own-domain sender with the tag: matches (self-tests keep working)', () => {
+    seedSend(db, { vendor_email: 'rob@dearborndenim.com' });
+    const m = matchRfqReply(
+      db,
+      reply({ sender: 'rob@dearborndenim.com' }),
+      '2026-09-12T09:00:00.000Z',
+      { ownDomains: ['dearborndenim.com'] },
+    );
+    expect(m).toMatchObject({ rfq_id: RFQ_ID, matched_by: 'tag' });
+  });
+
+  it('vendor domain without a tag or a matching thread: no match', () => {
+    seedSend(db, { conversation_id: 'thread-1' });
+    const m = matchRfqReply(
+      db,
+      reply({ subject: 'Our linen range', bodyPreview: '', threadId: 'thread-2' }),
+      '2026-09-12T09:00:00.000Z',
+      { ownDomains: ['dearborndenim.com'] },
+    );
+    expect(m).toBeNull();
+  });
+
+  it('vendor domain in the same thread: matches', () => {
+    seedSend(db, { conversation_id: 'thread-1' });
+    const m = matchRfqReply(
+      db,
+      reply({ subject: 'Our linen range', bodyPreview: '', threadId: 'thread-1' }),
+      '2026-09-12T09:00:00.000Z',
+      { ownDomains: ['dearborndenim.com'] },
+    );
+    expect(m).toMatchObject({ rfq_id: RFQ_ID, matched_by: 'domain' });
+  });
+});
+
+describe('resolveOwnDomains', () => {
+  it('defaults to dearborndenim.com with no env set', () => {
+    expect(resolveOwnDomains({})).toEqual(['dearborndenim.com']);
+  });
+
+  it('adds the RFQ_MAILBOX and RFQ_FROM_ADDRESS domains', () => {
+    const domains = resolveOwnDomains({ RFQ_MAILBOX: 'rfq@dearborn-denim.example', RFQ_FROM_ADDRESS: 'sourcing@alias.example' });
+    expect(domains).toEqual(expect.arrayContaining(['dearborn-denim.example', 'alias.example', 'dearborndenim.com']));
+  });
+
+  it('honors RFQ_OWN_DOMAINS as a CSV override/addition, deduped', () => {
+    expect(resolveOwnDomains({ RFQ_OWN_DOMAINS: 'dearborndenim.com, other.example' })).toEqual(
+      expect.arrayContaining(['dearborndenim.com', 'other.example']),
+    );
   });
 });
 
@@ -595,5 +665,26 @@ describe('intakeRfqRepliesFrom (30-min Email Scan + "scan rfq" shared entry poin
 
     expect(summary).toMatchObject({ scanned: 3, matched: 2, skipped: 1, filed: 1 });
     expect(calls.map((c) => c.id)).toEqual(['msg-new']);
+  });
+
+  it('regression: a self-test RFQ to rob@dearborndenim.com does not carry over to unrelated internal mail from that domain', async () => {
+    // Robert self-tests the RFQ flow by sending it to himself — this used to
+    // leave every later email from anyone @dearborndenim.com looking like a
+    // reply to it via the domain fallback.
+    seedSend(db, { vendor_email: 'rob@dearborndenim.com' });
+    const calls: RawEmail[] = [];
+    const handler = filedHandler(calls);
+
+    const unrelated = [
+      reply({ id: 'm1', sender: 'olivier@dearborndenim.com', subject: 'Kanban update', bodyPreview: '', threadId: 'ops-1' }),
+      reply({ id: 'm2', sender: 'merab@dearborndenim.com', subject: 'PTO next week', bodyPreview: '', threadId: 'ops-2' }),
+      reply({ id: 'm3', sender: 'rob@dearborndenim.com', subject: 'Re: production notes', bodyPreview: '', threadId: 'ops-3' }),
+      reply({ id: 'm4', sender: 'billing@dearborndenim.com', subject: 'Invoice paid', bodyPreview: '', threadId: 'ops-4' }),
+    ];
+
+    const summary = await intakeRfqRepliesFrom(unrelated, { db, now: () => NOW, handler, env: {} });
+
+    expect(summary).toMatchObject({ scanned: 4, matched: 0, filed: 0, noted: 0 });
+    expect(calls).toEqual([]);
   });
 });

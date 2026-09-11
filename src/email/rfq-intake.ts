@@ -19,6 +19,7 @@ import {
   emailDomain, findRfqMessageByDomain, findRfqMessageByRfqId, parseIntents,
   isRfqReplyProcessed, markRfqReplyProcessed, type RfqMessageRow,
 } from '../db/rfq-queries.js';
+import { mailboxAddress, fromAddress } from '../spine/email-hand.js';
 import type { ProposalInput, SpineEventInput } from '../spine/types.js';
 import type { Routed } from '../spine/router.js';
 import type { ClassifiedEmail, RawEmail } from './types.js';
@@ -27,7 +28,7 @@ import type { ClassifiedEmail, RawEmail } from './types.js';
 export const RFQ_MATCH_WINDOW_DAYS = 60;
 
 /** The subject tag the outbound RFQ carries: `[DD-RFQ-<rfq_id>]`. */
-export const RFQ_TAG_RE = /\[DD-RFQ-([A-Za-z0-9][A-Za-z0-9._-]{0,127})\]/;
+export const RFQ_TAG_RE = /\[DD-RFQ-([A-Za-z0-9][A-Za-z0-9._+-]{0,127})\]/;
 
 /** Sanity caps so one chatty vendor cannot file a hundred quotes. */
 export const MAX_OPTIONS = 10;
@@ -69,12 +70,50 @@ function toMatch(row: RfqMessageRow, matchedBy: 'tag' | 'domain'): RfqMatch {
   };
 }
 
+/** `RFQ_OWN_DOMAINS` env default — the mailbox that sends RFQs and receives Robert's self-tests. */
+const DEFAULT_OWN_DOMAINS = 'dearborndenim.com';
+
+/**
+ * Domains that must never be treated as a vendor by the domain fallback: the
+ * RFQ-sending mailbox/alias, plus whatever `RFQ_OWN_DOMAINS` names (CSV,
+ * default `dearborndenim.com`). Robert's self-tests send an RFQ to his own
+ * mailbox, which otherwise leaves a `rfq_messages` row whose vendor_domain is
+ * our own domain — every other internal email from that domain would then
+ * false-match as a reply to it.
+ */
+export function resolveOwnDomains(env: Record<string, string | undefined>): string[] {
+  const domains = new Set<string>();
+  const mailboxDomain = emailDomain(mailboxAddress(env));
+  if (mailboxDomain) domains.add(mailboxDomain);
+  const fromDomain = emailDomain(fromAddress(env));
+  if (fromDomain) domains.add(fromDomain);
+  for (const part of (env.RFQ_OWN_DOMAINS ?? DEFAULT_OWN_DOMAINS).split(',')) {
+    const d = part.trim().toLowerCase();
+    if (d) domains.add(d);
+  }
+  return [...domains];
+}
+
 /**
  * Is this inbound message a reply to one of our RFQs? The tag wins (it names
- * the exact RFQ even when the vendor mails from a different address); the
- * domain is the fallback for vendors whose mail client strips the subject.
+ * the exact RFQ even when the vendor mails from a different address).
+ *
+ * The domain fallback is for vendors whose mail client strips the subject —
+ * but a bare domain match is not enough on its own (spec fix, 2026-09):
+ *   - the sender's domain must not be one of `ownDomains` (a self-test RFQ,
+ *     sent to our own mailbox, must never let *other* internal mail from that
+ *     domain false-match as a vendor reply);
+ *   - and, when the sender's domain differs from ours, the fallback still only
+ *     fires when the inbound message either carries the `[DD-RFQ-…]` tag (even
+ *     if it didn't resolve a specific row above) or landed in the same Graph
+ *     conversation as the RFQ we sent.
  */
-export function matchRfqReply(db: Database.Database, email: RawEmail, nowIso: string): RfqMatch | null {
+export function matchRfqReply(
+  db: Database.Database,
+  email: RawEmail,
+  nowIso: string,
+  opts: { ownDomains?: string[] } = {},
+): RfqMatch | null {
   const tag = extractRfqTag(email.subject, email.bodyPreview);
   if (tag) {
     const row = findRfqMessageByRfqId(db, tag);
@@ -82,9 +121,15 @@ export function matchRfqReply(db: Database.Database, email: RawEmail, nowIso: st
   }
   const domain = emailDomain(email.sender);
   if (!domain) return null;
+  const ownDomains = opts.ownDomains ?? [];
+  if (ownDomains.includes(domain)) return null;
+  if (!tag && !email.threadId) return null;
   const since = new Date(new Date(nowIso).getTime() - RFQ_MATCH_WINDOW_DAYS * 86_400_000).toISOString();
   const row = findRfqMessageByDomain(db, domain, since);
-  return row ? toMatch(row, 'domain') : null;
+  if (!row) return null;
+  if (tag) return toMatch(row, 'domain');
+  if (row.conversation_id && row.conversation_id === email.threadId) return toMatch(row, 'domain');
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -559,6 +604,8 @@ export interface RfqScanDeps {
   db: Database.Database;
   now: () => string;
   handler: RfqIntakeHandler;
+  /** Source for RFQ_MAILBOX / RFQ_FROM_ADDRESS / RFQ_OWN_DOMAINS (own-domain gate on the matcher's domain fallback). Defaults to `{}` (dearborndenim.com). */
+  env?: Record<string, string | undefined>;
 }
 
 export interface RfqScanSummary {
@@ -592,9 +639,10 @@ export async function intakeRfqRepliesFrom(
   const summary: RfqScanSummary = {
     scanned: messages.length, matched: 0, skipped: 0, filed: 0, noted: 0, errors: [], outcomes: new Map(),
   };
+  const ownDomains = resolveOwnDomains(deps.env ?? {});
   for (const email of messages) {
     try {
-      const match = matchRfqReply(deps.db, email, deps.now());
+      const match = matchRfqReply(deps.db, email, deps.now(), { ownDomains });
       if (!match) continue;
       summary.matched += 1;
 

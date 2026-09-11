@@ -206,7 +206,7 @@ export async function runTriage(
     // admin CLI) every email takes the ordinary path.
     const rfqIntake = getRfqIntakeHandler();
     const rfqScan = rfqIntake
-      ? await intakeRfqRepliesFrom(allEmails, { db, now: () => now.toISOString(), handler: rfqIntake })
+      ? await intakeRfqRepliesFrom(allEmails, { db, now: () => now.toISOString(), handler: rfqIntake, env: process.env })
       : null;
     if (rfqScan) errors.push(...rfqScan.errors);
 

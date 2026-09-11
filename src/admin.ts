@@ -8,6 +8,7 @@
  *   set-preferences --user-id <id> [--business-context <text>] [--briefing-cron <cron>]
  *   list-users
  *   generate-invite --user-id <id>
+ *   promote         --agent <agent> --action <action_type> --level <0-3> [--brand dearborn-denim]
  */
 
 import type Database from 'better-sqlite3';
@@ -20,6 +21,16 @@ import {
   getUserEmailAccounts,
   createInvite,
 } from './db/user-queries.js';
+import { promoteTrust, getTrustRow } from './db/trust-queries.js';
+import type { TrustLevel } from './spine/types.js';
+
+const DEFAULT_BRAND_ID = 'dearborn-denim';
+
+function pinnedRefusalMessage(actionType: string, reason: 'pinned' | 'out_of_range'): string {
+  return reason === 'pinned'
+    ? `${actionType} is a pinned human gate and stays at level 1.`
+    : 'Level must be 0–3.';
+}
 
 export interface AdminCommand {
   action: string;
@@ -94,8 +105,19 @@ export async function executeAdminCommand(db: Database.Database, cmd: AdminComma
       return `Invite code: ${code}\nExpires in 24 hours.`;
     }
 
+    case 'promote': {
+      if (!cmd.args.agent || !cmd.args.action || cmd.args.level === undefined) {
+        return 'Usage: promote --agent <agent> --action <action_type> --level <0-3> [--brand dearborn-denim]';
+      }
+      const level = Number(cmd.args.level) as TrustLevel;
+      const key = { agent: cmd.args.agent, brand_id: cmd.args.brand || DEFAULT_BRAND_ID, action_type: cmd.args.action };
+      const r = promoteTrust(db, key, level, 'admin-cli', new Date().toISOString());
+      if (!r.ok) return pinnedRefusalMessage(key.action_type, r.reason);
+      return JSON.stringify(getTrustRow(db, key), null, 2);
+    }
+
     default:
-      return `Unknown command: ${cmd.action}. Available: add-user, add-email, set-preferences, list-users, generate-invite`;
+      return `Unknown command: ${cmd.action}. Available: add-user, add-email, set-preferences, list-users, generate-invite, promote`;
   }
 }
 

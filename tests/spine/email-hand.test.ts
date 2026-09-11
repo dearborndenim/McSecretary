@@ -209,7 +209,23 @@ describe('sendHandEmail', () => {
       proposal_id: 12,
       brand_id: 'dearborn-denim',
       intents: 'fi_1,fi_2',
+      conversation_id: null,
     });
+  });
+
+  it('records the Graph conversation-id header on rfq_messages when Graph returns one', async () => {
+    const fetchMock = vi.fn(async (url: string) => (
+      url.startsWith('https://design.example/')
+        ? new Response(Buffer.from('png'), { status: 200, headers: { 'content-type': 'image/png' } })
+        : new Response('', { status: 202, headers: { 'request-id': 'graph-req-9', 'conversation-id': 'conv-123' } })
+    ));
+    await sendHandEmail(db, {
+      proposalId: 12, brandId: 'dearborn-denim',
+      evidence: { rfq_id: 'linen-spring27-carr-20260910', intents: 'fi_1,fi_2', vendor: 'Carr Textiles' },
+      body: normalized(),
+    }, handDeps(fetchMock as unknown as EmailHandDeps['fetch']));
+    const rows = listRfqMessages(db, 'linen-spring27-carr-20260910');
+    expect(rows[0]!.conversation_id).toBe('conv-123');
   });
 
   it('records one rfq_messages row per recipient', async () => {

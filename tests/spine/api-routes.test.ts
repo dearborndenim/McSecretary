@@ -7,6 +7,7 @@ import { createSpineRouter, type SpineRouterDeps } from '../../src/spine/api-rou
 import { getFinalOutcomes } from '../../src/db/outcome-queries.js';
 import { getRun } from '../../src/db/run-index-queries.js';
 import { insertEvent } from '../../src/db/event-queries.js';
+import { getTrustRow } from '../../src/db/trust-queries.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 const KEY = 'k'.repeat(24);
@@ -369,6 +370,74 @@ describe('spine routes', () => {
     const rows = JSON.parse(out.body).rows;
     expect(rows).toHaveLength(1);
     expect(rows[0].level).toBe(2);
+  });
+
+  describe('POST /spine/trust/promote', () => {
+    const ADMIN_TOKEN = 't'.repeat(20);
+    function handlerWithToken(token?: string) {
+      const deps: SpineRouterDeps = {
+        db, now: () => NOW, agentKeys: new Map([[KEY, 'marketing-manager']]),
+        brandsDir: path.join(process.cwd(), 'config', 'brands'),
+        file: async () => { throw new Error('unused'); },
+        handFetch: async () => new Response('{}'),
+        env: token ? { SPINE_ADMIN_TOKEN: token } : {},
+      };
+      return createSpineRouter(deps);
+    }
+
+    it('answers 503 when SPINE_ADMIN_TOKEN is not configured', async () => {
+      const h = handlerWithToken(undefined);
+      const { res, out } = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: 'a', action_type: 'x', level: 2 }, `Bearer ${ADMIN_TOKEN}`), res);
+      expect(out.status).toBe(503);
+    });
+
+    it('answers 401 on a missing or wrong bearer, and a valid agent key does not unlock it', async () => {
+      const h = handlerWithToken(ADMIN_TOKEN);
+      for (const auth of [undefined, 'Bearer nope', `Bearer ${KEY}`]) {
+        const { res, out } = fakeRes();
+        await h(fakeReq('POST', '/spine/trust/promote', { agent: 'a', action_type: 'x', level: 2 }, auth), res);
+        expect(out.status, String(auth)).toBe(401);
+      }
+    });
+
+    it('promotes and returns the ledger row, defaulting brand_id to dearborn-denim', async () => {
+      const h = handlerWithToken(ADMIN_TOKEN);
+      const { res, out } = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: 'marketing-manager', action_type: 'creative_request', level: 2 }, `Bearer ${ADMIN_TOKEN}`), res);
+      expect(out.status).toBe(200);
+      expect(JSON.parse(out.body)).toMatchObject({ agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'creative_request', level: 2 });
+    });
+
+    it('accepts an explicit brand_id and rejects an unknown one', async () => {
+      const h = handlerWithToken(ADMIN_TOKEN);
+      let r = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: 'a', action_type: 'x', level: 1, brand_id: 'dearborn-denim' }, `Bearer ${ADMIN_TOKEN}`), r.res);
+      expect(r.out.status).toBe(200);
+      r = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: 'a', action_type: 'x', level: 1, brand_id: 'nope' }, `Bearer ${ADMIN_TOKEN}`), r.res);
+      expect(r.out.status).toBe(400);
+      expect(JSON.parse(r.out.body).error).toMatch(/Unknown brand/);
+    });
+
+    it('refuses to promote a pinned action above level 1, and writes nothing', async () => {
+      const h = handlerWithToken(ADMIN_TOKEN);
+      const { res, out } = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: 'a', action_type: 'ad_launch', level: 2 }, `Bearer ${ADMIN_TOKEN}`), res);
+      expect(out.status).toBe(400);
+      expect(JSON.parse(out.body).error).toMatch(/pinned/);
+      expect(getTrustRow(db, { agent: 'a', brand_id: 'dearborn-denim', action_type: 'ad_launch' })).toBeUndefined();
+    });
+
+    it('rejects an out-of-range level and a malformed body', async () => {
+      const h = handlerWithToken(ADMIN_TOKEN);
+      let r = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: 'a', action_type: 'x', level: 5 }, `Bearer ${ADMIN_TOKEN}`), r.res);
+      expect(r.out.status).toBe(400);
+      r = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: '', action_type: 'x', level: 2 }, `Bearer ${ADMIN_TOKEN}`), r.res);
+      expect(r.out.status).toBe(400);
+    });
   });
 
   it('rejects a body over 64 KB with 413 and destroys the request', async () => {

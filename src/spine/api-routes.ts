@@ -8,9 +8,9 @@ import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
 import { insertEvent, drainEvents, countPendingByType } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
-import { listTrustRowsForAgent } from '../db/trust-queries.js';
+import { listTrustRowsForAgent, promoteTrust, getTrustRow } from '../db/trust-queries.js';
 import type { Routed } from './router.js';
-import type { OutcomeInput, ProposalInput, RunIndexInput, SpineEventInput } from './types.js';
+import type { OutcomeInput, ProposalInput, RunIndexInput, SpineEventInput, TrustLevel } from './types.js';
 
 export interface SpineRouterDeps {
   db: Database.Database;
@@ -32,6 +32,8 @@ const HAND_PROXY_BODY_CAP = 1_048_576;
 const NOTES_TITLE_MAX = 120;
 const NOTES_SUMMARY_MAX = 2000;
 const NOTES_NOTIFY_MAX = 600;
+const DEFAULT_BRAND_ID = 'dearborn-denim';
+const PROMOTE_FIELDS = ['agent', 'action_type', 'level'];
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -161,6 +163,58 @@ function validateRun(b: Record<string, unknown>): string | null {
   return null;
 }
 
+function validatePromoteBody(b: Record<string, unknown>): string | null {
+  if (typeof b.agent !== 'string' || b.agent.length === 0 || b.agent.length > NAME_MAX) return `agent must be a string of 1–${NAME_MAX} chars`;
+  if (typeof b.action_type !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(b.action_type)) return 'action_type must be a snake_case identifier';
+  if (!Number.isInteger(b.level) || (b.level as number) < 0 || (b.level as number) > 3) return 'level must be an integer 0–3';
+  if (b.brand_id !== undefined && (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id))) return 'brand_id must be a lowercase slug';
+  return null;
+}
+
+/** Mirrors the Telegram `promote` command's refusal text (§6 pinned gates). */
+function promoteRefusalMessage(actionType: string, reason: 'pinned' | 'out_of_range'): string {
+  return reason === 'pinned'
+    ? `${actionType} is a pinned human gate and stays at level 1.`
+    : 'Level must be 0–3.';
+}
+
+/**
+ * `/spine/trust/promote` is gated by SPINE_ADMIN_TOKEN, not agent keys — a
+ * valid agent bearer must NOT unlock it, so this runs before (and instead of)
+ * the agentForBearer check the rest of the router uses.
+ */
+async function handlePromoteRoute(req: http.IncomingMessage, res: http.ServerResponse, deps: SpineRouterDeps): Promise<true> {
+  try {
+    const adminToken = deps.env.SPINE_ADMIN_TOKEN;
+    if (!adminToken) { json(res, 503, { error: 'SPINE_ADMIN_TOKEN is not configured' }); return true; }
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ') || auth.slice(7) !== adminToken) {
+      json(res, 401, { error: 'Unauthorized' });
+      return true;
+    }
+    const parsed = await readObject(req, PROMOTE_FIELDS);
+    if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+    const bad = validatePromoteBody(parsed.body);
+    if (bad) { json(res, 400, { error: bad }); return true; }
+    const brand_id = (parsed.body.brand_id as string | undefined) ?? DEFAULT_BRAND_ID;
+    try { loadBrandConfig(deps.brandsDir, brand_id); } catch { json(res, 400, { error: `Unknown brand: ${brand_id}` }); return true; }
+    const key = { agent: parsed.body.agent as string, brand_id, action_type: parsed.body.action_type as string };
+    const r = promoteTrust(deps.db, key, parsed.body.level as TrustLevel, 'admin-http', deps.now());
+    if (!r.ok) { json(res, 400, { error: promoteRefusalMessage(key.action_type, r.reason) }); return true; }
+    json(res, 200, getTrustRow(deps.db, key));
+    return true;
+  } catch (err) {
+    if (err instanceof BodyTooLarge) {
+      res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end(JSON.stringify({ error: 'Body too large' }), () => req.destroy());
+      return true;
+    }
+    console.error('spine route error', err);
+    json(res, 500, { error: 'Internal error' });
+    return true;
+  }
+}
+
 const PROPOSAL_FIELDS = ['brand_id', 'action_type', 'action_payload', 'reason', 'evidence', 'cost_usd', 'reversible', 'level_required', 'expires_at'];
 const EVENT_FIELDS = ['source_hand', 'brand_id', 'event_type', 'payload', 'urgent'];
 const OUTCOME_FIELDS = ['artifact_id', 'brand_id', 'lane', 'attributes', 'metrics', 'observed_at'];
@@ -191,11 +245,17 @@ export function createSpineRouter(deps: SpineRouterDeps) {
     const url = req.url ?? '';
     if (!url.startsWith('/spine/')) return false;
 
-    const agent = agentForBearer(deps.agentKeys, req.headers.authorization);
-    if (!agent) { json(res, 401, { error: 'Unauthorized' }); return true; }
-
     const [pathname, qs = ''] = url.split('?', 2) as [string, string?];
     const params = new URLSearchParams(qs);
+
+    // Admin-token gated, independent of agent keys — must run before the
+    // agentForBearer check below so an agent bearer can never unlock it.
+    if (req.method === 'POST' && pathname === '/spine/trust/promote') {
+      return handlePromoteRoute(req, res, deps);
+    }
+
+    const agent = agentForBearer(deps.agentKeys, req.headers.authorization);
+    if (!agent) { json(res, 401, { error: 'Unauthorized' }); return true; }
 
     try {
       if (req.method === 'POST' && pathname === '/spine/proposals') {

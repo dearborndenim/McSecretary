@@ -10,6 +10,8 @@ export interface RfqMessageInput {
   brand_id: string;
   /** CSV of product-dev fabric-intent ids the RFQ covered (from the proposal's evidence). */
   intents: string;
+  /** Graph's conversationId for the outbound send, when Graph returns one (it doesn't for a plain sendMail). Null otherwise. */
+  conversation_id?: string | null;
 }
 
 export interface RfqMessageRow extends RfqMessageInput {
@@ -19,6 +21,7 @@ export interface RfqMessageRow extends RfqMessageInput {
   ack_message_id: string | null;
   /** When the acknowledgement for `ack_message_id` was sent. Null until then. */
   acknowledged_at: string | null;
+  conversation_id: string | null;
 }
 
 /** Lowercased domain part of an email address, or '' when it isn't one. */
@@ -31,8 +34,8 @@ export function emailDomain(address: string): string {
 export function insertRfqMessage(db: Database.Database, m: RfqMessageInput): number {
   const r = db.prepare(`
     INSERT INTO rfq_messages
-      (rfq_id, vendor_email, vendor_domain, subject, graph_message_id, sent_at, proposal_id, brand_id, intents)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (rfq_id, vendor_email, vendor_domain, subject, graph_message_id, sent_at, proposal_id, brand_id, intents, conversation_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     m.rfq_id,
     m.vendor_email,
@@ -43,6 +46,7 @@ export function insertRfqMessage(db: Database.Database, m: RfqMessageInput): num
     m.proposal_id,
     m.brand_id,
     m.intents,
+    m.conversation_id ?? null,
   );
   return Number(r.lastInsertRowid);
 }

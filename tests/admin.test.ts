@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { initializeSchema } from '../src/db/schema.js';
 import { parseAdminCommand, executeAdminCommand } from '../src/admin.js';
 import { getAllUsers, getUserEmailAccounts } from '../src/db/user-queries.js';
+import { getTrustRow } from '../src/db/trust-queries.js';
 
 describe('admin CLI', () => {
   let db: Database.Database;
@@ -125,6 +126,48 @@ describe('admin CLI', () => {
       const result = await executeAdminCommand(db, { action: 'unknown-cmd', args: {} });
       expect(result).toContain('Unknown command: unknown-cmd');
       expect(result).toContain('Available:');
+    });
+
+    describe('promote', () => {
+      it('should promote and print the resulting ledger row, defaulting brand to dearborn-denim', async () => {
+        const result = await executeAdminCommand(db, {
+          action: 'promote',
+          args: { agent: 'marketing-manager', action: 'creative_request', level: '2' },
+        });
+        const row = JSON.parse(result);
+        expect(row).toMatchObject({ agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'creative_request', level: 2, last_change_by: 'admin-cli' });
+        expect(getTrustRow(db, { agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'creative_request' })?.level).toBe(2);
+      });
+
+      it('should honor an explicit --brand', async () => {
+        const result = await executeAdminCommand(db, {
+          action: 'promote',
+          args: { agent: 'a', action: 'x', level: '3', brand: 'other-brand' },
+        });
+        expect(JSON.parse(result)).toMatchObject({ brand_id: 'other-brand', level: 3 });
+      });
+
+      it('should refuse a pinned action above level 1 and write nothing', async () => {
+        const result = await executeAdminCommand(db, {
+          action: 'promote',
+          args: { agent: 'a', action: 'ad_launch', level: '2' },
+        });
+        expect(result).toMatch(/pinned/);
+        expect(getTrustRow(db, { agent: 'a', brand_id: 'dearborn-denim', action_type: 'ad_launch' })).toBeUndefined();
+      });
+
+      it('should refuse an out-of-range level', async () => {
+        const result = await executeAdminCommand(db, {
+          action: 'promote',
+          args: { agent: 'a', action: 'x', level: '9' },
+        });
+        expect(result).toBe('Level must be 0–3.');
+      });
+
+      it('should print usage when required args are missing', async () => {
+        const result = await executeAdminCommand(db, { action: 'promote', args: { agent: 'a' } });
+        expect(result).toMatch(/^Usage: promote/);
+      });
     });
   });
 });
