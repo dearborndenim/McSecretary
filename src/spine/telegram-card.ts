@@ -6,6 +6,7 @@ import {
 } from '../db/proposal-queries.js';
 import { recordTrustDecision } from '../db/trust-queries.js';
 import { parseEdit, applyEdit } from './edits.js';
+import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
 import { extractNotify, type ExecutionResult } from './executor.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
@@ -24,6 +25,10 @@ const REASON_CAP = 500;
 const EVIDENCE_VALUE_CAP = 80;
 /** An RFQ body is longer than a reason; Robert still has to read it on a phone. */
 const EMAIL_PREVIEW_CAP = 1200;
+/** A dispatch plan is one line per brief; 500 would cut the card mid-brief. */
+const GRAPH_PLAN_CAP = 1600;
+/** Up to this many briefs, the card also shows what Robert actually asked for. */
+const GRAPH_BRIEF_TEXT_MAX_BRIEFS = 3;
 
 /**
  * The inbox transport. Everything Telegram-specific lives behind this, so a
@@ -71,6 +76,36 @@ function cap(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+/** `evidence.design_runs_estimated`, when the filing tool put a number there. */
+function designRunsFromEvidence(evidenceJson: string): number | null {
+  try {
+    const e = JSON.parse(evidenceJson) as Record<string, unknown>;
+    return typeof e.design_runs_estimated === 'number' ? e.design_runs_estimated : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback: the count already written into the stored reason's estimate line. */
+function designRunsFromReason(reason: string): number | null {
+  for (const line of reason.split('\n')) {
+    if (!line.startsWith(ESTIMATE_PREFIX)) continue;
+    const m = /^Estimated (\d+) designer runs/.exec(line);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+/** `evidence.requested_by` — whose message this card came out of. */
+function requestedBy(evidenceJson: string): string | null {
+  try {
+    const e = JSON.parse(evidenceJson) as Record<string, unknown>;
+    return typeof e.requested_by === 'string' && e.requested_by.length > 0 ? e.requested_by : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Five-ish lines, phone-readable (spec §4.2). */
 export function renderProposalCard(p: ProposalRow): string {
   const payload = JSON.parse(p.action_payload) as ActionPayload;
@@ -109,6 +144,31 @@ export function renderProposalCard(p: ProposalRow): string {
       `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
     ].filter((l): l is string => l !== null);
     return lines.join('\n');
+  }
+
+  // graph proposals carry a whole dispatch plan: Robert is approving briefs
+  // and vendor contacts, so render the plan itself rather than a 500-char
+  // slice of `reason`. Rendered from the body, so an Edit to `summary` shows
+  // through; personas are `null` here because this render is synchronous and
+  // holds no hand access — the filed `reason` carries the real count.
+  if (payload.hand === 'graph') {
+    const parsed = validateDispatchPlan(payload.body, new Date().toISOString());
+    const planText = parsed.ok
+      ? renderPlanReason(parsed.plan, null, {
+        briefTextMaxBriefs: GRAPH_BRIEF_TEXT_MAX_BRIEFS,
+        // The real count was read from design-module when the card was filed;
+        // this render is synchronous and has no hand access, so it reuses it.
+        designRuns: designRunsFromEvidence(p.evidence) ?? designRunsFromReason(p.reason),
+      })
+      : p.reason;
+    const requester = requestedBy(p.evidence);
+    return [
+      `#${p.id} ${p.agent} · ${p.brand_id}${requester ? ` · for ${requester}` : ''}`,
+      cap(planText, GRAPH_PLAN_CAP),
+      'Edit: summary=<new text> only — anything deeper, Reject and re-send the message.',
+      `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
+      `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
+    ].join('\n');
   }
 
   const evidence: unknown = JSON.parse(p.evidence);

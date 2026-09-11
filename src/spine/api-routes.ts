@@ -106,6 +106,13 @@ function validateProposal(b: Record<string, unknown>): string | null {
     const emailCheck = validateEmailPayload(payload);
     if (!emailCheck.ok) return emailCheck.error;
   }
+  // The `graph` hand starts Designer runs and rewrites the vendor registry.
+  // Its only legitimate producer is McSecretary's own chat tool, which files
+  // in-process through `spine.file`. No agent bearer may reach it, whatever
+  // action_type it names.
+  if (payload.hand === 'graph') {
+    return "action_payload.hand 'graph' is filed in-process by McSecretary only; it cannot be filed over HTTP";
+  }
   if (typeof b.reason !== 'string' || b.reason.length === 0 || b.reason.length > 2000) return 'reason must be a string of 1–2000 chars';
   if (!isPlainObject(b.evidence)) return 'evidence must be an object';
   if (typeof b.cost_usd !== 'number' || !Number.isFinite(b.cost_usd) || b.cost_usd < 0) return 'cost_usd must be a non-negative number';
@@ -121,7 +128,9 @@ function validateProposal(b: Record<string, unknown>): string | null {
  * Robert would approve a card that can only fail. Exceptions: `notes` and
  * `email` are built-in hands available to every brand that hasn't registered
  * its own hand of that name — `notes` never makes an HTTP call and `email`
- * goes out through Microsoft Graph, so neither needs a config entry.
+ * goes out through Microsoft Graph, so neither needs a config entry. The third
+ * built-in hand, `graph`, is deliberately NOT an exception here: `validateProposal`
+ * refuses it outright on this path.
  */
 function validateBrandAndHand(brandsDir: string, brandId: string, hand: string): string | null {
   let brand;

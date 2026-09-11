@@ -5,6 +5,7 @@ import {
   buildStableSystemText,
   buildVolatileSystemText,
   buildChatSystemBlocks,
+  buildGraphRouting,
   type ChatPromptUser,
   type ChatContext,
 } from '../src/chat-prompt.js';
@@ -13,6 +14,7 @@ const olivier: ChatPromptUser = {
   name: 'Olivier',
   business_context: 'Olivier works at Dearborn Denim. End user of kanban-purchaser.',
   accounts: ['olivier@dearborndenim.com'],
+  is_admin: false,
 };
 
 const robert: ChatPromptUser = {
@@ -20,6 +22,7 @@ const robert: ChatPromptUser = {
   business_context:
     'Robert McMillan owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com).',
   accounts: ['rob@dearborndenim.com', 'robert@mcmillan-manufacturing.com'],
+  is_admin: true,
 };
 
 const ctx: ChatContext = {
@@ -121,13 +124,22 @@ describe('buildActingOnRequests (MCS-1)', () => {
 });
 
 describe('buildChatSystemBlocks (MCS-9 cache layout)', () => {
-  it('returns a stable block first and a volatile block second, both with ephemeral cache_control', () => {
+  it('gives a non-admin two blocks and no GRAPH ROUTING, both with ephemeral cache_control', () => {
     const blocks = buildChatSystemBlocks(olivier, ctx);
     expect(blocks).toHaveLength(2);
     expect(blocks[0]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
     expect(blocks[1]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
     expect(blocks[0]!.text).toBe(buildStableSystemText(olivier));
     expect(blocks[1]!.text).toBe(buildVolatileSystemText(ctx));
+    expect(blocks.some((b) => b.text.includes('=== GRAPH ROUTING ==='))).toBe(false);
+    expect(blocks.some((b) => b.text.includes('propose_graph_dispatch'))).toBe(false);
+  });
+
+  it('adds the GRAPH ROUTING block third for an admin', () => {
+    const blocks = buildChatSystemBlocks(robert, ctx);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[2]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
+    expect(blocks[2]!.text).toBe(buildGraphRouting('Robert'));
   });
 
   it('stable block = base + acting contract and contains nothing from the volatile context', () => {
@@ -171,9 +183,7 @@ describe('hard-limits policy: no code execution, no GitHub writes, no build queu
   it('states all three prohibitions plainly', () => {
     const text = buildSystemPromptBase(robert);
     expect(text).toContain('=== WHAT YOU DO NOT DO (HARD LIMITS) ===');
-    expect(text).toContain(
-      'You never run code, never write to GitHub, and never queue work for a build system.',
-    );
+    expect(text).toContain('You never run code and never write to GitHub.');
   });
 
   it('routes builds, code changes, and filed feedback to the Foreman session with a drafted message', () => {
@@ -208,5 +218,77 @@ describe('hard-limits policy: no code execution, no GitHub writes, no build queu
     for (const user of [robert, olivier]) {
       expect(buildStableSystemText(user), user.name).toContain('=== WHAT YOU DO NOT DO (HARD LIMITS) ===');
     }
+  });
+});
+
+describe('GRAPH ROUTING block', () => {
+  const text = buildGraphRouting('Robert');
+
+  it('is its own cached system block, third of three, for an admin only', () => {
+    const blocks = buildChatSystemBlocks(robert, ctx);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[2]!.text).toBe(buildGraphRouting('Robert'));
+    expect(blocks.every((b) => b.cache_control?.type === 'ephemeral')).toBe(true);
+    expect(buildChatSystemBlocks(olivier, ctx)).toHaveLength(2);
+  });
+
+  it('tells the model a directive is an instruction, not an idea, and to ask one question when unsure', () => {
+    expect(text).toContain('A directive is an instruction, not an idea');
+    expect(text).toContain('ask ONE question');
+    expect(text).toMatch(/instead of filing/i);
+  });
+
+  it('addresses the calling user, not Robert, for another user', () => {
+    expect(buildGraphRouting('Olivier')).toContain('Olivier');
+    expect(buildGraphRouting('Olivier')).not.toContain('Robert');
+  });
+
+  it('names every live agent and what it owns', () => {
+    for (const a of ['designer', 'sourcing', 'finance', 'production-planner', 'marketing-manager', 'purchasing', 'costing', 'merchandiser', 'trend-scout', 'technical-designer', 'pattern-maker', 'design-artist', 'marketing-creative', 'designer-scorecard']) {
+      expect(text, a).toContain(a);
+    }
+  });
+
+  it('maps the three common questions to their hand read paths', () => {
+    expect(text).toContain('quickbooks-sync /api/integration/finance-week');
+    expect(text).toContain('production-planner');
+    expect(text).toContain('marketing-manager');
+    expect(text).toContain('ad-manager /api/integration/shopify-week');
+  });
+
+  it('states the directive rule: one plan for the whole message, never claim work started', () => {
+    expect(text).toContain('propose_graph_dispatch');
+    expect(text).toContain('one brief per concept');
+    expect(text).toMatch(/never (emit|claim)/i);
+    expect(text).toContain('Never set fabric_catalog');
+  });
+
+  it('states the query rule: read_agent_outputs first, Central Time stamp, request a run when stale', () => {
+    expect(text).toContain('read_agent_outputs');
+    expect(text).toContain('Central Time');
+    expect(text).toContain('request_agent_run');
+    expect(text).toContain('about 20 minutes');
+  });
+
+  it('says only summary= is editable on the card', () => {
+    expect(text).toContain('summary=');
+    expect(text).toContain('Reject');
+  });
+
+  it('keeps code, builds and GitHub writes with the Foreman', () => {
+    expect(text).toContain('Foreman');
+  });
+
+  it('the base prompt no longer forbids queueing agent work, but still forbids running code and writing to GitHub', () => {
+    const base = buildSystemPromptBase(robert);
+    expect(base).not.toContain('never queue work for a build system');
+    expect(base).toContain('never run code');
+    expect(base).toContain('never write to GitHub');
+  });
+
+  it('the HARD LIMITS override is narrowed to the four graph tools and is conditional on the block existing', () => {
+    const base = buildSystemPromptBase(robert);
+    expect(base).toContain('when a GRAPH ROUTING block appears below');
+    expect(base).toContain('governs the four graph tools listed there and nothing else');
   });
 });

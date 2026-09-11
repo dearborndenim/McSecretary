@@ -3,6 +3,7 @@ import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
 import { resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
+import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -21,6 +22,9 @@ export interface ExecutorDeps {
 export type ExecutionResult =
   | { ok: true; http_status: number; body: unknown; recorded?: boolean }
   | { ok: false; http_status?: number; body?: unknown; error?: string; recorded?: boolean };
+
+/** Thrown inside the graph hand's transaction to roll it back; never escapes. */
+class DispatchNotRecorded extends Error {}
 
 const EXECUTABLE = new Set(['pending', 'approved', 'approved_with_edit']);
 const METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -255,6 +259,47 @@ export async function executeProposal(
     const recorded = recordExecution(db, id, 'executed', result);
     if (recorded) emitExecutedEvent(db, row, payload, payload.body, deps);
     return { ok: true, http_status: 200, body: payload.body, recorded };
+  }
+
+  // Built-in "graph" hand: an approved chat dispatch becomes spine events for
+  // the Mac mini's urgent poll. No HTTP request — the plan on the body is
+  // re-validated and turned into design_request / vendor_contact /
+  // run_request_<agent> rows. A brand may register its own `graph` hand in
+  // config to override this.
+  if (payload.hand === 'graph' && !Object.hasOwn(brand.hands, 'graph')) {
+    // Hand name alone is not authority: only `graph_dispatch` may dispatch.
+    // Any other action type pointed at this hand — including one an agent
+    // promoted to level 3 — fails here with nothing inserted.
+    if (row.action_type !== GRAPH_ACTION_TYPE) {
+      return fail(`Hand 'graph' only executes action_type '${GRAPH_ACTION_TYPE}', not '${row.action_type}'`);
+    }
+    const valid = validateGraphPayload(payload, deps.now());
+    if (!valid.ok) return fail(valid.error);
+    // One transaction over the event inserts AND the status write: a throw
+    // mid-loop, or a row another decision already moved, leaves zero events.
+    let body: unknown;
+    try {
+      body = db.transaction(() => {
+        const result = runGraphDispatch(db, {
+          proposalId: row.id, brandId: row.brand_id, plan: valid.plan, nowIso: deps.now(),
+        });
+        if (!recordExecution(db, id, 'executed', { http_status: 200, body: result, at: deps.now() })) {
+          throw new DispatchNotRecorded();
+        }
+        return result;
+      })();
+    } catch (err) {
+      if (err instanceof DispatchNotRecorded) {
+        return {
+          ok: false,
+          error: `Proposal ${id} changed status mid-execution; the dispatch was rolled back and no events were inserted`,
+          recorded: false,
+        };
+      }
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    emitExecutedEvent(db, row, payload, body, deps);
+    return { ok: true, http_status: 200, body, recorded: true };
   }
 
   // Built-in "email" hand: the ONLY way a message leaves Robert's mailbox

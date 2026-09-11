@@ -36,4 +36,48 @@ describe('edits', () => {
     const r = applyEdit(P, { monthly_usd: 'lots' });
     expect(r.ok).toBe(false);
   });
+
+  it('takes the rest of the line as the value when only one key= is present', () => {
+    expect(parseEdit('summary=Only the waffle knit one, please.')).toEqual({
+      ok: true, fields: { summary: 'Only the waffle knit one, please.' },
+    });
+  });
+
+  it('still splits on whitespace when a second key=value token is present', () => {
+    expect(parseEdit('monthly_usd=10000 note=hold')).toEqual({
+      ok: true, fields: { monthly_usd: 10000, note: 'hold' },
+    });
+  });
+
+  it('still refuses a stray non-key token once the line is multi-key (unchanged)', () => {
+    expect(parseEdit('monthly_usd=10000 note=hold it')).toEqual({
+      ok: false, reason: 'Use key=value pairs, e.g. monthly_usd=10000',
+    });
+  });
+
+  it('keeps coercion on a single-token value', () => {
+    expect(parseEdit('monthly_usd=10000')).toEqual({ ok: true, fields: { monthly_usd: 10000 } });
+    expect(parseEdit('flag=false')).toEqual({ ok: true, fields: { flag: false } });
+  });
+
+  it('rejects an empty message, a bare key= and a line that does not start with a key', () => {
+    const hint = { ok: false, reason: 'Use key=value pairs, e.g. monthly_usd=10000' };
+    expect(parseEdit('   ')).toEqual(hint);
+    expect(parseEdit('summary=')).toEqual(hint);
+    expect(parseEdit('summary =text')).toEqual(hint);
+    expect(parseEdit('please set summary=x')).toEqual(hint);
+  });
+
+  it("round-trips the graph card's own Edit hint", () => {
+    const plan = { summary: 'old summary', briefs: [], vendor_contacts: [], run_requests: [] };
+    const payload: ActionPayload = { hand: 'graph', method: 'POST', path: '/dispatch', body: plan };
+    const parsed = parseEdit('summary=Only the waffle knit one, both lines');
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const applied = applyEdit(payload, parsed.fields);
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    expect(applied.payload.body.summary).toBe('Only the waffle knit one, both lines');
+    expect(applied.payload.body.briefs).toEqual([]);
+  });
 });

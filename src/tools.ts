@@ -28,6 +28,11 @@ import {
   executeEmpireTool,
   isEmpireTool,
 } from './empire/tools.js';
+import {
+  GRAPH_TOOL_DEFINITIONS,
+  executeGraphTool,
+  isGraphTool,
+} from './graph/tools.js';
 import { getJournalHealthReport } from './journal/files.js';
 import { getUserEmailAccounts, getUserById } from './db/user-queries.js';
 
@@ -76,9 +81,10 @@ function resolveDefaultAccount(inputAccount: string | undefined, userId?: string
   return userAccounts[0];
 }
 
-// Tool definitions for Claude API (core + empire)
+// Tool definitions for Claude API (core + empire + agent graph)
 export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   ...EMPIRE_TOOL_DEFINITIONS,
+  ...GRAPH_TOOL_DEFINITIONS,
   {
     name: 'archive_email',
     description: 'Archive an email in Outlook. Use when Rob asks to archive, clean up, or remove an email.',
@@ -826,6 +832,10 @@ export async function executeTool(name: string, input: Record<string, any>, user
         // Check empire tools
         if (isEmpireTool(name)) {
           return await executeEmpireTool(name, input);
+        }
+        // Check agent-graph tools (admin-only; the gate lives in the module)
+        if (isGraphTool(name)) {
+          return await executeGraphTool(name, input, userId);
         }
         return `Unknown tool: ${name}`;
       }

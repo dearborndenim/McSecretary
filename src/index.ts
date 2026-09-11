@@ -1510,6 +1510,7 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         name: user.name,
         business_context: prefs?.business_context ?? null,
         accounts: accounts.map((a) => a.email_address),
+        is_admin: user.role === 'admin',
       },
       { dailyContext, taskContext, smsContext, emailContext },
     );
@@ -1659,11 +1660,27 @@ async function main() {
   });
   setSpineHttpHandler(spine.handleHttp);
 
+  const rfqBrandId = process.env.RFQ_BRAND_ID || 'dearborn-denim';
+
+  // Chat → agent-graph router: the four graph tools file into the same spine.
+  // No second approval flow and no second scheduler — a dispatch is a normal
+  // pinned proposal and the work reaches the Mac mini as spine events.
+  const { setGraphDeps } = await import('./graph/tools.js');
+  setGraphDeps({
+    db,
+    brandId: process.env.GRAPH_BRAND_ID || rfqBrandId,
+    brandsDir: config.spine.brandsDir,
+    agentKeys: parseAgentKeys(config.spine.agentKeys, { minLength: 16 }),
+    env: process.env,
+    now: () => new Date().toISOString(),
+    file: spine.file,
+    handFetch: spine.handFetch,
+  });
+
   // RFQ reply intake (spec §12.3): triage hands a recognised vendor reply here
   // instead of the Haiku classifier. The notes card and the
   // `vendor_quote_received` event go through the spine — no second approval
   // flow, no second scheduler.
-  const rfqBrandId = process.env.RFQ_BRAND_ID || 'dearborn-denim';
   setRfqIntakeHandler(async (email, match) => processRfqReply(email, match, {
     db,
     now: () => new Date().toISOString(),

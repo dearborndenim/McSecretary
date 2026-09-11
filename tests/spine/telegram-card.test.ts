@@ -7,6 +7,8 @@ import {
   renderProposalCard, buildProposalKeyboard, parseCallbackData, handleProposalCallback,
   handleEditReply, createTelegramTransport, EDIT_WINDOW_MS, type CardDeps,
 } from '../../src/spine/telegram-card.js';
+import type { ProposalRow } from '../../src/spine/types.js';
+import { parseEdit } from '../../src/spine/edits.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 
@@ -343,5 +345,138 @@ describe('telegram card', () => {
     await t.sendText('555', 'hi');
     expect(calls[0]!.opts?.reply_markup).toBeDefined();
     expect(calls[1]!.opts).toBeUndefined();
+  });
+});
+
+// --- graph hand cards -------------------------------------------------------
+// The existing seed() helper inserts a marketing row, so this block builds its
+// own ProposalRow literal instead.
+function rowFor(over: Partial<ProposalRow>): ProposalRow {
+  return {
+    id: 42, agent: 'mcsecretary', brand_id: 'dearborn-denim', action_type: 'graph_dispatch',
+    action_payload: '{}', payload_hash: 'h', reason: 'r', evidence: '{}', cost_usd: 0,
+    reversible: 0, level_required: 1, status: 'pending', created_at: NOW,
+    expires_at: '2026-09-13T12:00:00.000Z', decided_by: null, decided_at: null, edits: null,
+    edit_requested_at: null, execution_result: null, telegram_chat_id: null,
+    telegram_message_id: null, run_id: null, ...over,
+  };
+}
+
+describe('renderProposalCard for the graph hand', () => {
+  const plan = {
+    summary: 'Four knit concepts, both lines.',
+    briefs: Array.from({ length: 8 }, (_, i) => ({
+      collection_name: `Concept ${i}`, line: i % 2 === 0 ? 'mens' : 'womens',
+      brief_text: 'x'.repeat(80), season: 'Winter 2026', target_launch: '2026-11-06',
+      product_count: 4, price_ladder: ['core'], fabric_locks: ['waffle knit'],
+      vendor: 'american-fabrics-international', dye_program: 'pfd_house_dye', persona: 'all',
+    })),
+    vendor_contacts: [{ vendor_name: 'American Fabrics International', slug: null, contact_name: 'Ned Pilchman', email: 'marteva@hotmail.com', phone: null, sells: null, notes: null }],
+    run_requests: [],
+  };
+  const card = (reason: string) => renderProposalCard(rowFor({
+    agent: 'mcsecretary', action_type: 'graph_dispatch', reason,
+    action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+  }));
+
+  it('renders every brief line rather than truncating at the 500-char reason cap', () => {
+    const text = card('unused');
+    expect(text).toContain('Concept 0');
+    expect(text).toContain('Concept 7');   // the 500-cap would have cut this
+    expect(text).not.toContain('graph/dispatch');
+    expect(text).toContain('Contact: American Fabrics International — Ned Pilchman <marteva@hotmail.com>');
+  });
+
+  it('leads with the id/agent line, then the summary, and closes with cost and expiry', () => {
+    const lines = card('unused').split('\n');
+    expect(lines[0]).toMatch(/^#\d+ mcsecretary · dearborn-denim$/);   // no requested_by on this row
+    expect(lines[1]).toBe('Four knit concepts, both lines.');
+    expect(lines.at(-3)).toBe('Edit: summary=<new text> only — anything deeper, Reject and re-send the message.');
+    expect(lines.at(-2)).toContain('NOT reversible');
+    expect(lines.at(-1)).toMatch(/^Expires /);
+  });
+
+  it('caps the plan block at GRAPH_PLAN_CAP with an ellipsis rather than overflowing Telegram', () => {
+    const huge = { ...plan, briefs: Array.from({ length: 8 }, (_, i) => ({ ...plan.briefs[0], collection_name: 'C'.repeat(110) + i, fabric_locks: Array.from({ length: 4 }, (_2, j) => `fabric ${j} ${'f'.repeat(50)}`) })) };
+    const text = renderProposalCard(rowFor({
+      agent: 'mcsecretary', action_type: 'graph_dispatch', reason: 'unused',
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: huge }),
+    }));
+    expect(text.length).toBeLessThan(2200);
+    expect(text).toContain('…');
+  });
+
+  it('falls back to the stored reason when the body is not a readable plan', () => {
+    const text = renderProposalCard(rowFor({
+      agent: 'mcsecretary', action_type: 'graph_dispatch', reason: 'stored reason text',
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: { junk: true } }),
+    }));
+    expect(text).toContain('stored reason text');
+  });
+
+  it('shows an edited summary, because the card is rendered from the body', () => {
+    const edited = { ...plan, summary: 'Only the waffle knit one, please.' };
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: edited }),
+    }));
+    expect(text.split('\n')[1]).toBe('Only the waffle knit one, please.');
+  });
+
+  it('shows the designer-run estimate from the filed evidence, not a guess', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: JSON.stringify({ requested_by: 'Robert', briefs: 8, design_runs_estimated: 16 }),
+    }));
+    expect(text.split('\n').at(-4)).toBe('Estimated 16 designer runs (8 briefs × approved personas).');
+  });
+
+  it('falls back to the count already written into the stored reason', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: JSON.stringify({ briefs: 8 }),
+      reason: 'summary line\nEstimated 16 designer runs (8 briefs × approved personas).',
+    }));
+    expect(text.split('\n').at(-4)).toBe('Estimated 16 designer runs (8 briefs × approved personas).');
+  });
+
+  it('says "per approved persona" when neither evidence nor reason carries a count', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: '{}', reason: 'nothing useful',
+    }));
+    expect(text.split('\n').at(-4)).toBe('Estimated 8 briefs × per approved persona designer runs.');
+  });
+
+  it('names the requesting user on the first line', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: JSON.stringify({ requested_by: 'Robert', design_runs_estimated: 16 }),
+    }));
+    expect(text.split('\n')[0]).toBe('#42 mcsecretary · dearborn-denim · for Robert');
+  });
+
+  it('shows a truncated brief_text line under each brief for a small dispatch', () => {
+    const small = { ...plan, briefs: plan.briefs.slice(0, 2).map((b, i) => ({ ...b, brief_text: `${'b'.repeat(200)}${i}` })) };
+    const lines = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: small }),
+    })).split('\n');
+    const textLines = lines.filter((l) => l.startsWith('  b'));
+    expect(textLines).toHaveLength(2);
+    expect(textLines[0]!.length).toBeLessThanOrEqual(142);
+    expect(textLines[0]).toContain('…');
+  });
+
+  it('omits the brief_text lines once there are more than three briefs', () => {
+    const lines = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+    })).split('\n');
+    expect(lines.filter((l) => l.startsWith('  '))).toEqual([]);
+  });
+
+  it('the Edit hint it prints is a line parseEdit actually accepts', () => {
+    const hintLine = card('unused').split('\n').at(-3)!;
+    expect(hintLine).toContain('summary=');
+    const parsed = parseEdit('summary=Only the waffle knit one, both lines');
+    expect(parsed.ok).toBe(true);
   });
 });

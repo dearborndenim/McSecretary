@@ -4,7 +4,7 @@ import { initializeSchema } from '../../src/db/schema.js';
 import {
   insertProposal, getProposalById, listPendingProposals, decideProposal,
   recordExecution, expireProposals, setTelegramRef, appendEdit, setEditRequested,
-  findEditRequestedForChat, updateActionPayload,
+  findEditRequestedForChat, updateActionPayload, listProposalsByAgent,
 } from '../../src/db/proposal-queries.js';
 import type { ProposalInput } from '../../src/spine/types.js';
 
@@ -142,5 +142,43 @@ describe('proposal queries', () => {
     const after = getProposalById(db, id)!;
     expect(after.action_payload).toBe(before.action_payload);
     expect(after.payload_hash).toBe(before.payload_hash);
+  });
+});
+
+describe('listProposalsByAgent', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  it('returns that agent + brand newest first, any status, capped at limit', () => {
+    for (let i = 1; i <= 4; i++) {
+      // insertProposal de-dupes on hashPayload(action_payload) alone, NOT on
+      // reason — so the BODY has to differ per row or rows 2-4 collapse into row 1.
+      insertProposal(db, input({
+        agent: 'finance', reason: `r${i}`,
+        action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: `t${i}`, summary: 's' } },
+      }), `2026-09-0${i}T00:00:00.000Z`);
+    }
+    insertProposal(db, input({ agent: 'sourcing', reason: 'other' }), '2026-09-09T00:00:00.000Z');
+    const rows = listProposalsByAgent(db, 'finance', 'dearborn-denim', 3);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.reason)).toEqual(['r4', 'r3', 'r2']);
+    expect(rows.every((r) => r.agent === 'finance')).toBe(true);
+  });
+
+  it('includes decided and executed rows, not just pending ones', () => {
+    const { id } = insertProposal(db, input({ agent: 'finance' }), NOW);
+    decideProposal(db, id, 'rejected', 'robert', NOW);
+    const rows = listProposalsByAgent(db, 'finance', 'dearborn-denim', 5);
+    expect(rows.map((r) => r.status)).toEqual(['rejected']);
+  });
+
+  it('excludes another brand', () => {
+    insertProposal(db, input({ agent: 'finance', brand_id: 'other-brand' }), NOW);
+    expect(listProposalsByAgent(db, 'finance', 'dearborn-denim', 5)).toHaveLength(0);
+  });
+
+  it('returns an empty array for an agent that has never filed', () => {
+    expect(listProposalsByAgent(db, 'nobody', 'dearborn-denim', 5)).toEqual([]);
   });
 });
