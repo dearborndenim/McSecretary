@@ -92,7 +92,7 @@ export function buildSpine(d: SpineBuildDeps) {
     db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file, handFetch: fetchWithTimeout, env: d.env,
   });
 
-  return { file, onCallback, onText, handleHttp, execute };
+  return { file, onCallback, onText, handleHttp, execute, handFetch: fetchWithTimeout, loadBrand };
 }
 
 export type Spine = ReturnType<typeof buildSpine>;
