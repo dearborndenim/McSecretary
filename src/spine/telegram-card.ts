@@ -6,6 +6,7 @@ import {
 } from '../db/proposal-queries.js';
 import { recordTrustDecision } from '../db/trust-queries.js';
 import { parseEdit, applyEdit } from './edits.js';
+import { validateDispatchPlan, renderPlanReason } from './graph-plan.js';
 import { extractNotify, type ExecutionResult } from './executor.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
@@ -24,6 +25,8 @@ const REASON_CAP = 500;
 const EVIDENCE_VALUE_CAP = 80;
 /** An RFQ body is longer than a reason; Robert still has to read it on a phone. */
 const EMAIL_PREVIEW_CAP = 1200;
+/** A dispatch plan is one line per brief; 500 would cut the card mid-brief. */
+const GRAPH_PLAN_CAP = 1600;
 
 /**
  * The inbox transport. Everything Telegram-specific lives behind this, so a
@@ -109,6 +112,23 @@ export function renderProposalCard(p: ProposalRow): string {
       `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
     ].filter((l): l is string => l !== null);
     return lines.join('\n');
+  }
+
+  // graph proposals carry a whole dispatch plan: Robert is approving briefs
+  // and vendor contacts, so render the plan itself rather than a 500-char
+  // slice of `reason`. Rendered from the body, so an Edit to `summary` shows
+  // through; personas are `null` here because this render is synchronous and
+  // holds no hand access — the filed `reason` carries the real count.
+  if (payload.hand === 'graph') {
+    const parsed = validateDispatchPlan(payload.body, new Date().toISOString());
+    const planText = parsed.ok ? renderPlanReason(parsed.plan, null) : p.reason;
+    return [
+      `#${p.id} ${p.agent} · ${p.brand_id}`,
+      cap(planText, GRAPH_PLAN_CAP),
+      'Edit: summary=<new text> only — anything deeper, Reject and re-send the message.',
+      `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
+      `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
+    ].join('\n');
   }
 
   const evidence: unknown = JSON.parse(p.evidence);
