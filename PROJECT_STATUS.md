@@ -76,6 +76,15 @@ Full AI secretary for Robert. Autonomous email management across 2 Outlook accou
 - 2026-04-10: "My secretary still needs to finish the full buildout"
 
 ## Iteration Backlog
+
+### Chat → agent-graph router follow-ups (2026-09-11, from code review)
+- `read_hand` cannot pass a query string (`resolveHandUrl` rejects `?`), so parameterised reads like `shopify-week?weeks=4` are unreachable; the persona-count read also ignores brand for the same reason (fine for dearborn-denim, wrong for a second brand).
+- `countPendingByType` / `drainEvents` are brand-agnostic; `request_agent_run` de-dupe would collide across brands (multi-brand only).
+- A brand config `hands.graph` override bypasses the built-in branch and with it the `action_type === graph_dispatch` guard, turning a dispatch into an HTTP POST of the plan. Nothing can file such a proposal today; never register `hands.graph` without moving the guard.
+- The GRAPH ROUTING block sits after the volatile block carrying untrusted email bodies; the card gates the damage, but a prompt-injected dispatch is only distinguishable by the `for <user>` line.
+- Tool definitions for the four graph tools are still visible to member users (refused with one sentence on call); filter them per role if it gets chatty.
+- Card ceiling: one Approve can start up to 12 briefs ≈ 30–36 designer runs; the estimate line shows the count.
+
 1. ~~Add agent empire coordination~~ — DONE
 2. ~~Integrate overnight build reporting into morning briefing~~ — DONE
 4. Add meeting prep notes (pull relevant emails + docs before calendar events)
