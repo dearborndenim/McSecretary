@@ -28,3 +28,11 @@ export function listFailedRunsSince(db: Database.Database, sinceIso: string): Ru
     ORDER BY started_at ASC, run_id ASC
   `).all(sinceIso) as RunIndexInput[];
 }
+
+/** The newest run start for an agent, or null when it has never run. */
+export function latestRunStartedAt(db: Database.Database, agent: string, brandId: string): string | null {
+  const r = db.prepare(
+    'SELECT started_at FROM agent_run_index WHERE agent = ? AND brand_id = ? ORDER BY started_at DESC, run_id DESC LIMIT 1',
+  ).get(agent, brandId) as { started_at: string } | undefined;
+  return r?.started_at ?? null;
+}

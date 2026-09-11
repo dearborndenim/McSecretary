@@ -53,6 +53,15 @@ export function listPendingProposals(db: Database.Database): ProposalRow[] {
   ).all() as ProposalRow[];
 }
 
+/** Newest first, any status — what `read_agent_outputs` shows Robert. */
+export function listProposalsByAgent(
+  db: Database.Database, agent: string, brandId: string, limit: number,
+): ProposalRow[] {
+  return db.prepare(
+    'SELECT * FROM proposals WHERE agent = ? AND brand_id = ? ORDER BY created_at DESC, id DESC LIMIT ?',
+  ).all(agent, brandId, limit) as ProposalRow[];
+}
+
 /**
  * Record a human decision. Only a `pending` row can be decided; returns false
  * (no-op) when the row is missing or not pending.
