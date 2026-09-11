@@ -20,7 +20,8 @@ import { RUN_REQUEST_PREFIX, GRAPH_DISPATCH_PATH } from '../spine/graph-hand.js'
 import {
   validateDispatchPlan, renderPlanReason, type ApprovedPersonaCounts, type DispatchPlan,
 } from '../spine/graph-plan.js';
-import { listProposalsByAgent } from '../db/proposal-queries.js';
+import { listProposalsByAgent, getProposalById } from '../db/proposal-queries.js';
+import { getUserById } from '../db/user-queries.js';
 import { latestRunStartedAt } from '../db/run-index-queries.js';
 import { insertEvent, countPendingByType } from '../db/event-queries.js';
 import type { ActionPayload, ProposalInput } from '../spine/types.js';
@@ -40,6 +41,9 @@ export interface GraphDeps {
 
 export const GRAPH_DEPS_MISSING_MESSAGE =
   'The agent graph is not configured on this instance, so I cannot reach it.';
+/** Only an admin may read the graph or dispatch work into it. */
+export const GRAPH_NOT_ADMIN_MESSAGE =
+  'The business agent graph is admin-only, so I cannot read it or dispatch work into it for you — Robert can.';
 
 const READ_AGENT_OUTPUTS_DEFAULT = 5;
 const READ_AGENT_OUTPUTS_MAX = 20;
@@ -60,7 +64,7 @@ export const GRAPH_TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'propose_graph_dispatch',
     description:
-      'Draft a dispatch plan for the business agent graph and file it as a Telegram card for Robert to approve. Use this for ANY message asking for design, sourcing or agent work — one plan covering everything in the message. It only files a card: no agent starts, no event is emitted, and no fabric is bought until Robert taps Approve. Returns the card number.',
+      'Draft a dispatch plan for the business agent graph and file it as a Telegram card for Robert to approve. Use it when a message gives a clear instruction to the design, sourcing or agent side of the business — one plan covering everything in that message. If the message is thinking out loud, or its scope is ambiguous, ask one clarifying question instead of calling this. It only files a card: no agent starts, no event is emitted, and no fabric is bought until Robert taps Approve. Returns the card number.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -118,6 +122,14 @@ export function isGraphTool(name: string): boolean {
   return GRAPH_TOOL_DEFINITIONS.some((t) => t.name === name);
 }
 
+/** The calling user, when the chat loop named one and the row still exists. */
+function callingUser(d: GraphDeps, userId: string | undefined): { name: string; isAdmin: boolean } | null {
+  if (!userId) return null;
+  const u = getUserById(d.db, userId);
+  if (!u) return null;
+  return { name: u.name, isAdmin: u.role === 'admin' };
+}
+
 /** The agents that can be read or woken. `mcsecretary` is the caller, not a callee. */
 function knownAgents(d: GraphDeps): string[] {
   return [...new Set(d.agentKeys.values())].sort();
@@ -160,7 +172,9 @@ async function readApprovedPersonaCounts(d: GraphDeps): Promise<ApprovedPersonaC
   }
 }
 
-async function proposeGraphDispatch(d: GraphDeps, input: Record<string, unknown>): Promise<string> {
+async function proposeGraphDispatch(
+  d: GraphDeps, input: Record<string, unknown>, requestedBy: string,
+): Promise<string> {
   const nowIso = d.now();
   const validated = validateDispatchPlan(input.plan, nowIso);
   if (!validated.ok) return `That plan is not valid: ${validated.error}`;
@@ -184,13 +198,14 @@ async function proposeGraphDispatch(d: GraphDeps, input: Record<string, unknown>
     hand: 'graph', method: 'POST', path: GRAPH_DISPATCH_PATH,
     body: plan as unknown as Record<string, unknown>,
   };
-  const { id } = await d.file({
+  const { id, routed } = await d.file({
     agent: 'mcsecretary',
     brand_id: d.brandId,
     action_type: 'graph_dispatch',
     action_payload,
     reason,
     evidence: {
+      requested_by: requestedBy,
       briefs: plan.briefs.length,
       design_runs_estimated,
       vendor_contacts: plan.vendor_contacts.length,
@@ -202,7 +217,22 @@ async function proposeGraphDispatch(d: GraphDeps, input: Record<string, unknown>
     expires_at,
   });
 
-  return `Filed card #${id}: ${plan.briefs.length} brief(s), ${plan.vendor_contacts.length} vendor contact(s), ${plan.run_requests.length} run request(s). Nothing starts until you tap Approve.`;
+  // insertProposal de-dupes on the payload hash, so re-sending the same
+  // message inside the 48h expiry lands on the existing card. Say which it
+  // is: "Filed" on a card that already ran would be a lie. (A deduped PENDING
+  // row whose card never reached Telegram is re-sent by the router and comes
+  // back as `card`, not `deduped` — that really is a freshly delivered card.)
+  if (routed === 'deduped') {
+    return getProposalById(d.db, id)?.status === 'executed'
+      ? `That dispatch already ran as card #${id}; nothing new was filed.`
+      : `Card #${id} is still waiting for your Approve — same dispatch, nothing new was filed.`;
+  }
+
+  const held = `${plan.briefs.length} brief(s), ${plan.vendor_contacts.length} vendor contact(s), ${plan.run_requests.length} run request(s)`;
+  if (routed === 'card_failed') {
+    return `Filed card #${id} (${held}) but the Telegram card did not send — open it from the inbox to Approve.`;
+  }
+  return `Filed card #${id}: ${held}. Nothing starts until you tap Approve.`;
 }
 
 function readAgentOutputs(d: GraphDeps, input: Record<string, unknown>): string {
@@ -289,12 +319,19 @@ function requestAgentRun(d: GraphDeps, input: Record<string, unknown>): string {
   return `Requested a fresh ${agent} run; its report card should arrive in about 20 minutes.`;
 }
 
-export async function executeGraphTool(name: string, input: Record<string, unknown>): Promise<string> {
+export async function executeGraphTool(
+  name: string, input: Record<string, unknown>, userId?: string,
+): Promise<string> {
   const d = deps;
   if (!d) return GRAPH_DEPS_MISSING_MESSAGE;
+  // Admin-only. A dispatch starts Designer runs, rewrites the vendor registry
+  // and sends vendor mail on Approve; a hand read shows the company's cash.
+  // An unknown caller is not an admin.
+  const user = callingUser(d, userId);
+  if (!user?.isAdmin) return GRAPH_NOT_ADMIN_MESSAGE;
   try {
     switch (name) {
-      case 'propose_graph_dispatch': return await proposeGraphDispatch(d, input);
+      case 'propose_graph_dispatch': return await proposeGraphDispatch(d, input, user.name);
       case 'read_agent_outputs': return readAgentOutputs(d, input);
       case 'read_hand': return await readHand(d, input);
       case 'request_agent_run': return requestAgentRun(d, input);

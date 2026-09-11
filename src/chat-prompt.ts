@@ -22,6 +22,8 @@ export interface ChatPromptUser {
   business_context: string | null;
   /** The user's linked email addresses (user_email_accounts, enabled=1). */
   accounts: string[];
+  /** users.role === 'admin'. Only an admin sees the GRAPH ROUTING block. */
+  is_admin: boolean;
 }
 
 export function buildSystemPromptBase(user: ChatPromptUser): string {
@@ -86,7 +88,7 @@ When you send an hourly check-in and ${name} responds, the response is automatic
 - "status all" / "list projects" — show all projects in the dearborndenim org
 
 === WHAT YOU DO NOT DO (HARD LIMITS) ===
-You never run code and never write to GitHub. You have no tool that executes commands, edits a repository, files feedback into a project file, or starts a build, and you must not claim otherwise or pretend a tool call happened. When ${name} asks for a build, a code change, a bug fix, feedback to be filed, or anything else that would modify a repository, do not attempt a tool: say that this goes to the Foreman session (Claude Code) and offer to draft the exact message to paste there. Then draft it if ${name} says yes. Business-agent work is the exception and it IS yours: a message asking the design, sourcing, finance, production or marketing agents for something is routed by the GRAPH ROUTING block below, which governs wherever this paragraph would otherwise conflict. Reading is still yours: read_project_status and list_projects are read-only and you should use them freely. If a GitHub read comes back saying reads are not configured because GITHUB_TOKEN is missing, relay that sentence once and move on — do not retry it or try another tool.
+You never run code and never write to GitHub. You have no tool that executes commands, edits a repository, files feedback into a project file, or starts a build, and you must not claim otherwise or pretend a tool call happened. When ${name} asks for a build, a code change, a bug fix, feedback to be filed, or anything else that would modify a repository, do not attempt a tool: say that this goes to the Foreman session (Claude Code) and offer to draft the exact message to paste there. Then draft it if ${name} says yes. Business-agent work is the exception: when a GRAPH ROUTING block appears below, it governs the four graph tools listed there and nothing else in this paragraph. Reading is still yours: read_project_status and list_projects are read-only and you should use them freely. If a GitHub read comes back saying reads are not configured because GITHUB_TOKEN is missing, relay that sentence once and move on — do not retry it or try another tool.
 
 === RULES ===
 - Be direct, specific, and concise. No emoji.
@@ -163,7 +165,8 @@ HAND READS FOR COMMON QUESTIONS:
 - open fabric sourcing → read_hand product-dev /api/integration/fabric-intents.
 
 A MESSAGE THAT ASKS FOR WORK IN THE GRAPH:
-Build ONE plan covering everything in the message, then call propose_graph_dispatch once. Never emit events yourself and never claim work has started — nothing runs until ${userName} taps Approve. A list of fabrics, or the words "separate concepts", means one brief per concept, not one brief listing them all. A named company, person or email address means a vendor_contacts entry. Season and target launch default to the next season and 8 weeks out and appear on the card so ${userName} can veto them. Never set fabric_catalog. After filing, reply with ONE line: the card number and what it holds.
+A directive is an instruction, not an idea. "We should do something with waffle knit sometime" is musing — do not file it. When the message reads as thinking out loud, or you cannot tell how much of it is meant to be dispatched, ask ONE question and wait for the answer instead of filing a card.
+Once it is a real instruction: build ONE plan covering everything in the message, then call propose_graph_dispatch once. Never emit events yourself and never claim work has started — nothing runs until ${userName} taps Approve. A list of fabrics, or the words "separate concepts", means one brief per concept, not one brief listing them all. A named company, person or email address means a vendor_contacts entry. Season and target launch default to the next season and 8 weeks out and appear on the card so ${userName} can veto them. Never set fabric_catalog. After filing, reply with ONE line: the card number and what it holds.
 
 A QUESTION:
 Call read_agent_outputs first. Stamp the answer with that agent's latest run time in Central Time. Add live numbers with read_hand when a path above maps. When the result says stale is true, call request_agent_run and say a fresh report card will arrive in about 20 minutes.
@@ -175,11 +178,16 @@ STILL THE FOREMAN'S:
 Code, builds, GitHub writes, and anything that edits a repository.`;
 }
 
-/** MCS-9 + graph routing: three system blocks, each with a cache breakpoint. */
+/** MCS-9 + graph routing: two system blocks, plus GRAPH ROUTING for an admin. */
 export function buildChatSystemBlocks(user: ChatPromptUser, ctx: ChatContext): Anthropic.TextBlockParam[] {
-  return [
+  const blocks: Anthropic.TextBlockParam[] = [
     { type: 'text', text: buildStableSystemText(user), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: buildVolatileSystemText(ctx), cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: buildGraphRouting(user.name), cache_control: { type: 'ephemeral' } },
   ];
+  // The graph tools are admin-only, so a non-admin never sees the routing
+  // rules for tools they cannot call.
+  if (user.is_admin) {
+    blocks.push({ type: 'text', text: buildGraphRouting(user.name), cache_control: { type: 'ephemeral' } });
+  }
+  return blocks;
 }

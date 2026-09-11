@@ -170,7 +170,7 @@ describe('renderPlanReason', () => {
     expect(lines[2]).toContain('Brief: Waffle Knit — womens');
     expect(lines[3]).toBe('Contact: American Fabrics International — Ned Pilchman <marteva@hotmail.com>');
     expect(lines[4]).toBe('Run: sourcing — pick up the new intents tonight');
-    expect(lines[5]).toBe('Estimated 5 designer runs (2 briefs across approved personas).');
+    expect(lines[5]).toBe('Estimated 5 designer runs (2 briefs × approved personas).');
   });
 
   it('says "per approved persona" when the persona counts are unavailable', () => {
@@ -233,5 +233,104 @@ describe('renderPlanReason', () => {
       expect(line).toContain('launch 2026-11-06');
     }
     expect(text.split('\n').pop()).toBe('Estimated 8 briefs × per approved persona designer runs.');
+  });
+});
+
+describe('plan size bounds', () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => brief({ collection_name: `C${i}`, line: 'mens' }));
+
+  it('accepts 12 briefs after the both expansion and rejects 14', () => {
+    expect(validateDispatchPlan({ summary: 's', briefs: many(12) }, NOW).ok).toBe(true);
+    const r = validateDispatchPlan({ summary: 's', briefs: Array.from({ length: 7 }, (_, i) => brief({ collection_name: `C${i}`, line: 'both' })) }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('12 briefs');
+    expect(r.error).toContain('14');
+  });
+
+  it('accepts 6 both-briefs, which expand to exactly 12', () => {
+    const r = validateDispatchPlan({ summary: 's', briefs: Array.from({ length: 6 }, (_, i) => brief({ collection_name: `C${i}`, line: 'both' })) }, NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.plan.briefs).toHaveLength(12);
+  });
+
+  it('accepts 10 vendor contacts and rejects 11', () => {
+    const c = (n: number) => Array.from({ length: n }, (_, i) => ({ vendor_name: `V${i}` }));
+    expect(validateDispatchPlan({ summary: 's', vendor_contacts: c(10) }, NOW).ok).toBe(true);
+    expect(validateDispatchPlan({ summary: 's', vendor_contacts: c(11) }, NOW).ok).toBe(false);
+  });
+
+  it('accepts 5 run requests and rejects 6', () => {
+    const q = (n: number) => Array.from({ length: n }, (_, i) => ({ agent: `a${i}`, reason: 'r' }));
+    expect(validateDispatchPlan({ summary: 's', run_requests: q(5) }, NOW).ok).toBe(true);
+    expect(validateDispatchPlan({ summary: 's', run_requests: q(6) }, NOW).ok).toBe(false);
+  });
+
+  it('accepts 12 fabric_locks and rejects 13', () => {
+    const f = (n: number) => Array.from({ length: n }, (_, i) => `fabric ${i}`);
+    expect(validateDispatchPlan({ summary: 's', briefs: [brief({ fabric_locks: f(12) })] }, NOW).ok).toBe(true);
+    const r = validateDispatchPlan({ summary: 's', briefs: [brief({ fabric_locks: f(13) })] }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('fabric_locks');
+  });
+
+  it('accepts 20 sells phrases and rejects 21', () => {
+    const sells = (n: number) => Array.from({ length: n }, (_, i) => `knit ${i}`);
+    expect(validateDispatchPlan({ summary: 's', vendor_contacts: [{ vendor_name: 'V', sells: sells(20) }] }, NOW).ok).toBe(true);
+    const r = validateDispatchPlan({ summary: 's', vendor_contacts: [{ vendor_name: 'V', sells: sells(21) }] }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('sells');
+  });
+
+  it('renders a maximum-size plan of long strings inside the 2000-char reason cap', () => {
+    const long = 'L'.repeat(400);
+    const r = validateDispatchPlan({
+      summary: 'z'.repeat(200),
+      briefs: Array.from({ length: 6 }, () => brief({ line: 'both', collection_name: 'N'.repeat(120), fabric_locks: Array.from({ length: 12 }, () => long), vendor: 'v'.repeat(120) })),
+      vendor_contacts: Array.from({ length: 10 }, () => ({ vendor_name: 'V'.repeat(120), contact_name: 'C'.repeat(120), email: `${'e'.repeat(200)}@x.com` })),
+      run_requests: Array.from({ length: 5 }, () => ({ agent: 'a'.repeat(120), reason: 'r'.repeat(300) })),
+    }, NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const text = renderPlanReason(r.plan, { mens: 3, womens: 2 });
+    expect(text.length).toBeLessThanOrEqual(2000);
+    expect(text).toContain('…and 12 more briefs');
+    expect(text).toContain('more vendor contacts');
+    expect(text.split('\n')[0]).toBe('z'.repeat(200));
+    expect(text.split('\n').pop()).toBe('Estimated 30 designer runs (12 briefs × approved personas).');
+  });
+});
+
+describe('renderPlanReason options', () => {
+  it('shows a truncated brief_text line under each brief when the plan is small', () => {
+    const r = validateDispatchPlan({ summary: 's', briefs: [brief({ line: 'mens', brief_text: `${'w'.repeat(300)}` })] }, NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const lines = renderPlanReason(r.plan, null, { briefTextMaxBriefs: 3 }).split('\n');
+    expect(lines[1]).toMatch(/^Brief: /);
+    expect(lines[2]!.startsWith('  ')).toBe(true);
+    expect(lines[2]!.length).toBeLessThanOrEqual(142);
+    expect(lines[2]).toContain('…');
+  });
+
+  it('omits the brief_text lines once the plan is bigger than the threshold', () => {
+    const r = validateDispatchPlan({ summary: 's', briefs: Array.from({ length: 4 }, (_, i) => brief({ collection_name: `C${i}`, line: 'mens' })) }, NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const lines = renderPlanReason(r.plan, null, { briefTextMaxBriefs: 3 }).split('\n');
+    expect(lines.filter((l) => l.startsWith('  '))).toEqual([]);
+  });
+
+  it('uses an explicit designRuns count when no persona counts are available', () => {
+    const r = validateDispatchPlan({ summary: 's', briefs: [brief({ line: 'both' })] }, NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(renderPlanReason(r.plan, null, { designRuns: 16 }).split('\n').pop())
+      .toBe('Estimated 16 designer runs (2 briefs × approved personas).');
+    expect(renderPlanReason(r.plan, null).split('\n').pop())
+      .toBe('Estimated 2 briefs × per approved persona designer runs.');
   });
 });

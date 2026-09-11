@@ -833,9 +833,9 @@ export async function executeTool(name: string, input: Record<string, any>, user
         if (isEmpireTool(name)) {
           return await executeEmpireTool(name, input);
         }
-        // Check agent-graph tools
+        // Check agent-graph tools (admin-only; the gate lives in the module)
         if (isGraphTool(name)) {
-          return await executeGraphTool(name, input);
+          return await executeGraphTool(name, input, userId);
         }
         return `Unknown tool: ${name}`;
       }

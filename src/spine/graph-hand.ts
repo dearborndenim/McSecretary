@@ -14,6 +14,8 @@ import { insertEvent } from '../db/event-queries.js';
 import { validateDispatchPlan, type DispatchPlan } from './graph-plan.js';
 
 export const GRAPH_DISPATCH_PATH = '/dispatch';
+/** The only action type the built-in `graph` hand will execute. */
+export const GRAPH_ACTION_TYPE = 'graph_dispatch';
 export const RUN_REQUEST_PREFIX = 'run_request_';
 
 /** Source hand stamped on every event this hand emits. */

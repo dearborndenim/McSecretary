@@ -103,6 +103,49 @@ describe('the built-in graph hand', () => {
     expect(JSON.parse(e!.payload).persona).toBe('all');
   });
 
+  it('refuses to dispatch for any action_type other than graph_dispatch, even at level 3', async () => {
+    const row = input();
+    const { id } = insertProposal(db, { ...row, action_type: 'costing_report' }, NOW);
+    // Level 3 on that action type: the ledger would happily auto-execute it.
+    db.prepare(`INSERT INTO trust_ledger (agent, brand_id, action_type, level, approved_as_proposed, approved_with_edit, rejected, last_change_at, last_change_by)
+      VALUES ('mcsecretary', 'dearborn-denim', 'costing_report', 3, 0, 0, 0, ?, 'test')`).run(NOW);
+    const r = await executeProposal(db, id, deps());
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('graph_dispatch');
+    expect(getProposalById(db, id)!.status).toBe('failed');
+    expect(drainEvents(db, 'x', ['design_request', 'vendor_contact', 'run_request_sourcing'], NOW)).toHaveLength(0);
+  });
+
+  it('rolls the whole dispatch back when one event insert fails midway', async () => {
+    const briefs = Array.from({ length: 5 }, (_, i) => ({ ...PLAN.briefs[0], collection_name: `C${i}` }));
+    const { id } = insertProposal(db, input({ ...PLAN, briefs, vendor_contacts: [], run_requests: [] }), NOW);
+    // Blow up on the 5th insert, after four are already in the transaction.
+    db.exec(`CREATE TRIGGER boom BEFORE INSERT ON spine_events
+      WHEN (SELECT COUNT(*) FROM spine_events) >= 4
+      BEGIN SELECT RAISE(ABORT, 'injected failure'); END;`);
+    const r = await executeProposal(db, id, deps());
+    expect(r.ok).toBe(false);
+    expect(getProposalById(db, id)!.status).toBe('failed');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
+  });
+
+  it('rolls the events back when a concurrent decision moves the row before recordExecution', async () => {
+    const { id } = insertProposal(db, input(), NOW);
+    // Simulate the race: the row is rejected the instant the first event lands,
+    // so recordExecution inside the transaction finds nothing to update.
+    db.exec(`CREATE TRIGGER racer AFTER INSERT ON spine_events
+      BEGIN UPDATE proposals SET status = 'rejected' WHERE id = ${id}; END;`);
+    const r = await executeProposal(db, id, deps());
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('rolled back');
+    expect(r.recorded).toBe(false);
+    // Both halves of the transaction are gone: no events, and the rejection undone.
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
+    expect(getProposalById(db, id)!.status).toBe('pending');
+  });
+
   it('never calls a hand over HTTP', async () => {
     const { id } = insertProposal(db, input(), NOW);
     const r = await executeProposal(db, id, deps());

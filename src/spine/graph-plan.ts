@@ -56,6 +56,12 @@ export type DispatchPlanResult =
 
 export const MIN_BRIEF_TEXT = 40;
 export const MAX_PRODUCT_COUNT = 8;
+/** Bounds, so one chat message can never file a card the phone cannot show. */
+export const MAX_BRIEFS = 12;
+export const MAX_VENDOR_CONTACTS = 10;
+export const MAX_RUN_REQUESTS = 5;
+export const MAX_FABRIC_LOCKS = 12;
+export const MAX_SELLS = 20;
 export const PRICE_TIERS: readonly PriceTier[] = Object.freeze(['value', 'core', 'premium'] as const);
 export const DYE_PROGRAMS: readonly DyeProgram[] = Object.freeze(['pfd_house_dye', 'vendor_dyed'] as const);
 
@@ -157,6 +163,9 @@ function validateBrief(raw: unknown, i: number, nowIso: string):
   if (raw.fabric_locks !== undefined && raw.fabric_locks !== null) {
     const v = raw.fabric_locks;
     if (!Array.isArray(v)) return { ok: false, error: `fabric_locks must be an array of strings (${where})` };
+    if (v.length > MAX_FABRIC_LOCKS) {
+      return { ok: false, error: `fabric_locks holds at most ${MAX_FABRIC_LOCKS} entries (${where})` };
+    }
     const cleaned = v.map(trimmedString);
     if (cleaned.some((s) => s === null)) {
       return { ok: false, error: `fabric_locks must be an array of non-empty strings (${where})` };
@@ -217,6 +226,9 @@ function validateVendorContact(raw: unknown, i: number):
   let sells: string[] | null = null;
   if (raw.sells !== undefined && raw.sells !== null) {
     if (!Array.isArray(raw.sells)) return { ok: false, error: `vendor_contacts[${i}].sells must be an array of strings` };
+    if (raw.sells.length > MAX_SELLS) {
+      return { ok: false, error: `vendor_contacts[${i}].sells holds at most ${MAX_SELLS} entries` };
+    }
     const cleaned = raw.sells.map(trimmedString);
     if (cleaned.some((s) => s === null)) {
       return { ok: false, error: `vendor_contacts[${i}].sells must be an array of non-empty strings` };
@@ -302,6 +314,16 @@ export function validateDispatchPlan(raw: unknown, nowIso: string): DispatchPlan
   if (briefs.length + vendor_contacts.length + run_requests.length === 0) {
     return { ok: false, error: 'a dispatch plan needs at least one brief, vendor contact or run request' };
   }
+  // Bounds are checked after the `both` expansion: two lines is two Designer runs.
+  if (briefs.length > MAX_BRIEFS) {
+    return { ok: false, error: `a dispatch plan holds at most ${MAX_BRIEFS} briefs after expanding line "both"; this one has ${briefs.length}` };
+  }
+  if (vendor_contacts.length > MAX_VENDOR_CONTACTS) {
+    return { ok: false, error: `a dispatch plan holds at most ${MAX_VENDOR_CONTACTS} vendor contacts` };
+  }
+  if (run_requests.length > MAX_RUN_REQUESTS) {
+    return { ok: false, error: `a dispatch plan holds at most ${MAX_RUN_REQUESTS} run requests` };
+  }
 
   return { ok: true, plan: { summary, briefs, vendor_contacts, run_requests } };
 }
@@ -310,6 +332,25 @@ export interface ApprovedPersonaCounts { mens: number; womens: number }
 
 /** The proposal `reason` column caps at 2000 chars (`validateProposal`). */
 export const PLAN_REASON_CAP = 2000;
+/** A brief_text line on the card is a reminder, not the brief. */
+export const BRIEF_TEXT_LINE_CAP = 140;
+/** Prefix of the designer-run estimate line, so a reader can find it again. */
+export const ESTIMATE_PREFIX = 'Estimated ';
+
+export interface RenderPlanOptions {
+  /**
+   * Show a truncated `brief_text` line under each Brief line when the plan has
+   * at most this many briefs. The card does this for a small dispatch, where
+   * there is room for Robert to read what he actually asked for.
+   */
+  briefTextMaxBriefs?: number;
+  /**
+   * The designer-run count when the caller already knows it (the card reads it
+   * off the filed `evidence` rather than re-reading design-module). Ignored
+   * when `personas` is given.
+   */
+  designRuns?: number | null;
+}
 
 function briefLine(b: DispatchBrief): string {
   let s = `Brief: ${b.collection_name} — ${b.line}`;
@@ -330,39 +371,68 @@ function contactLine(c: DispatchVendorContact): string {
   return `${head}no email on file`;
 }
 
+function truncate(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/** The one line that tells Robert how much Designer work he is approving. */
+export function estimateLine(briefCount: number, designRuns: number | null): string {
+  return designRuns === null
+    ? `${ESTIMATE_PREFIX}${briefCount} briefs × per approved persona designer runs.`
+    : `${ESTIMATE_PREFIX}${designRuns} designer runs (${briefCount} briefs × approved personas).`;
+}
+
 /**
  * The plan in plain words — the card copy Robert reads on his phone and the
  * proposal's stored `reason`. `personas` is the approved-persona count per
- * line; `null` when design-module could not be reached, which downgrades the
- * estimate line rather than losing it.
+ * line; `null` (with no `designRuns` override) downgrades the estimate line
+ * rather than losing it.
+ *
+ * Every section sheds from the end — briefs first, then contacts, then run
+ * requests — so the result is always <= PLAN_REASON_CAP for any valid plan,
+ * whatever the caller put in the free-text fields.
  */
-export function renderPlanReason(plan: DispatchPlan, personas: ApprovedPersonaCounts | null): string {
-  const briefLines = plan.briefs.map(briefLine);
-  const tail: string[] = [
-    ...plan.vendor_contacts.map(contactLine),
-    ...plan.run_requests.map((r) => `Run: ${r.agent} — ${r.reason}`),
-  ];
-  if (plan.briefs.length > 0) {
-    if (personas) {
-      const n = plan.briefs.reduce((sum, b) => sum + personas[b.line], 0);
-      tail.push(`Estimated ${n} designer runs (${plan.briefs.length} briefs across approved personas).`);
-    } else {
-      tail.push(`Estimated ${plan.briefs.length} briefs × per approved persona designer runs.`);
-    }
-  }
+export function renderPlanReason(
+  plan: DispatchPlan,
+  personas: ApprovedPersonaCounts | null,
+  opts: RenderPlanOptions = {},
+): string {
+  const showBriefText = opts.briefTextMaxBriefs !== undefined
+    && plan.briefs.length <= opts.briefTextMaxBriefs;
+  const briefBlocks = plan.briefs.map((b) => (showBriefText
+    ? [briefLine(b), `  ${truncate(b.brief_text, BRIEF_TEXT_LINE_CAP)}`]
+    : [briefLine(b)]));
+  const contactLines = plan.vendor_contacts.map(contactLine);
+  const runLines = plan.run_requests.map((r) => `Run: ${r.agent} — ${r.reason}`);
 
-  const assemble = (n: number): string => {
-    const parts = [plan.summary, ...briefLines.slice(0, n)];
-    if (n < briefLines.length) parts.push(`…and ${briefLines.length - n} more briefs`);
-    parts.push(...tail);
-    return parts.join('\n');
-  };
+  const designRuns = personas
+    ? plan.briefs.reduce((sum, b) => sum + personas[b.line], 0)
+    : (opts.designRuns ?? null);
+  const estimate = plan.briefs.length > 0 ? [estimateLine(plan.briefs.length, designRuns)] : [];
 
-  let kept = briefLines.length;
-  let text = assemble(kept);
-  while (text.length > PLAN_REASON_CAP && kept > 0) {
-    kept -= 1;
-    text = assemble(kept);
+  const more = (kept: number, all: number, noun: string): string[] =>
+    kept < all ? [`…and ${all - kept} more ${noun}`] : [];
+
+  const assemble = (nb: number, nc: number, nr: number): string => [
+    plan.summary,
+    ...briefBlocks.slice(0, nb).flat(),
+    ...more(nb, briefBlocks.length, 'briefs'),
+    ...contactLines.slice(0, nc),
+    ...more(nc, contactLines.length, 'vendor contacts'),
+    ...runLines.slice(0, nr),
+    ...more(nr, runLines.length, 'run requests'),
+    ...estimate,
+  ].join('\n');
+
+  let nb = briefBlocks.length;
+  let nc = contactLines.length;
+  let nr = runLines.length;
+  let text = assemble(nb, nc, nr);
+  while (text.length > PLAN_REASON_CAP && (nb > 0 || nc > 0 || nr > 0)) {
+    if (nb > 0) nb -= 1;
+    else if (nc > 0) nc -= 1;
+    else nr -= 1;
+    text = assemble(nb, nc, nr);
   }
   return text;
 }

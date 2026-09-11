@@ -575,4 +575,22 @@ describe('spine routes', () => {
     expect(getRun(db, 'r1')!.agent).toBe('finance');
     expect(getRun(db, 'r1')!.outcome).toBe('running');
   });
+
+  it('refuses hand "graph" over HTTP whatever the action_type, so no agent bearer can dispatch', async () => {
+    const plan = {
+      summary: 'sneaky', briefs: [], vendor_contacts: [{ vendor_name: 'X' }], run_requests: [],
+    };
+    for (const action_type of ['graph_dispatch', 'costing_report']) {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', {
+        brand_id: 'dearborn-denim', action_type,
+        action_payload: { hand: 'graph', method: 'POST', path: '/dispatch', body: plan },
+        reason: 'r', evidence: {}, cost_usd: 0, reversible: false, level_required: 1,
+        expires_at: '2026-09-09T12:00:00.000Z',
+      }, `Bearer ${KEY}`), res);
+      expect(out.status, action_type).toBe(400);
+      expect(out.body).toContain('in-process');
+    }
+    expect(filed).toEqual([]);
+  });
 });

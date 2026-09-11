@@ -14,6 +14,7 @@ const olivier: ChatPromptUser = {
   name: 'Olivier',
   business_context: 'Olivier works at Dearborn Denim. End user of kanban-purchaser.',
   accounts: ['olivier@dearborndenim.com'],
+  is_admin: false,
 };
 
 const robert: ChatPromptUser = {
@@ -21,6 +22,7 @@ const robert: ChatPromptUser = {
   business_context:
     'Robert McMillan owns Dearborn Denim (rob@dearborndenim.com) and McMillan Manufacturing (robert@mcmillan-manufacturing.com).',
   accounts: ['rob@dearborndenim.com', 'robert@mcmillan-manufacturing.com'],
+  is_admin: true,
 };
 
 const ctx: ChatContext = {
@@ -122,15 +124,22 @@ describe('buildActingOnRequests (MCS-1)', () => {
 });
 
 describe('buildChatSystemBlocks (MCS-9 cache layout)', () => {
-  it('returns stable, volatile and graph-routing blocks, all with ephemeral cache_control', () => {
+  it('gives a non-admin two blocks and no GRAPH ROUTING, both with ephemeral cache_control', () => {
     const blocks = buildChatSystemBlocks(olivier, ctx);
-    expect(blocks).toHaveLength(3);
+    expect(blocks).toHaveLength(2);
     expect(blocks[0]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
     expect(blocks[1]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
-    expect(blocks[2]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
     expect(blocks[0]!.text).toBe(buildStableSystemText(olivier));
     expect(blocks[1]!.text).toBe(buildVolatileSystemText(ctx));
-    expect(blocks[2]!.text).toBe(buildGraphRouting('Olivier'));
+    expect(blocks.some((b) => b.text.includes('=== GRAPH ROUTING ==='))).toBe(false);
+    expect(blocks.some((b) => b.text.includes('propose_graph_dispatch'))).toBe(false);
+  });
+
+  it('adds the GRAPH ROUTING block third for an admin', () => {
+    const blocks = buildChatSystemBlocks(robert, ctx);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[2]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
+    expect(blocks[2]!.text).toBe(buildGraphRouting('Robert'));
   });
 
   it('stable block = base + acting contract and contains nothing from the volatile context', () => {
@@ -215,11 +224,18 @@ describe('hard-limits policy: no code execution, no GitHub writes, no build queu
 describe('GRAPH ROUTING block', () => {
   const text = buildGraphRouting('Robert');
 
-  it('is its own cached system block, third of three', () => {
+  it('is its own cached system block, third of three, for an admin only', () => {
     const blocks = buildChatSystemBlocks(robert, ctx);
     expect(blocks).toHaveLength(3);
     expect(blocks[2]!.text).toBe(buildGraphRouting('Robert'));
     expect(blocks.every((b) => b.cache_control?.type === 'ephemeral')).toBe(true);
+    expect(buildChatSystemBlocks(olivier, ctx)).toHaveLength(2);
+  });
+
+  it('tells the model a directive is an instruction, not an idea, and to ask one question when unsure', () => {
+    expect(text).toContain('A directive is an instruction, not an idea');
+    expect(text).toContain('ask ONE question');
+    expect(text).toMatch(/instead of filing/i);
   });
 
   it('addresses the calling user, not Robert, for another user', () => {
@@ -268,5 +284,11 @@ describe('GRAPH ROUTING block', () => {
     expect(base).not.toContain('never queue work for a build system');
     expect(base).toContain('never run code');
     expect(base).toContain('never write to GitHub');
+  });
+
+  it('the HARD LIMITS override is narrowed to the four graph tools and is conditional on the block existing', () => {
+    const base = buildSystemPromptBase(robert);
+    expect(base).toContain('when a GRAPH ROUTING block appears below');
+    expect(base).toContain('governs the four graph tools listed there and nothing else');
   });
 });

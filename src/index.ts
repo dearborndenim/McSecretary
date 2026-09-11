@@ -1510,6 +1510,7 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         name: user.name,
         business_context: prefs?.business_context ?? null,
         accounts: accounts.map((a) => a.email_address),
+        is_admin: user.role === 'admin',
       },
       { dailyContext, taskContext, smsContext, emailContext },
     );

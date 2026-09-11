@@ -8,6 +8,7 @@ import {
   handleEditReply, createTelegramTransport, EDIT_WINDOW_MS, type CardDeps,
 } from '../../src/spine/telegram-card.js';
 import type { ProposalRow } from '../../src/spine/types.js';
+import { parseEdit } from '../../src/spine/edits.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 
@@ -388,7 +389,7 @@ describe('renderProposalCard for the graph hand', () => {
 
   it('leads with the id/agent line, then the summary, and closes with cost and expiry', () => {
     const lines = card('unused').split('\n');
-    expect(lines[0]).toMatch(/^#\d+ mcsecretary · dearborn-denim$/);
+    expect(lines[0]).toMatch(/^#\d+ mcsecretary · dearborn-denim$/);   // no requested_by on this row
     expect(lines[1]).toBe('Four knit concepts, both lines.');
     expect(lines.at(-3)).toBe('Edit: summary=<new text> only — anything deeper, Reject and re-send the message.');
     expect(lines.at(-2)).toContain('NOT reversible');
@@ -419,5 +420,63 @@ describe('renderProposalCard for the graph hand', () => {
       action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: edited }),
     }));
     expect(text.split('\n')[1]).toBe('Only the waffle knit one, please.');
+  });
+
+  it('shows the designer-run estimate from the filed evidence, not a guess', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: JSON.stringify({ requested_by: 'Robert', briefs: 8, design_runs_estimated: 16 }),
+    }));
+    expect(text.split('\n').at(-4)).toBe('Estimated 16 designer runs (8 briefs × approved personas).');
+  });
+
+  it('falls back to the count already written into the stored reason', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: JSON.stringify({ briefs: 8 }),
+      reason: 'summary line\nEstimated 16 designer runs (8 briefs × approved personas).',
+    }));
+    expect(text.split('\n').at(-4)).toBe('Estimated 16 designer runs (8 briefs × approved personas).');
+  });
+
+  it('says "per approved persona" when neither evidence nor reason carries a count', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: '{}', reason: 'nothing useful',
+    }));
+    expect(text.split('\n').at(-4)).toBe('Estimated 8 briefs × per approved persona designer runs.');
+  });
+
+  it('names the requesting user on the first line', () => {
+    const text = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+      evidence: JSON.stringify({ requested_by: 'Robert', design_runs_estimated: 16 }),
+    }));
+    expect(text.split('\n')[0]).toBe('#42 mcsecretary · dearborn-denim · for Robert');
+  });
+
+  it('shows a truncated brief_text line under each brief for a small dispatch', () => {
+    const small = { ...plan, briefs: plan.briefs.slice(0, 2).map((b, i) => ({ ...b, brief_text: `${'b'.repeat(200)}${i}` })) };
+    const lines = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: small }),
+    })).split('\n');
+    const textLines = lines.filter((l) => l.startsWith('  b'));
+    expect(textLines).toHaveLength(2);
+    expect(textLines[0]!.length).toBeLessThanOrEqual(142);
+    expect(textLines[0]).toContain('…');
+  });
+
+  it('omits the brief_text lines once there are more than three briefs', () => {
+    const lines = renderProposalCard(rowFor({
+      action_payload: JSON.stringify({ hand: 'graph', method: 'POST', path: '/dispatch', body: plan }),
+    })).split('\n');
+    expect(lines.filter((l) => l.startsWith('  '))).toEqual([]);
+  });
+
+  it('the Edit hint it prints is a line parseEdit actually accepts', () => {
+    const hintLine = card('unused').split('\n').at(-3)!;
+    expect(hintLine).toContain('summary=');
+    const parsed = parseEdit('summary=Only the waffle knit one, both lines');
+    expect(parsed.ok).toBe(true);
   });
 });

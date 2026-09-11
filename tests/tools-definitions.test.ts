@@ -204,4 +204,11 @@ describe('graph tools reach the chat loop', () => {
     expect(d).toContain('Approve');
     expect(d).toContain('no agent starts');
   });
+
+  it('propose_graph_dispatch does not claim ANY message, and names the ask-first case', () => {
+    const d = tool('propose_graph_dispatch').description ?? '';
+    expect(d).not.toContain('ANY message');
+    expect(d).toContain('clear instruction');
+    expect(d).toContain('ask one clarifying question');
+  });
 });
