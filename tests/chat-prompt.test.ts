@@ -263,6 +263,14 @@ describe('GRAPH ROUTING block', () => {
     expect(text).toContain('Never set fabric_catalog');
   });
 
+  it('requires a distinct collection_name per concept, shared only across mens/womens (card #251)', () => {
+    expect(text).toContain('distinct collection_name');
+    expect(text).toContain('never one shared name across concepts');
+    expect(text).toContain('American Knits — Waffle');
+    expect(text).toContain('American Knits — Rugby');
+    expect(text).toMatch(/only repeat for the mens and womens/);
+  });
+
   it('states the query rule: read_agent_outputs first, Central Time stamp, request a run when stale', () => {
     expect(text).toContain('read_agent_outputs');
     expect(text).toContain('Central Time');

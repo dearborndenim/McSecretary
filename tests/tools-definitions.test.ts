@@ -211,4 +211,11 @@ describe('graph tools reach the chat loop', () => {
     expect(d).toContain('clear instruction');
     expect(d).toContain('ask one clarifying question');
   });
+
+  it('propose_graph_dispatch requires a distinct collection_name per concept (card #251)', () => {
+    const plan = props('propose_graph_dispatch').plan?.description ?? '';
+    expect(plan).toContain('own distinct collection_name');
+    expect(plan).toContain('never one shared name across concepts');
+    expect(plan).toMatch(/repeat only for the mens and womens/);
+  });
 });
