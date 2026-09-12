@@ -136,6 +136,79 @@ describe('validateDispatchPlan', () => {
   });
 });
 
+describe('validateDispatchPlan collection-name collisions (card #251)', () => {
+  it('rejects two briefs sharing the same collection_name and line', () => {
+    const r = validateDispatchPlan({
+      summary: 's',
+      briefs: [
+        brief({ collection_name: 'American Knits 2026', line: 'mens' }),
+        brief({ collection_name: 'American Knits 2026', line: 'mens' }),
+      ],
+    }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('American Knits 2026');
+    expect(r.error).toContain('mens');
+    expect(r.error).toContain('brief 1');
+    expect(r.error).toContain('brief 2');
+  });
+
+  it('accepts the same collection_name repeated across mens and womens (personas are per line)', () => {
+    const r = validateDispatchPlan({
+      summary: 's',
+      briefs: [
+        brief({ collection_name: 'American Knits — Waffle', line: 'mens' }),
+        brief({ collection_name: 'American Knits — Waffle', line: 'womens' }),
+      ],
+    }, NOW);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a "both" brief expanded alongside an explicit mens brief of the same name', () => {
+    const r = validateDispatchPlan({
+      summary: 's',
+      briefs: [
+        brief({ collection_name: 'American Knits 2026', line: 'both' }),
+        brief({ collection_name: 'American Knits 2026', line: 'mens' }),
+      ],
+    }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('American Knits 2026');
+    expect(r.error).toContain('mens');
+    // brief 1 expands into mens+womens (indexes 0,1 -> "brief 1"); the collision
+    // is with the explicit mens brief at raw index 1 ("brief 2").
+    expect(r.error).toContain('brief 1');
+    expect(r.error).toContain('brief 2');
+  });
+
+  it('treats case and surrounding-whitespace variants as the same name', () => {
+    const r = validateDispatchPlan({
+      summary: 's',
+      briefs: [
+        brief({ collection_name: ' American Knits 2026 ', line: 'mens' }),
+        brief({ collection_name: 'american knits 2026', line: 'mens' }),
+      ],
+    }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('brief 1');
+    expect(r.error).toContain('brief 2');
+  });
+
+  it("names the duplicate by the raw brief's position, not the expanded list's", () => {
+    // Five concepts sharing one name, mens+womens each — the real card #251 shape.
+    const r = validateDispatchPlan({
+      summary: 's',
+      briefs: Array.from({ length: 5 }, () => brief({ collection_name: 'American Knits 2026', line: 'both' })),
+    }, NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('brief 1');
+    expect(r.error).toContain('brief 2');
+  });
+});
+
 describe('season and launch defaults', () => {
   it('names the season that starts after the current date', () => {
     expect(defaultSeason('2026-09-11T12:00:00.000Z')).toBe('Winter 2026');
@@ -289,7 +362,7 @@ describe('plan size bounds', () => {
     const long = 'L'.repeat(400);
     const r = validateDispatchPlan({
       summary: 'z'.repeat(200),
-      briefs: Array.from({ length: 6 }, () => brief({ line: 'both', collection_name: 'N'.repeat(120), fabric_locks: Array.from({ length: 12 }, () => long), vendor: 'v'.repeat(120) })),
+      briefs: Array.from({ length: 6 }, (_, i) => brief({ line: 'both', collection_name: `${'N'.repeat(119)}${i}`, fabric_locks: Array.from({ length: 12 }, () => long), vendor: 'v'.repeat(120) })),
       vendor_contacts: Array.from({ length: 10 }, () => ({ vendor_name: 'V'.repeat(120), contact_name: 'C'.repeat(120), email: `${'e'.repeat(200)}@x.com` })),
       run_requests: Array.from({ length: 5 }, () => ({ agent: 'a'.repeat(120), reason: 'r'.repeat(300) })),
     }, NOW);

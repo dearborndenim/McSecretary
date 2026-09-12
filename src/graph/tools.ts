@@ -71,7 +71,7 @@ export const GRAPH_TOOL_DEFINITIONS: Anthropic.Tool[] = [
         plan: {
           type: 'object',
           description:
-            'The dispatch plan. {summary: one line; briefs: [{collection_name, line: "mens"|"womens"|"both", brief_text (>=40 chars, Robert\'s words plus the inferred constraints), season?, target_launch? (YYYY-MM-DD), product_count? (1-8), price_ladder? (value|core|premium), fabric_locks?, vendor?, dye_program? ("pfd_house_dye"|"vendor_dyed"), persona? (default "all")}]; vendor_contacts: [{vendor_name, slug?, contact_name?, email?, phone?, sells?, notes?}]; run_requests: [{agent, reason}]}. At least one of the three lists must be non-empty. One brief per concept — never one brief listing several fabrics. Never set fabric_catalog.',
+            'The dispatch plan. {summary: one line; briefs: [{collection_name, line: "mens"|"womens"|"both", brief_text (>=40 chars, Robert\'s words plus the inferred constraints), season?, target_launch? (YYYY-MM-DD), product_count? (1-8), price_ladder? (value|core|premium), fabric_locks?, vendor?, dye_program? ("pfd_house_dye"|"vendor_dyed"), persona? (default "all")}]; vendor_contacts: [{vendor_name, slug?, contact_name?, email?, phone?, sells?, notes?}]; run_requests: [{agent, reason}]}. At least one of the three lists must be non-empty. One brief per concept — never one brief listing several fabrics. Every concept gets its own distinct collection_name (e.g. "American Knits — Waffle", "American Knits — Rugby"), never one shared name across concepts; the same name may repeat only for the mens and womens briefs of one concept. Never set fabric_catalog.',
         },
       },
       required: ['plan'],

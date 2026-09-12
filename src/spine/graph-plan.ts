@@ -271,6 +271,31 @@ function listOf(raw: unknown, key: string): { ok: true; items: unknown[] } | { o
 }
 
 /**
+ * `run-designers.sh` suffixes the persona name onto `collection_name` to build
+ * the design-module slug — two briefs with the same (name, line) pair collide
+ * on that slug and the second overwrites the first as a revision (card #251,
+ * 2026-09-11: five fabric concepts all named "American Knits 2026" per line).
+ * Checked post-expansion, so a `both` brief colliding with an explicit mens or
+ * womens brief of the same name is caught too. Mens/womens briefs may share a
+ * name — personas are per line, so they land in different collections.
+ */
+function findDuplicateBriefPair(briefs: DispatchBrief[], rawIndexOf: number[]): string | null {
+  const firstSeenAt = new Map<string, number>();
+  for (let idx = 0; idx < briefs.length; idx += 1) {
+    const b = briefs[idx]!;
+    const key = `${b.collection_name.toLowerCase()} ${b.line}`;
+    const prevIdx = firstSeenAt.get(key);
+    if (prevIdx !== undefined) {
+      const first = rawIndexOf[prevIdx]! + 1;
+      const second = rawIndexOf[idx]! + 1;
+      return `two briefs share collection_name "${b.collection_name}" for line "${b.line}" (brief ${first}, brief ${second}); every concept needs its own collection name`;
+    }
+    firstSeenAt.set(key, idx);
+  }
+  return null;
+}
+
+/**
  * Normalize and check a model-drafted plan. `line: "both"` (and a missing
  * line) expands into a mens brief and a womens brief here, so every consumer
  * downstream sees one concrete line per brief.
@@ -291,11 +316,18 @@ export function validateDispatchPlan(raw: unknown, nowIso: string): DispatchPlan
   if (!rawRuns.ok) return rawRuns;
 
   const briefs: DispatchBrief[] = [];
+  const briefRawIndex: number[] = [];
   for (const [i, b] of rawBriefs.items.entries()) {
     const r = validateBrief(b, i, nowIso);
     if (!r.ok) return r;
-    briefs.push(...r.briefs);
+    for (const expanded of r.briefs) {
+      briefs.push(expanded);
+      briefRawIndex.push(i);
+    }
   }
+
+  const duplicate = findDuplicateBriefPair(briefs, briefRawIndex);
+  if (duplicate) return { ok: false, error: duplicate };
 
   const vendor_contacts: DispatchVendorContact[] = [];
   for (const [i, c] of rawContacts.items.entries()) {
