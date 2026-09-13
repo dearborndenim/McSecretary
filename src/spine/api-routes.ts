@@ -28,7 +28,10 @@ const BRAND_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 const NAME_MAX = 128;
 const MAX_PENDING_TYPES = 50;
-const HAND_PROXY_BODY_CAP = 1_048_576;
+// design-module's collections list (the Design Artist's first read) is already >1 MB
+// (113 collections, ~90 more per designer fan-out this week) and growing; 8 MiB gives
+// headroom well past the next several fan-outs before this needs raising again.
+const HAND_PROXY_BODY_CAP = 8 * 1024 * 1024;
 const NOTES_TITLE_MAX = 120;
 const NOTES_SUMMARY_MAX = 2000;
 const NOTES_NOTIFY_MAX = 600;

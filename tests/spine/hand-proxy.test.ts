@@ -61,10 +61,20 @@ describe('GET /spine/hands/:hand/*', () => {
     expect((fetchMock.mock.calls[1]! as unknown as [string])[0]).toBe('https://ce.example/api/x?x=1+2');
   });
 
-  it('answers 502 when the streamed body exceeds 1 MiB, never truncating', async () => {
-    const chunk = new Uint8Array(1_048_576).fill(0x61);
+  const CAP = 8 * 1024 * 1024;
+
+  it('answers 502 when the streamed body exceeds the 8 MiB cap by one byte, never truncating', async () => {
+    const first = new Uint8Array(CAP).fill(0x61); // exactly at the cap
+    const second = new Uint8Array(1).fill(0x62); // pushes total to CAP + 1
     let pulls = 0;
-    const body = new ReadableStream<Uint8Array>({ pull(c) { if (pulls++ < 3) c.enqueue(chunk); else c.close(); } }, { highWaterMark: 0 });
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulls === 0) c.enqueue(first);
+        else if (pulls === 1) c.enqueue(second);
+        else c.close();
+        pulls++;
+      },
+    }, { highWaterMark: 0 });
     fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } }));
     const { res, out } = fakeRes();
     await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?brand=dearborn-denim', `Bearer ${KEY}`), res);
@@ -73,15 +83,28 @@ describe('GET /spine/hands/:hand/*', () => {
     expect(pulls).toBeLessThan(3);
   });
 
-  it('answers 502 on an oversize Content-Length without reading the body', async () => {
+  it('answers 502 on a Content-Length one byte over the 8 MiB cap without reading the body', async () => {
     let pulled = false;
     const body = new ReadableStream<Uint8Array>({ pull(c) { pulled = true; c.enqueue(new Uint8Array(1)); c.close(); } }, { highWaterMark: 0 });
-    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'Content-Length': '5000000' } }));
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'Content-Length': String(CAP + 1) } }));
     const { res, out } = fakeRes();
     await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?brand=dearborn-denim', `Bearer ${KEY}`), res);
     expect(out.status).toBe(502);
     expect(JSON.parse(out.body)).toEqual({ error: 'Hand response too large', hand_status: 200 });
     expect(pulled).toBe(false);
+  });
+
+  it('passes a 1.2 MB body (design-module collections-sized) through intact as 200', async () => {
+    const size = 1_258_291; // ~1.2 MiB — bigger than the old 1 MiB cap, well under the new 8 MiB one
+    const payload = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) payload[i] = 0x61 + (i % 26);
+    const text = payload.toString('utf8');
+    fetchMock.mockResolvedValueOnce(new Response(text, { status: 200, headers: { 'Content-Type': 'application/json', 'Content-Length': String(size) } }));
+    const { res, out } = fakeRes();
+    await handle(fakeReq('GET', '/spine/hands/content-engine/api/x?brand=dearborn-denim', `Bearer ${KEY}`), res);
+    expect(out.status).toBe(200);
+    expect(out.body.length).toBe(size);
+    expect(out.body).toBe(text);
   });
 
   it('requires brand=, refuses unknown hand, and refuses non-GET', async () => {
