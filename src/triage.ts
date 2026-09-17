@@ -338,10 +338,28 @@ export async function runTriage(
     // Include pending dev requests in the admin's briefing only.
     let pendingDevRequests: string | undefined;
     let adminOps: { inventory?: string; uninvoiced?: string; wip?: string } | undefined;
+    let agentActionsSection: string | undefined;
     try {
       const user = getUserById(db, userId);
       if (user?.role === 'admin') {
         pendingDevRequests = formatPendingRequestsForBriefing(db);
+
+        // Admin-only: what the business agents did in the last 24h. Level-3
+        // actions (marketing-creative's per-ad pause/resume/cut/promote)
+        // execute silently with no Telegram card, so this section is the only
+        // place they surface. Graceful-failure: loadAgentActionsData returns
+        // null on any DB problem and the formatter returns null when nothing
+        // happened, either of which drops the section entirely.
+        try {
+          const { loadAgentActionsData, formatAgentActionsSection } = await import('./briefing/agent-actions.js');
+          const agentData = loadAgentActionsData(db, now);
+          agentActionsSection = agentData
+            ? (formatAgentActionsSection(agentData) ?? undefined)
+            : undefined;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(`Skipping agent actions section: ${msg}`);
+        }
 
         // Admin-only operations snapshot: inventory, uninvoiced PO totals, WIP.
         // Every sub-fetch is graceful-failure so any upstream outage degrades
@@ -403,7 +421,7 @@ export async function runTriage(
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered, agentActionsSection);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

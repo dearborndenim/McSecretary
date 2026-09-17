@@ -53,6 +53,44 @@ export function listPendingProposals(db: Database.Database): ProposalRow[] {
   ).all() as ProposalRow[];
 }
 
+/**
+ * One executed-or-failed proposal, narrowed to the columns the morning
+ * briefing's `agent_actions` section reads. `at` is the execution timestamp:
+ * a human-decided row carries `decided_at`, while a level-2/3 auto-execution
+ * is performed inline by `fileProposal` right after the insert and never
+ * writes `decided_at`, so `created_at` is its execution time.
+ */
+export interface ExecutedProposalSummary {
+  id: number;
+  agent: string;
+  brand_id: string;
+  action_type: string;
+  status: 'executed' | 'failed';
+  reason: string;
+  evidence: string;
+  execution_result: string | null;
+  run_id: string | null;
+  at: string;
+}
+
+/**
+ * Proposals that reached `executed` or `failed` within the window, oldest
+ * first. There is no `executed_at` column (see ExecutedProposalSummary), so
+ * the window is COALESCE(decided_at, created_at).
+ */
+export function listExecutedProposalsSince(
+  db: Database.Database, sinceIso: string, limit: number,
+): ExecutedProposalSummary[] {
+  return db.prepare(`
+    SELECT id, agent, brand_id, action_type, status, reason, evidence, execution_result, run_id,
+           COALESCE(decided_at, created_at) AS at
+    FROM proposals
+    WHERE status IN ('executed','failed') AND COALESCE(decided_at, created_at) >= ?
+    ORDER BY at ASC, id ASC
+    LIMIT ?
+  `).all(sinceIso, limit) as ExecutedProposalSummary[];
+}
+
 /** Newest first, any status — what `read_agent_outputs` shows Robert. */
 export function listProposalsByAgent(
   db: Database.Database, agent: string, brandId: string, limit: number,

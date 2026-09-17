@@ -29,6 +29,35 @@ export function listFailedRunsSince(db: Database.Database, sinceIso: string): Ru
   `).all(sinceIso) as RunIndexInput[];
 }
 
+/** One agent's newest run inside a window — what the briefing's run-notes block reads. */
+export interface LatestRunRow {
+  agent: string;
+  run_id: string;
+  brand_id: string;
+  outcome: string;
+  notes: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/**
+ * The newest run per agent among runs started at or after `sinceIso`, agent
+ * order. One row per agent — a lane that ran three times overnight surfaces
+ * only its last run's outcome + notes.
+ */
+export function listLatestRunsSince(db: Database.Database, sinceIso: string): LatestRunRow[] {
+  return db.prepare(`
+    SELECT agent, run_id, brand_id, outcome, notes, started_at, finished_at FROM (
+      SELECT agent, run_id, brand_id, outcome, notes, started_at, finished_at,
+             ROW_NUMBER() OVER (PARTITION BY agent ORDER BY started_at DESC, run_id DESC) AS rn
+      FROM agent_run_index
+      WHERE started_at >= ?
+    )
+    WHERE rn = 1
+    ORDER BY agent ASC
+  `).all(sinceIso) as LatestRunRow[];
+}
+
 /** The newest run start for an agent, or null when it has never run. */
 export function latestRunStartedAt(db: Database.Database, agent: string, brandId: string): string | null {
   const r = db.prepare(

@@ -19,14 +19,15 @@ ${businessCtx}
 Generate a concise, actionable morning briefing in markdown format. Structure:
 
 1. **Overnight Dev** — Summary of what the AI agent empire built overnight. Only include if overnight build data is provided.
-2. **Factory Production** — Yesterday's production numbers, trends vs last week, and any notable streaks. Only include if production data is provided.
-3. **Operations Snapshot** — Inventory on hand, uninvoiced PO totals by brand, and work-in-progress summary. Only include if ops data is provided (admin only).
-4. **Today's Schedule** — Calendar events for today with times (Chicago time), conflicts flagged with suggestions, and free time blocks. Only include if calendar data is provided.
-5. **Needs Your Attention** — Critical/high urgency email items requiring a response. Include sender, one-line summary, and suggested action.
-6. **For Your Review** — Medium priority items to look at when time allows.
-7. **FYI / Handled** — What was auto-archived or marked as informational.
-8. **Stats** — How many emails processed, archived, flagged.
-9. **Dev Requests** — Pending feature requests from team members awaiting your review. Only include if dev request data is provided. Show request ID, who submitted it, and the description.
+2. **Agent Actions** — what the business agents executed overnight and yesterday, failures first, then what is still waiting for approval. Only include if agent action data is provided.
+3. **Factory Production** — Yesterday's production numbers, trends vs last week, and any notable streaks. Only include if production data is provided.
+4. **Operations Snapshot** — Inventory on hand, uninvoiced PO totals by brand, and work-in-progress summary. Only include if ops data is provided (admin only).
+5. **Today's Schedule** — Calendar events for today with times (Chicago time), conflicts flagged with suggestions, and free time blocks. Only include if calendar data is provided.
+6. **Needs Your Attention** — Critical/high urgency email items requiring a response. Include sender, one-line summary, and suggested action.
+7. **For Your Review** — Medium priority items to look at when time allows.
+8. **FYI / Handled** — What was auto-archived or marked as informational.
+9. **Stats** — How many emails processed, archived, flagged.
+10. **Dev Requests** — Pending feature requests from team members awaiting your review. Only include if dev request data is provided. Show request ID, who submitted it, and the description.
 
 Keep it conversational but direct. ${userName} is busy — lead with what matters.
 Don't use emoji. Use Central Time (Chicago) for all times.`;
@@ -54,6 +55,7 @@ export interface AdminOpsSections {
 const DEFAULT_BRIEFING_SECTION_ORDER: readonly string[] = [
   'stats',
   'overnight_dev',
+  'agent_actions',
   'production',
   'admin_ops',
   'calendar',
@@ -112,6 +114,7 @@ export function buildBriefingPrompt(
   pendingDevRequests?: string,
   adminOps?: AdminOpsSections,
   sections?: BriefingSectionFilter,
+  agentActions?: string,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -174,6 +177,16 @@ ${overnightDevSummary}
 `;
   }
 
+  // Agent-spine activity (admin only — triage.ts gathers it inside the admin
+  // branch). Pre-rendered by src/briefing/agent-actions.ts, which returns null
+  // when nothing happened, so an empty string here means "render nothing".
+  let agentActionsSection = '';
+  if (agentActions && sectionEnabled(sections, 'agent_actions')) {
+    agentActionsSection = `
+${agentActions}
+`;
+  }
+
   let productionSection = '';
   if (productionSummary && sectionEnabled(sections, 'production')) {
     productionSection = `
@@ -230,6 +243,7 @@ ${formatEmails(low)}`
   const blocksByName: Record<string, string> = {
     stats: statsBlock,
     overnight_dev: overnightSection,
+    agent_actions: agentActionsSection,
     production: productionSection,
     admin_ops: adminOpsSection,
     calendar: calendarSection,
@@ -262,13 +276,14 @@ export async function generateBriefing(
   pendingDevRequests?: string,
   adminOps?: AdminOpsSections,
   sections?: BriefingSectionFilter,
+  agentActions?: string,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
   const client = anthropicClient;
-  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps, sections);
+  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps, sections, agentActions);
   const systemPrompt = getBriefingSystemPrompt(userContext);
 
   const response = await client.messages.create({

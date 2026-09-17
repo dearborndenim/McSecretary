@@ -166,7 +166,7 @@ describe('Polish 2 — --diff output formatting', () => {
     expect(out).toContain('User: Olivier');
     expect(out).toContain('Current: overnight_dev, emails, stats');
     // Missing list is the canonical set minus the stored set, in canonical order.
-    expect(out).toContain('Missing: production, admin_ops, calendar, dev_requests');
+    expect(out).toContain('Missing: agent_actions, production, admin_ops, calendar, dev_requests');
     expect(out).toContain('Order: [overnight_dev, emails, stats]');
   });
 
