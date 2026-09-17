@@ -432,6 +432,11 @@ Merged branch `feature/briefing-inventory-wip` to main. 31 new tests (230 → 26
 - New env vars: `PO_RECEIVER_URL`, `PO_RECEIVER_API_KEY`.
 - `generateBriefing` / `buildBriefingPrompt` gain an optional `adminOps` param; the Sonnet system prompt now lists an "Operations Snapshot" section admin-only.
 
+### 2026-09-17: Briefing `agent_actions` section ("What the agents did")
+- Robert: no Telegram cards per ad; the 5 AM briefing is the report. `marketing-creative` × `creative_pause`/`creative_resume`/`creative_cut`/`creative_promote` promoted to trust level 3 for dearborn-denim via `POST /spine/trust/promote` (silent auto-execute, $0 reversible). `creative_batch` stays level 1.
+- New admin-only briefing section `agent_actions` (`src/briefing/agent-actions.ts`): last-24h executed proposals grouped agent → action type (failures first), pending cards per agent with ids expiring < 24h, and each agent's latest run-end note. Queries `listExecutedProposalsSince` (windowed on `COALESCE(decided_at, created_at)` — no `executed_at` column exists) and `listLatestRunsSince`. Renders nothing when nothing happened. Placed after `overnight_dev` in the default order; a user with a stored `briefing_sections_json` must add it explicitly.
+- Tests: `tests/briefing/agent-actions.test.ts` (21). Targeted sweep 347 passed, 5 pre-existing failures in `briefing-ux-polish-4.test.ts` (`--history`/`--revert` audit rows) unrelated. Deployed (auto from GitHub, SUCCESS 14:11 CT).
+
 ### 2026-09-03: Spine (agent-graph Stage 0A) merged
 - New `src/spine/` + `src/db/{proposal,trust,event,outcome,run-index}-queries.ts` + `src/http-util.ts`. Spec: `claude_code/docs/superpowers/specs/2026-09-02-business-agent-graph-design.md`; plan: `docs/superpowers/plans/2026-09-03-spine-mcsecretary.md`.
 - **Proposals**: agents file `{brand_id, action_type, action_payload{hand,method,path,body}, reason, evidence, cost_usd, reversible, level_required, expires_at}`; de-dup on canonical payload hash while a live proposal exists; `expires_at` normalised to ISO. Status machine `pending → approved|approved_with_edit|rejected|expired → executed|failed`, all transitions status-guarded in SQL (a double-tap cannot execute twice).
