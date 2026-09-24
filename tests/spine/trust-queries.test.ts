@@ -85,4 +85,14 @@ describe('trust ledger', () => {
     expect(promoteTrust(db, pinned, 1, 'robert', NOW)).toEqual({ ok: true, level: 1 });
     expect(promoteTrust(db, pinned, 2, 'robert', NOW).ok).toBe(false);
   });
+
+  it('pattern_draft defaults to level 1 with no ledger row and is not pinned, so it can be promoted', () => {
+    const patternDraft = { ...K, action_type: 'pattern_draft' };
+    expect(getTrustLevel(db, patternDraft)).toBe(1);
+    expect(getTrustRow(db, patternDraft)).toBeUndefined();
+    // Not pinned: promotion to 2 or 3 must succeed, not be refused with reason 'pinned'.
+    expect(promoteTrust(db, patternDraft, 2, 'robert', NOW)).toEqual({ ok: true, level: 2 });
+    expect(getTrustLevel(db, patternDraft)).toBe(2);
+    expect(promoteTrust(db, patternDraft, 3, 'robert', NOW)).toEqual({ ok: true, level: 3 });
+  });
 });
