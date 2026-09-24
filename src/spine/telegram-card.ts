@@ -106,9 +106,122 @@ function requestedBy(evidenceJson: string): string | null {
   }
 }
 
+/** Up to this many defects are listed on a `pattern_draft` card; the rest are elided as "(+N more)". */
+const PATTERN_DEFECT_LIST_MAX = 3;
+
+function asString(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+function asFiniteNumber(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function asPlainObject(v: unknown): Record<string, unknown> | null {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** Parse a stored JSON column defensively — malformed text or a non-object value both yield `{}`. */
+function safeJsonObject(json: string | null | undefined): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    return asPlainObject(JSON.parse(json)) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The mode-specific line on a `pattern_draft` card. `driftedFrom` already
+ * carries the right slug for every mode — a block for edit/block_export, an
+ * archetype for draft (evidence's own convention) — with `archetype` as a
+ * fallback when `drafted_from` itself is missing.
+ */
+function patternModeLine(mode: string, draftedFrom: string | null, archetype: string | null, editsCount: number | null): string {
+  const from = draftedFrom ?? archetype ?? 'unknown';
+  if (mode === 'edit') return `Edit on block ${from} — ${editsCount ?? 0} design edit(s)`;
+  if (mode === 'block_export') return `Export block ${from}`;
+  return `Draft from archetype ${from}`;
+}
+
+/** `null` when the critic object is missing its two numeric fields — no line rather than a broken one. */
+function patternCriticLine(critic: Record<string, unknown>): string | null {
+  const score = asFiniteNumber(critic.score);
+  const defects = asFiniteNumber(critic.defects);
+  if (score === null || defects === null) return null;
+  const list = Array.isArray(critic.defect_list) ? critic.defect_list.filter((x): x is string => typeof x === 'string') : [];
+  const shown = list.slice(0, PATTERN_DEFECT_LIST_MAX);
+  const extra = list.length - shown.length;
+  const listText = shown.length > 0 ? `: ${shown.join('; ')}${extra > 0 ? ` (+${extra} more)` : ''}` : '';
+  return cap(`Critic ${score}/100 — ${defects} defect(s)${listText}`, REASON_CAP);
+}
+
+/** `null` when the response body carries no files to show. */
+function patternFilesLine(resultBody: Record<string, unknown>): string | null {
+  const files = Array.isArray(resultBody.files) ? resultBody.files : [];
+  const names = files
+    .map((f) => {
+      const obj = asPlainObject(f);
+      if (!obj) return null;
+      return asString(obj.url) ?? asString(obj.name);
+    })
+    .filter((n): n is string => n !== null)
+    .map((n) => (n.startsWith('/files/') ? n.slice('/files/'.length) : n));
+  if (names.length === 0) return null;
+  const oneDrive = asString(resultBody.delivery_dir) !== null;
+  return cap(`Files: ${names.join(', ')}${oneDrive ? ' (+ OneDrive)' : ''}`, REASON_CAP);
+}
+
+/**
+ * `pattern_draft` proposals (Pattern Maker agent, `design-module` hand):
+ * files a real pattern draft/edit/block-export for Robert to approve. Keyed
+ * on `action_type` rather than `payload.hand`, since design-module is a
+ * normal HTTP hand and would otherwise fall through to the generic render.
+ * Evidence fields are read defensively — every one may be missing or the
+ * wrong type — and the critic/files lines only appear once the row carries
+ * an `execution_result` (i.e. after Robert has approved it).
+ */
+function renderPatternDraftCard(p: ProposalRow, payload: ActionPayload): string {
+  const evidence = safeJsonObject(p.evidence);
+  const body = asPlainObject(payload.body) ?? {};
+
+  const garment = asString(evidence.garment) ?? asString(evidence.techpack_id) ?? asString(body.techpack_id) ?? 'techpack';
+  const revision = asFiniteNumber(evidence.revision) ?? asFiniteNumber(body.revision);
+  const mode = asString(evidence.mode) ?? 'draft';
+  const draftedFrom = asString(evidence.drafted_from);
+  const archetype = asString(evidence.archetype);
+  const editsCount = asFiniteNumber(evidence.edits_count);
+
+  const lines = [
+    `#${p.id} ${p.agent} · ${p.brand_id}`,
+    `Draft pattern: ${garment} r${revision ?? '?'} (${mode})`,
+    patternModeLine(mode, draftedFrom, archetype, editsCount),
+    cap(p.reason, REASON_CAP),
+  ];
+
+  if (p.execution_result) {
+    const result = safeJsonObject(p.execution_result);
+    const resultBody = asPlainObject(result.body) ?? {};
+    const critic = asPlainObject(resultBody.critic);
+    const criticLine = critic ? patternCriticLine(critic) : null;
+    if (criticLine) lines.push(criticLine);
+    const filesLine = patternFilesLine(resultBody);
+    if (filesLine) lines.push(filesLine);
+  }
+
+  lines.push('Runs on approve — level 1 — Robert approves.');
+  lines.push(`Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`);
+  lines.push(`Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`);
+  return lines.join('\n');
+}
+
 /** Five-ish lines, phone-readable (spec §4.2). */
 export function renderProposalCard(p: ProposalRow): string {
   const payload = JSON.parse(p.action_payload) as ActionPayload;
+
+  if (p.action_type === 'pattern_draft') {
+    return renderPatternDraftCard(p, payload);
+  }
 
   // notes proposals carry the human-readable text in the payload body
   // (title/summary), not in `reason`/`evidence` — render those directly

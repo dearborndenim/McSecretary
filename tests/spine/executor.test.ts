@@ -415,6 +415,78 @@ describe('executeProposal: executed-event suppression for notes cards', () => {
   });
 });
 
+describe('executeProposal: pattern_draft (design-module hand)', () => {
+  let db: Database.Database;
+  let id: number;
+  const responseBody = {
+    ok: true, id: 'late-shift-cargo', style: 'Late Shift Cargo', revision: 2,
+    mode: 'edit', drafted_from: 'palazzo-stretch',
+    pattern: { library_path: 'x', dxf: 'y', rul: 'z', drafted_at: NOW, base_block: 'palazzo-stretch', critique: { a: 1 } },
+    critic: {
+      score: 92.0, defects: 1, warnings: 3,
+      defect_list: ['WA01 front panel: waist 1.20in under spec'],
+      summary: 'Solid draft with one waist defect.', report_path: '/files/previews/late-shift-cargo-v2.html',
+    },
+    files: [{ kind: 'dxf', name: 'late-shift-cargo-v2.dxf', path: '/abs/x', url: '/files/reports/proto/late-shift-cargo-v2.dxf' }],
+    proto_dir: '/abs/data/reports/proto', delivery_dir: '/Users/robert/OneDrive/design-module/proto',
+    notify: 'Late Shift Cargo r2 edited off block palazzo-stretch: critic 92/100, 1 defect, 3 warnings -> reports/proto/late-shift-cargo-v2.* (+ OneDrive)',
+  };
+
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db);
+    id = insertProposal(db, {
+      agent: 'pattern-maker', brand_id: 'dearborn-denim', action_type: 'pattern_draft',
+      action_payload: {
+        hand: 'ad-manager', method: 'POST', path: '/api/techpacks/late-shift-cargo/draft',
+        body: { techpack_id: 'late-shift-cargo', revision: 2 },
+      },
+      reason: 'Design edits moved the block off palazzo-stretch by 3 ops.', evidence: {},
+      cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+  });
+  afterEach(() => db.close());
+
+  it('records the execution and emits pattern_draft_executed with the flattened scalars; critic/files stay nested under response', async () => {
+    const r = await executeProposal(db, id, deps(async () => new Response(JSON.stringify(responseBody), { status: 200 })));
+    expect(r.ok).toBe(true);
+    expect(getProposalById(db, id)!.status).toBe('executed');
+    const events = selectEvents(db);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event_type).toBe('pattern_draft_executed');
+    expect(events[0]!.urgent).toBe(1);
+    const payload = JSON.parse(events[0]!.payload) as Record<string, unknown>;
+    expect(payload.id).toBe('late-shift-cargo');
+    expect(payload.style).toBe('Late Shift Cargo');
+    expect(payload.revision).toBe(2);
+    expect(payload.mode).toBe('edit');
+    expect(payload.drafted_from).toBe('palazzo-stretch');
+    expect(payload.ok).toBe(true);
+    expect(payload).not.toHaveProperty('critic');
+    expect(payload).not.toHaveProperty('files');
+    expect(payload).not.toHaveProperty('pattern');
+    const response = payload.response as Record<string, unknown>;
+    expect(response.critic).toEqual(responseBody.critic);
+    expect(response.files).toEqual(responseBody.files);
+  });
+
+  it('marks failed on a 422 engine refusal and emits no event', async () => {
+    const refusal = { ok: false, reason: 'engine_could_not_produce_pattern' };
+    const r = await executeProposal(db, id, deps(async () => new Response(JSON.stringify(refusal), { status: 422 })));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.http_status).toBe(422);
+    expect(getProposalById(db, id)!.status).toBe('failed');
+    expect(selectEvents(db)).toHaveLength(0);
+  });
+
+  it('marks failed on a 409 already-drafted refusal and emits no event', async () => {
+    const refusal = { ok: false, reason: 'already_drafted_use_redraft' };
+    const r = await executeProposal(db, id, deps(async () => new Response(JSON.stringify(refusal), { status: 409 })));
+    expect(r.ok).toBe(false);
+    expect(getProposalById(db, id)!.status).toBe('failed');
+    expect(selectEvents(db)).toHaveLength(0);
+  });
+});
+
 describe('resolveHandUrl', () => {
   it('stays under the base path and origin', () => {
     expect(resolveHandUrl('https://am.example', '/x')).toEqual({ ok: true, href: 'https://am.example/x' });

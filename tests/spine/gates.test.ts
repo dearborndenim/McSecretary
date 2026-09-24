@@ -29,3 +29,14 @@ describe('the chat dispatch gate', () => {
     expect(PINNED_ACTION_TYPES).toContain('graph_dispatch');
   });
 });
+
+describe('pattern_draft', () => {
+  // Deliberately not pinned: it defaults to level 1 like any other agent
+  // action, and Robert can promote it later the same way as ad_spend_step or
+  // creative_request — it is a routine draft/edit/export, not a §6 money,
+  // customer-facing, product-signoff, or finance gate.
+  it('is not pinned', () => {
+    expect(isPinned('pattern_draft')).toBe(false);
+    expect(PINNED_ACTION_TYPES).not.toContain('pattern_draft');
+  });
+});

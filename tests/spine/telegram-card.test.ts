@@ -480,3 +480,179 @@ describe('renderProposalCard for the graph hand', () => {
     expect(parsed.ok).toBe(true);
   });
 });
+
+// --- pattern_draft cards (design-module hand) -------------------------------
+describe('renderProposalCard for pattern_draft', () => {
+  function patternRow(over: Partial<ProposalRow>): ProposalRow {
+    return rowFor({
+      id: 91, agent: 'pattern-maker', action_type: 'pattern_draft',
+      reason: 'The techpack calls for an edit off palazzo-stretch; the block audit is clean.',
+      cost_usd: 0, reversible: 1, ...over,
+    });
+  }
+
+  const draftEvidence = {
+    events_drained: 1, as_of: NOW, trigger: 'event',
+    techpack_id: 'knit-raglan-crew', revision: 1,
+    pattern_status: 'to_draft', mode: 'draft', drafted_from: 'knit_raglan',
+    garment: 'Knit Raglan Crew', archetype: 'knit_raglan', base_block: null,
+    edits_count: 0, techpack_size_count: 5, sizes: '["S","M","L"]',
+  };
+  const editEvidence = {
+    events_drained: 1, as_of: NOW, trigger: 'event',
+    techpack_id: 'late-shift-cargo', revision: 2,
+    pattern_status: 'to_edit', mode: 'edit', drafted_from: 'palazzo-stretch',
+    garment: 'Late Shift Cargo', archetype: 'unknown', base_block: 'palazzo-stretch',
+    edits_count: 3, techpack_size_count: 7, sizes: '["29","30"]',
+  };
+  const blockExportEvidence = {
+    events_drained: 1, as_of: NOW, trigger: 'event',
+    techpack_id: 'tailored-fit-s745', revision: 4,
+    pattern_status: 'block', mode: 'block_export', drafted_from: 'tailored-fit-s745',
+    garment: 'Tailored Fit S745', archetype: 'unknown', base_block: 'tailored-fit-s745',
+    edits_count: 0, techpack_size_count: 6, sizes: '["S","M"]',
+  };
+
+  it('renders a pending draft-mode card: garment, revision, mode, archetype line, trust line, no critic', () => {
+    const text = renderProposalCard(patternRow({ evidence: JSON.stringify(draftEvidence) }));
+    expect(text).toContain('#91 pattern-maker · dearborn-denim');
+    expect(text).toContain('Draft pattern: Knit Raglan Crew r1 (draft)');
+    expect(text).toContain('Draft from archetype knit_raglan');
+    expect(text).toContain('level 1 — Robert approves');
+    expect(text).not.toContain('Critic');
+    expect(text).not.toContain('Files:');
+  });
+
+  it('renders a pending edit-mode card: block + edit count, no critic yet', () => {
+    const text = renderProposalCard(patternRow({ evidence: JSON.stringify(editEvidence) }));
+    expect(text).toContain('Draft pattern: Late Shift Cargo r2 (edit)');
+    expect(text).toContain('Edit on block palazzo-stretch — 3 design edit(s)');
+    expect(text).toContain('level 1 — Robert approves');
+    expect(text).not.toContain('Critic');
+  });
+
+  it('renders a pending block_export-mode card: exported block, no critic yet', () => {
+    const text = renderProposalCard(patternRow({ evidence: JSON.stringify(blockExportEvidence) }));
+    expect(text).toContain('Draft pattern: Tailored Fit S745 r4 (block_export)');
+    expect(text).toContain('Export block tailored-fit-s745');
+    expect(text).toContain('level 1 — Robert approves');
+    expect(text).not.toContain('Critic');
+  });
+
+  it('renders an executed card with the critic score, defect list elision, and the proto/OneDrive files line', () => {
+    const responseBody = {
+      ok: true, id: 'late-shift-cargo', style: 'Late Shift Cargo', revision: 2,
+      mode: 'edit', drafted_from: 'palazzo-stretch',
+      pattern: { library_path: 'x', dxf: 'y', rul: 'z', drafted_at: NOW, base_block: 'palazzo-stretch' },
+      critic: {
+        score: 92.0, defects: 1, warnings: 3,
+        defect_list: [
+          'WA01 front panel: waist 1.20in under spec',
+          'D2 dart depth short by 0.3in',
+          'H1 hem allowance low',
+          'X4 extra defect nobody should see inline',
+        ],
+        summary: 'Solid draft with one waist defect.', report_path: '/files/previews/late-shift-cargo-v2.html',
+      },
+      files: [{ kind: 'dxf', name: 'late-shift-cargo-v2.dxf', path: '/abs/x', url: '/files/reports/proto/late-shift-cargo-v2.dxf' }],
+      proto_dir: '/abs/data/reports/proto', delivery_dir: '/Users/robert/OneDrive/design-module/proto',
+      notify: 'Late Shift Cargo r2 edited off block palazzo-stretch: critic 92/100, 1 defect, 3 warnings -> reports/proto/late-shift-cargo-v2.* (+ OneDrive)',
+    };
+    const text = renderProposalCard(patternRow({
+      evidence: JSON.stringify(editEvidence),
+      execution_result: JSON.stringify({ http_status: 200, body: responseBody, at: NOW }),
+    }));
+    expect(text).toContain('Critic 92/100 — 1 defect(s):');
+    expect(text).toContain('WA01 front panel: waist 1.20in under spec');
+    expect(text).toContain('D2 dart depth short by 0.3in');
+    expect(text).toContain('H1 hem allowance low');
+    expect(text).not.toContain('X4 extra defect'); // beyond the 3-item cap
+    expect(text).toContain('(+1 more)');
+    expect(text).toContain('Files: reports/proto/late-shift-cargo-v2.dxf (+ OneDrive)');
+    expect(text).toContain('level 1 — Robert approves');
+  });
+
+  it('never shows the critic/files lines on a pending card even when evidence looks executable', () => {
+    const text = renderProposalCard(patternRow({ evidence: JSON.stringify(editEvidence), execution_result: null }));
+    expect(text).not.toContain('Critic');
+    expect(text).not.toContain('Files:');
+  });
+
+  it('is defensive against malformed evidence JSON: renders, falls back to the payload body, keeps the trust line', () => {
+    const text = renderProposalCard(patternRow({
+      evidence: '{not valid json',
+      action_payload: JSON.stringify({
+        hand: 'design-module', method: 'POST', path: '/api/techpacks/late-shift-cargo/draft',
+        body: { techpack_id: 'late-shift-cargo', revision: 2 },
+      }),
+    }));
+    expect(() => text).not.toThrow();
+    expect(text).toContain('Draft pattern: late-shift-cargo r2 (draft)');
+    expect(text).toContain('level 1 — Robert approves');
+  });
+
+  it('is defensive against evidence missing every pattern_draft field: renders with sane fallbacks', () => {
+    const text = renderProposalCard(patternRow({ evidence: '{}' }));
+    expect(text).toContain('Draft pattern: techpack r? (draft)');
+    expect(text).toContain('Draft from archetype unknown');
+    expect(text).toContain('level 1 — Robert approves');
+  });
+
+  it('is defensive against a malformed execution_result: renders without throwing, no critic/files lines', () => {
+    const text = renderProposalCard(patternRow({
+      evidence: JSON.stringify(editEvidence),
+      execution_result: 'not json at all',
+    }));
+    expect(() => text).not.toThrow();
+    expect(text).not.toContain('Critic');
+    expect(text).not.toContain('Files:');
+    expect(text).toContain('level 1 — Robert approves');
+  });
+
+  it('is defensive against an execution_result whose body.critic is missing its numeric fields', () => {
+    const text = renderProposalCard(patternRow({
+      evidence: JSON.stringify(editEvidence),
+      execution_result: JSON.stringify({ http_status: 200, body: { critic: { defect_list: ['x'] } }, at: NOW }),
+    }));
+    expect(text).not.toContain('Critic');
+  });
+
+  it('always includes the level-1 trust line', () => {
+    const draft = renderProposalCard(patternRow({ evidence: JSON.stringify(draftEvidence) }));
+    const edit = renderProposalCard(patternRow({ evidence: JSON.stringify(editEvidence) }));
+    const blockExport = renderProposalCard(patternRow({ evidence: JSON.stringify(blockExportEvidence) }));
+    for (const text of [draft, edit, blockExport]) {
+      expect(text).toContain('level 1 — Robert approves');
+    }
+  });
+
+  it('post-approval reply carries the design-module response notify string', async () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    const pid = insertProposal(db, {
+      agent: 'pattern-maker', brand_id: 'dearborn-denim', action_type: 'pattern_draft',
+      action_payload: {
+        hand: 'design-module', method: 'POST', path: '/api/techpacks/late-shift-cargo/draft',
+        body: { techpack_id: 'late-shift-cargo', revision: 2 },
+      },
+      reason: 'Design edits moved the block off palazzo-stretch by 3 ops.',
+      evidence: editEvidence,
+      cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    setTelegramRef(db, pid, '555', 1);
+    const notify = 'Late Shift Cargo r2 edited off block palazzo-stretch: critic 92/100, 1 defect, 3 warnings -> reports/proto/late-shift-cargo-v2.* (+ OneDrive)';
+    const replies: string[] = [];
+    const cardDeps: CardDeps = {
+      now: () => NOW,
+      execute: async (execId) => {
+        const body = { ok: true, critic: { score: 92, defects: 1 }, notify };
+        recordExecution(db, execId, 'executed', { http_status: 200, body, at: NOW });
+        return { ok: true, http_status: 200, body };
+      },
+      reply: async (text) => { replies.push(text); },
+    };
+    const r = await handleProposalCallback(db, { action: 'approve', id: pid }, '555', 'robert', cardDeps);
+    expect(r.ok).toBe(true);
+    expect(replies[0]).toContain(notify);
+  });
+});
