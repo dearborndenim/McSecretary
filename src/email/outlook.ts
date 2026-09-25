@@ -19,6 +19,28 @@ interface GraphResponse {
   '@odata.nextLink'?: string;
 }
 
+/**
+ * Normalise a `since` timestamp into an ISO 8601 UTC literal Graph's OData
+ * `$filter` will accept. SQLite's `datetime('now')` produces
+ * `YYYY-MM-DD HH:MM:SS` (UTC, space-separated, no timezone designator), which
+ * Graph rejects outright. An already-ISO input (with `Z` or a `±HH:MM`
+ * offset) passes through with the same instant, just reformatted by
+ * `Date#toISOString`.
+ */
+export function toGraphDateTime(since: string): string {
+  let normalised = since.replace(' ', 'T');
+  if (!/Z$|[+-]\d{2}:\d{2}$/.test(normalised)) {
+    normalised += 'Z';
+  }
+
+  const date = new Date(normalised);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`toGraphDateTime: could not parse "${since}" as a date`);
+  }
+
+  return date.toISOString();
+}
+
 export async function fetchUnreadOutlookEmails(
   userEmail: string,
   since: string | null,
@@ -28,7 +50,7 @@ export async function fetchUnreadOutlookEmails(
 
   let filter = 'isRead eq false';
   if (since) {
-    filter += ` and receivedDateTime ge ${since}`;
+    filter += ` and receivedDateTime ge ${toGraphDateTime(since)}`;
   }
 
   const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=${encodeURIComponent(filter)}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=id,from,subject,bodyPreview,body,receivedDateTime,conversationId,isRead`;
