@@ -41,20 +41,21 @@ export interface LatestRunRow {
 }
 
 /**
- * The newest run per agent among runs started at or after `sinceIso`, agent
- * order. One row per agent — a lane that ran three times overnight surfaces
- * only its last run's outcome + notes.
+ * The newest run per (agent, brand) among runs started at or after `sinceIso`,
+ * agent then brand order. One row per agent per brand — a lane that ran three
+ * times overnight for one brand surfaces only its last run's outcome + notes,
+ * and a second brand's run of the same agent never hides the first brand's.
  */
 export function listLatestRunsSince(db: Database.Database, sinceIso: string): LatestRunRow[] {
   return db.prepare(`
     SELECT agent, run_id, brand_id, outcome, notes, started_at, finished_at FROM (
       SELECT agent, run_id, brand_id, outcome, notes, started_at, finished_at,
-             ROW_NUMBER() OVER (PARTITION BY agent ORDER BY started_at DESC, run_id DESC) AS rn
+             ROW_NUMBER() OVER (PARTITION BY agent, brand_id ORDER BY started_at DESC, run_id DESC) AS rn
       FROM agent_run_index
       WHERE started_at >= ?
     )
     WHERE rn = 1
-    ORDER BY agent ASC
+    ORDER BY agent ASC, brand_id ASC
   `).all(sinceIso) as LatestRunRow[];
 }
 

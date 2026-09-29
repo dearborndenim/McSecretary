@@ -352,7 +352,15 @@ export async function runTriage(
         // happened, either of which drops the section entirely.
         try {
           const { loadAgentActionsData, formatAgentActionsSection } = await import('./briefing/agent-actions.js');
-          const agentData = loadAgentActionsData(db, now);
+          // With a second brand file, each agent line names its brand. A failure
+          // here only costs the brand names, never the section.
+          let brandIds: string[] = [];
+          try {
+            const { listBrandIds } = await import('./spine/brand-config.js');
+            const { config } = await import('./config.js');
+            brandIds = listBrandIds(config.spine.brandsDir);
+          } catch { /* single-brand rendering */ }
+          const agentData = loadAgentActionsData(db, now, { brandIds });
           agentActionsSection = agentData
             ? (formatAgentActionsSection(agentData) ?? undefined)
             : undefined;
