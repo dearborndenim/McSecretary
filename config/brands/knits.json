@@ -1,5 +1,5 @@
 {
-  "_comment": "Ballow. Slug is knits; the public name is Ballow. ad-manager and content-engine point at per-brand services that do not exist until the marketing build (G5); their env vars are unset on purpose and the hand refuses until then.",
+  "_generated_from": "brands/knits/brand.json",
   "brand_id": "knits",
   "display_name": "Ballow",
   "inbox_user_id": "robert-mcmillan",
