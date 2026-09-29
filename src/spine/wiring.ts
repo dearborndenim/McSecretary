@@ -28,6 +28,8 @@ export interface SpineBuildDeps {
 }
 
 const DEFAULT_HAND_TIMEOUT_MS = 20_000;
+/** The first brand, whose defaults every brand-less command has always meant. */
+const LEGACY_BRAND_ID = 'dearborn-denim';
 
 export function buildSpine(d: SpineBuildDeps) {
   const handTimeoutMs = d.handTimeoutMs ?? DEFAULT_HAND_TIMEOUT_MS;
@@ -78,11 +80,15 @@ export function buildSpine(d: SpineBuildDeps) {
     const cmd = parsePromoteCommand(text);
     if (!cmd) return false;
     const brands = listBrandIds(d.brandsDir);
-    if (cmd.brand_id === undefined && brands.length > 1) {
+    // A bare promote means the legacy brand, as it does on the admin CLI and
+    // POST /spine/trust/promote; the reply names the brand it wrote. Only when
+    // the legacy brand is absent is a bare promote across several brands ambiguous.
+    const hasLegacy = brands.includes(LEGACY_BRAND_ID);
+    if (cmd.brand_id === undefined && brands.length > 1 && !hasLegacy) {
       await d.transport.sendText(chatId, 'Several brands configured — add brand=<id>.');
       return true;
     }
-    const defaultBrand = brands[0] ?? 'dearborn-denim';
+    const defaultBrand = hasLegacy ? LEGACY_BRAND_ID : (brands[0] ?? LEGACY_BRAND_ID);
     const brandExists = (id: string) => brands.includes(id);
     await d.transport.sendText(chatId, runPromoteCommand(d.db, cmd, defaultBrand, brandExists, by, d.now()));
     return true;

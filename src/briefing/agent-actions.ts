@@ -55,6 +55,8 @@ export interface AgentActionRow {
   agent: string;
   action_type: string;
   status: 'executed' | 'failed';
+  /** Named on each agent line only when more than one brand is configured. */
+  brand_id?: string;
   reason: string;
   /** Raw `proposals.evidence` JSON text (may be malformed — parsed defensively). */
   evidence: string | null;
@@ -68,6 +70,7 @@ export interface AgentActionRow {
 export interface AgentPendingRow {
   id: number;
   agent: string;
+  brand_id?: string;
   action_type: string;
   expires_at: string;
 }
@@ -75,6 +78,7 @@ export interface AgentPendingRow {
 /** The newest run for one agent inside the window. */
 export interface AgentRunNoteRow {
   agent: string;
+  brand_id?: string;
   run_id: string;
   outcome: string;
   notes: string;
@@ -89,6 +93,12 @@ export interface AgentActionsData {
   executed: AgentActionRow[];
   pending: AgentPendingRow[];
   runs: AgentRunNoteRow[];
+  /**
+   * True when `config/brands/` holds more than one brand file: every agent
+   * line then names its brand (`designer · knits`) and groups split per
+   * brand. False/absent renders exactly the single-brand text.
+   */
+  multiBrand?: boolean;
 }
 
 /** Collapse all whitespace runs to single spaces so a multi-line reason stays one bullet. */
@@ -170,6 +180,11 @@ function groupBy<T>(rows: T[], key: (r: T) => string): Map<string, T[]> {
   return out;
 }
 
+/** The agent as named on a line: bare with one brand, `agent · brand` with several. */
+function agentLabel(data: AgentActionsData, row: { agent: string; brand_id?: string }): string {
+  return data.multiBrand ? `${row.agent} · ${row.brand_id ?? 'unknown brand'}` : row.agent;
+}
+
 function sortedKeys(m: Map<string, unknown>): string[] {
   return [...m.keys()].sort((a, b) => a.localeCompare(b));
 }
@@ -194,7 +209,7 @@ export function formatAgentActionsSection(data: AgentActionsData): string | null
     lines.push(`FAILED (${failed.length}):`);
     for (const r of failed) {
       lines.push(
-        `- ${r.agent} ${r.action_type} #${r.id} — ${reasonOf(r)}${formatAdRef(r.evidence)}${failureDetail(r.execution_result)}`,
+        `- ${agentLabel(data, r)} ${r.action_type} #${r.id} — ${reasonOf(r)}${formatAdRef(r.evidence)}${failureDetail(r.execution_result)}`,
       );
     }
   }
@@ -202,7 +217,7 @@ export function formatAgentActionsSection(data: AgentActionsData): string | null
   if (ok.length > 0) {
     lines.push('');
     lines.push(`EXECUTED (${ok.length}):`);
-    const byAgent = groupBy(ok, (r) => r.agent);
+    const byAgent = groupBy(ok, (r) => agentLabel(data, r));
     for (const agent of sortedKeys(byAgent)) {
       const rows = byAgent.get(agent)!;
       lines.push(`${agent} — ${rows.length}`);
@@ -227,7 +242,7 @@ export function formatAgentActionsSection(data: AgentActionsData): string | null
     const expiryCutoff = new Date(Date.parse(data.now) + WINDOW_MS).toISOString();
     lines.push('');
     lines.push(`STILL WAITING ON YOU (${data.pending.length}):`);
-    const byAgent = groupBy(data.pending, (r) => r.agent);
+    const byAgent = groupBy(data.pending, (r) => agentLabel(data, r));
     for (const agent of sortedKeys(byAgent)) {
       const rows = byAgent.get(agent)!;
       const ids = rows.slice(0, MAX_PENDING_IDS).map((r) => `#${r.id}`).join(', ');
@@ -243,11 +258,12 @@ export function formatAgentActionsSection(data: AgentActionsData): string | null
   if (data.runs.length > 0) {
     lines.push('');
     lines.push('RUN NOTES:');
-    for (const r of [...data.runs].sort((a, b) => a.agent.localeCompare(b.agent))) {
+    const runs = data.runs.map((r) => ({ r, label: agentLabel(data, r) }));
+    for (const { r, label } of runs.sort((a, b) => a.label.localeCompare(b.label))) {
       // Notes are surfaced verbatim (only whitespace-collapsed, so one run stays
       // one bullet) — the marketing-creative run-end one-liner is the payload.
       const note = collapse(r.notes ?? '');
-      lines.push(`- ${r.agent} (${r.outcome})${note ? `: ${note}` : ''}`);
+      lines.push(`- ${label} (${r.outcome})${note ? `: ${note}` : ''}`);
     }
   }
 
@@ -260,7 +276,9 @@ export function formatAgentActionsSection(data: AgentActionsData): string | null
  * degrades to "no agent section" instead of throwing — same contract as
  * fetchWipSummary / fetchInventoryOverview.
  */
-export function loadAgentActionsData(db: Database.Database, now: Date): AgentActionsData | null {
+export function loadAgentActionsData(
+  db: Database.Database, now: Date, opts: { brandIds?: string[] } = {},
+): AgentActionsData | null {
   try {
     const nowIso = now.toISOString();
     const sinceIso = new Date(now.getTime() - WINDOW_MS).toISOString();
@@ -268,6 +286,7 @@ export function loadAgentActionsData(db: Database.Database, now: Date): AgentAct
     const executed: AgentActionRow[] = listExecutedProposalsSince(db, sinceIso, EXECUTED_ROW_LIMIT).map((r) => ({
       id: r.id,
       agent: r.agent,
+      brand_id: r.brand_id,
       action_type: r.action_type,
       status: r.status,
       reason: r.reason,
@@ -279,19 +298,22 @@ export function loadAgentActionsData(db: Database.Database, now: Date): AgentAct
     const pending: AgentPendingRow[] = listPendingProposals(db).map((r) => ({
       id: r.id,
       agent: r.agent,
+      brand_id: r.brand_id,
       action_type: r.action_type,
       expires_at: r.expires_at,
     }));
 
     const runs: AgentRunNoteRow[] = listLatestRunsSince(db, sinceIso).map((r) => ({
       agent: r.agent,
+      brand_id: r.brand_id,
       run_id: r.run_id,
       outcome: r.outcome,
       notes: r.notes,
       started_at: r.started_at,
     }));
 
-    return { since: sinceIso, now: nowIso, executed, pending, runs };
+    const multiBrand = (opts.brandIds?.length ?? 0) > 1;
+    return { since: sinceIso, now: nowIso, executed, pending, runs, ...(multiBrand ? { multiBrand } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(`Skipping agent actions section: ${msg}`);

@@ -314,6 +314,85 @@ describe('spine routes', () => {
     expect(events[0].drained_by).toBe('marketing-manager');
   });
 
+  describe('second brand: knits', () => {
+    const note = {
+      brand_id: 'knits', action_type: 'noop',
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 'smoke', summary: 'loop proof' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    };
+
+    it('files a notes proposal for knits through validateBrandAndHand', async () => {
+      const r = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', note, `Bearer ${KEY}`), r.res);
+      expect(r.out.status).toBe(200);
+      expect(filed).toHaveLength(1);
+      expect((filed[0] as { brand_id: string }).brand_id).toBe('knits');
+    });
+
+    it('refuses a hand knits does not register, with the existing unknown-hand error', async () => {
+      const r = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', { ...note, action_payload: { hand: 'shopify', method: 'POST', path: '/x', body: {} } }, `Bearer ${KEY}`), r.res);
+      expect(r.out.status).toBe(400);
+      expect(JSON.parse(r.out.body)).toEqual({ error: 'Unknown hand for knits: shopify' });
+      expect(filed).toHaveLength(0);
+    });
+
+    it('serves the knits brand file on /spine/brands/knits', async () => {
+      const r = fakeRes();
+      await handle(fakeReq('GET', '/spine/brands/knits', undefined, `Bearer ${KEY}`), r.res);
+      expect(r.out.status).toBe(200);
+      expect(JSON.parse(r.out.body)).toMatchObject({ brand_id: 'knits', display_name: 'Ballow' });
+    });
+  });
+
+  describe('brand= on /spine/events/drain and /spine/events/pending', () => {
+    const e = (brand_id: string, urgent: boolean) => ({ source_hand: 'spine', brand_id, event_type: 'design_request', payload: { b: brand_id }, urgent });
+    const get = async (url: string) => {
+      const r = fakeRes();
+      await handle(fakeReq('GET', url, undefined, `Bearer ${KEY}`), r.res);
+      return { status: r.out.status, body: JSON.parse(r.out.body) as Record<string, unknown> };
+    };
+    beforeEach(() => {
+      insertEvent(db, e('dearborn-denim', true), NOW);
+      insertEvent(db, e('knits', true), NOW);
+      insertEvent(db, e('knits', false), NOW);
+    });
+
+    it('pending counts per brand, and across brands without brand=', async () => {
+      expect((await get('/spine/events/pending?types=design_request&brand=knits')).body)
+        .toEqual({ counts: { design_request: { pending: 2, urgent: 1 } } });
+      expect((await get('/spine/events/pending?types=design_request&brand=dearborn-denim')).body)
+        .toEqual({ counts: { design_request: { pending: 1, urgent: 1 } } });
+      expect((await get('/spine/events/pending?types=design_request&brand=no-events')).body)
+        .toEqual({ counts: { design_request: { pending: 0, urgent: 0 } } });
+      expect((await get('/spine/events/pending?types=design_request')).body)
+        .toEqual({ counts: { design_request: { pending: 3, urgent: 2 } } });
+    });
+
+    it('each brand drains only its own events; the other brand is left for its own run', async () => {
+      const knits = (await get('/spine/events/drain?types=design_request&brand=knits')).body.events as { brand_id: string }[];
+      expect(knits.map((x) => x.brand_id)).toEqual(['knits', 'knits']);
+      expect((await get('/spine/events/drain?types=design_request&brand=knits')).body.events).toEqual([]);
+      const dd = (await get('/spine/events/drain?types=design_request&brand=dearborn-denim')).body.events as { brand_id: string }[];
+      expect(dd.map((x) => x.brand_id)).toEqual(['dearborn-denim']);
+    });
+
+    it('a drain without brand= takes every brand (a kit that predates per-brand drains)', async () => {
+      const all = (await get('/spine/events/drain?types=design_request')).body.events as { brand_id: string }[];
+      expect(all.map((x) => x.brand_id)).toEqual(['dearborn-denim', 'knits', 'knits']);
+    });
+
+    it.each(['', 'Knits', '../x', 'a%20b', 'knits&brand=dearborn-denim'])('rejects brand=%s with 400 and drains nothing', async (bad) => {
+      const d = await get(`/spine/events/drain?types=design_request&brand=${bad}`);
+      expect(d.status).toBe(400);
+      expect(d.body.error).toBe('brand must be a lowercase slug');
+      const p = await get(`/spine/events/pending?types=design_request&brand=${bad}`);
+      expect(p.status).toBe(400);
+      expect((await get('/spine/events/pending?types=design_request')).body)
+        .toEqual({ counts: { design_request: { pending: 3, urgent: 2 } } });
+    });
+  });
+
   it('POST /spine/outcomes stores with maturity and requires attributes', async () => {
     let r = fakeRes();
     await handle(fakeReq('POST', '/spine/outcomes', { artifact_id: 'cr-1', brand_id: 'dearborn-denim', lane: 'marketing', attributes: { angle: 'fit' }, prediction: null, metrics: { roas: 3 }, observed_at: '2026-09-01T00:00:00.000Z' }, `Bearer ${KEY}`), r.res);

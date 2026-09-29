@@ -9,13 +9,21 @@ export function insertEvent(db: Database.Database, e: SpineEventInput, nowIso: s
   return Number(r.lastInsertRowid);
 }
 
-/** Return undrained events of the given types and mark them drained by `agent`. */
-export function drainEvents(db: Database.Database, agent: string, types: string[], nowIso: string): SpineEventRow[] {
+/**
+ * Return undrained events of the given types and mark them drained by `agent`.
+ * With `brandId`, only that brand's events are taken; without it every
+ * brand's (the behaviour of a kit that predates per-brand drains).
+ */
+export function drainEvents(
+  db: Database.Database, agent: string, types: string[], nowIso: string, brandId?: string,
+): SpineEventRow[] {
   if (types.length === 0) return [];
   const marks = types.map(() => '?').join(',');
+  const brandClause = brandId === undefined ? '' : ' AND brand_id = ?';
+  const args: string[] = brandId === undefined ? types : [...types, brandId];
   const rows = db.prepare(
-    `SELECT * FROM spine_events WHERE drained_at IS NULL AND event_type IN (${marks}) ORDER BY id ASC`,
-  ).all(...types) as SpineEventRow[];
+    `SELECT * FROM spine_events WHERE drained_at IS NULL AND event_type IN (${marks})${brandClause} ORDER BY id ASC`,
+  ).all(...args) as SpineEventRow[];
   const stmt = db.prepare('UPDATE spine_events SET drained_by = ?, drained_at = ? WHERE id = ? AND drained_at IS NULL');
   const claimed: SpineEventRow[] = [];
   for (const r of rows) {
@@ -37,12 +45,15 @@ export function countUndrainedUrgent(db: Database.Database, brandId: string): nu
   ).get(brandId) as { n: number }).n;
 }
 
-/** Non-mutating counts for the runner's urgent poll. */
-export function countPendingByType(db: Database.Database, types: string[]): Record<string, { pending: number; urgent: number }> {
-  const stmt = db.prepare('SELECT COUNT(*) AS pending, COALESCE(SUM(urgent), 0) AS urgent FROM spine_events WHERE drained_at IS NULL AND event_type = ?');
+/** Non-mutating counts for the runner's urgent poll; `brandId` narrows them to one brand. */
+export function countPendingByType(
+  db: Database.Database, types: string[], brandId?: string,
+): Record<string, { pending: number; urgent: number }> {
+  const brandClause = brandId === undefined ? '' : ' AND brand_id = ?';
+  const stmt = db.prepare(`SELECT COUNT(*) AS pending, COALESCE(SUM(urgent), 0) AS urgent FROM spine_events WHERE drained_at IS NULL AND event_type = ?${brandClause}`);
   const out: Record<string, { pending: number; urgent: number }> = {};
   for (const t of types) {
-    const r = stmt.get(t) as { pending: number; urgent: number };
+    const r = (brandId === undefined ? stmt.get(t) : stmt.get(t, brandId)) as { pending: number; urgent: number };
     out[t] = { pending: r.pending, urgent: r.urgent };
   }
   return out;

@@ -321,6 +321,88 @@ describe('listLatestRunsSince', () => {
     addRun({ run_id: 'old-2', agent: 'a', started_at: '2026-09-01T00:00:00.000Z' });
     expect(listLatestRunsSince(db, SINCE)).toEqual([]);
   });
+
+  it('keeps one newest run per (agent, brand): a second brand never hides the first', () => {
+    const add = (run_id: string, brand: string, started_at: string) => db.prepare(`
+      INSERT INTO agent_run_index (run_id, agent, brand_id, skill_commit, model, started_at, finished_at, outcome, notes)
+      VALUES (?, 'designer', ?, 'abc', 'opus', ?, ?, 'ok', ?)
+    `).run(run_id, brand, started_at, started_at, run_id);
+    add('dd-1', 'dearborn-denim', '2026-09-17T06:00:00.000Z');
+    add('dd-2', 'dearborn-denim', '2026-09-17T07:00:00.000Z');
+    add('kn-1', 'knits', '2026-09-17T08:00:00.000Z'); // newest overall
+    const rows = listLatestRunsSince(db, SINCE);
+    expect(rows.map((r) => [r.brand_id, r.run_id])).toEqual([['dearborn-denim', 'dd-2'], ['knits', 'kn-1']]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Brand names on agent lines
+// ---------------------------------------------------------------------------
+describe('agent lines name the brand only when several brands are configured', () => {
+  // Captured from formatAgentActionsSection on main (243147a) for this exact
+  // input, before brands existed on the rows. One brand must stay byte-identical.
+  const SINGLE_BRAND_GOLDEN = 'WHAT THE AGENTS DID (last 24h):\n\nFAILED (1):\n- marketing-creative creative_cut #45 — CPA 3x target for 14 straight days (ad: DD Denim Jacket / 120330333) [ad-manager unreachable HTTP 502]\n\nEXECUTED (4):\nmarketing-creative — 3\n  creative_pause x2\n    - #40 Stock: 2+ sizes sold out (ad: DD Fall Hook A / 120330111)\n    - #43 Stock: 3 sizes sold out (ad: DD Winter Tee / 120330222)\n  creative_promote x1\n    - #44 ROAS 2.4x over 7 matured days (ad: DD Fall Hook A / 120330111)\npurchasing — 1\n  po_draft x1\n    - #46 Vendor minimum reached for Carr Textile\n\nSTILL WAITING ON YOU (3):\n- marketing-manager — 2 pending: #51, #52\n- sourcing — 1 pending: #53 (expiring within 24h: #53)\n\nRUN NOTES:\n- finance (nothing_to_do)\n- marketing-creative (ok): Creative run 2026-09-17: 19 ads judged, 2 stock pauses, 1 stock resumes, 2 promotes, 0 cuts, 0 candidates, 10 holds. No batch this run: fewer than 3 PAUSED test ads.';
+
+  function fixture(withBrand: boolean): AgentActionsData {
+    const b = withBrand ? { brand_id: 'dearborn-denim' } : {};
+    return {
+      since: SINCE, now: NOW,
+      executed: [
+        { id: 40, agent: 'marketing-creative', ...b, action_type: 'creative_pause', status: 'executed', reason: 'Stock: 2+ sizes sold out', evidence: JSON.stringify({ ad_name: 'DD Fall Hook A', external_ad_id: '120330111' }), execution_result: '{"ok":true}', at: '2026-09-17T07:15:00.000Z' },
+        { id: 43, agent: 'marketing-creative', ...b, action_type: 'creative_pause', status: 'executed', reason: 'Stock: 3 sizes sold out', evidence: JSON.stringify({ ad_name: 'DD Winter Tee', external_ad_id: '120330222' }), execution_result: '{"ok":true}', at: '2026-09-17T07:15:01.000Z' },
+        { id: 44, agent: 'marketing-creative', ...b, action_type: 'creative_promote', status: 'executed', reason: 'ROAS 2.4x over 7 matured days', evidence: JSON.stringify({ ad_name: 'DD Fall Hook A', external_ad_id: '120330111' }), execution_result: '{"ok":true}', at: '2026-09-17T07:15:02.000Z' },
+        { id: 46, agent: 'purchasing', ...b, action_type: 'po_draft', status: 'executed', reason: 'Vendor minimum reached for Carr Textile', evidence: '{}', execution_result: '{"ok":true}', at: '2026-09-17T08:00:00.000Z' },
+        { id: 45, agent: 'marketing-creative', ...b, action_type: 'creative_cut', status: 'failed', reason: 'CPA 3x target for 14 straight days', evidence: JSON.stringify({ ad_name: 'DD Denim Jacket', external_ad_id: '120330333' }), execution_result: '{"ok":false,"error":"ad-manager unreachable","http_status":502}', at: '2026-09-17T07:16:00.000Z' },
+      ],
+      pending: [
+        { id: 51, agent: 'marketing-manager', ...b, action_type: 'ad_spend_step', expires_at: '2026-09-19T10:00:00.000Z' },
+        { id: 52, agent: 'marketing-manager', ...b, action_type: 'creative_request', expires_at: '2026-09-19T10:00:00.000Z' },
+        { id: 53, agent: 'sourcing', ...b, action_type: 'rfq_send', expires_at: '2026-09-17T20:00:00.000Z' },
+      ],
+      runs: [
+        { agent: 'marketing-creative', ...b, run_id: 'r-mc-1', outcome: 'ok', started_at: '2026-09-17T07:15:00.000Z', notes: 'Creative run 2026-09-17: 19 ads judged, 2 stock pauses, 1 stock resumes, 2 promotes, 0 cuts, 0 candidates, 10 holds. No batch this run: fewer than 3 PAUSED test ads.' },
+        { agent: 'finance', ...b, run_id: 'r-fin-1', outcome: 'nothing_to_do', notes: '', started_at: '2026-09-17T06:00:00.000Z' },
+      ],
+    };
+  }
+
+  it('one brand: byte-identical to the pre-brand output, with or without brand ids on the rows', () => {
+    expect(formatAgentActionsSection(fixture(false))).toBe(SINGLE_BRAND_GOLDEN);
+    expect(formatAgentActionsSection(fixture(true))).toBe(SINGLE_BRAND_GOLDEN);
+    expect(formatAgentActionsSection({ ...fixture(true), multiBrand: false })).toBe(SINGLE_BRAND_GOLDEN);
+  });
+
+  it('several brands: every agent line names its brand and groups split per brand', () => {
+    const data = fixture(true);
+    data.executed.push({ id: 60, agent: 'purchasing', brand_id: 'knits', action_type: 'po_draft', status: 'executed', reason: 'Rib minimum reached', evidence: '{}', execution_result: '{}', at: '2026-09-17T09:00:00.000Z' });
+    data.pending.push({ id: 61, agent: 'sourcing', brand_id: 'knits', action_type: 'rfq_send', expires_at: '2026-09-20T00:00:00.000Z' });
+    data.runs.push({ agent: 'finance', brand_id: 'knits', run_id: 'r-fin-k', outcome: 'ok', notes: 'cash fine', started_at: '2026-09-17T06:05:00.000Z' });
+    const out = formatAgentActionsSection({ ...data, multiBrand: true })!;
+    expect(out).toContain('- marketing-creative · dearborn-denim creative_cut #45 — CPA 3x');
+    expect(out).toContain('EXECUTED (5):');
+    expect(out).toContain('purchasing · dearborn-denim — 1');
+    expect(out).toContain('purchasing · knits — 1\n  po_draft x1\n    - #60 Rib minimum reached');
+    expect(out).toContain('- sourcing · dearborn-denim — 1 pending: #53 (expiring within 24h: #53)');
+    expect(out).toContain('- sourcing · knits — 1 pending: #61\n');
+    expect(out).toContain('- finance · dearborn-denim (nothing_to_do)\n- finance · knits (ok): cash fine\n');
+    expect(out).not.toMatch(/^- finance \(/m);
+  });
+
+  it('the loader turns brand names on only when more than one brand id is configured', () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    db.prepare(`
+      INSERT INTO agent_run_index (run_id, agent, brand_id, skill_commit, model, started_at, finished_at, outcome, notes)
+      VALUES ('k-1', 'smoke', 'knits', 'abc', 'opus', '2026-09-17T06:00:00.000Z', NULL, 'ok', 'noop')
+    `).run();
+    const one = loadAgentActionsData(db, new Date(NOW), { brandIds: ['dearborn-denim'] })!;
+    expect(one.multiBrand).toBeUndefined();
+    expect(formatAgentActionsSection(one)).toContain('- smoke (ok): noop');
+    expect(loadAgentActionsData(db, new Date(NOW))!.multiBrand).toBeUndefined();
+    const two = loadAgentActionsData(db, new Date(NOW), { brandIds: ['dearborn-denim', 'knits'] })!;
+    expect(two.multiBrand).toBe(true);
+    expect(formatAgentActionsSection(two)).toContain('- smoke · knits (ok): noop');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -422,7 +504,7 @@ describe('agent_actions section registration and gating', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'src', 'triage.ts'), 'utf-8');
 
     const adminGate = source.indexOf("user?.role === 'admin'");
-    const loaderCall = source.indexOf('loadAgentActionsData(db, now)');
+    const loaderCall = source.indexOf('loadAgentActionsData(db, now, { brandIds })');
     const adminOpsAssign = source.indexOf('adminOps = ops;');
     expect(adminGate).toBeGreaterThan(-1);
     expect(loaderCall).toBeGreaterThan(adminGate);

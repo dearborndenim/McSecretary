@@ -1,7 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export interface HandRef { url_env: string; key_env: string }
+/**
+ * Query keys the spine may stamp with the brand id on a hand call. Opt-in per
+ * hand: `brand` already means something else on some hands (a contract
+ * customer code on the PO receiver, a piece-work table filter on
+ * quickbooks-sync), so a hand only receives the brand when its entry says so.
+ */
+export const FORWARD_BRAND_KEYS = ['brand', 'brandSlug'] as const;
+export type ForwardBrandKey = (typeof FORWARD_BRAND_KEYS)[number];
+
+export interface HandRef {
+  url_env: string;
+  key_env: string;
+  /** When set, the hand proxy (reads) and the executor (writes) set this query key to the brand id. */
+  forward_brand?: ForwardBrandKey;
+}
 
 export interface BrandConfig {
   brand_id: string;
@@ -28,7 +42,29 @@ export function loadBrandConfig(dir: string, brandId: string): BrandConfig {
   if (!fs.existsSync(file)) throw new Error(`Unknown brand: ${brandId}`);
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as BrandConfig;
   if (parsed.brand_id !== brandId) throw new Error(`brand_id mismatch in ${file}`);
+  validateHands(parsed, file);
   return parsed;
+}
+
+function validateHands(parsed: BrandConfig, file: string): void {
+  const hands = parsed.hands as unknown;
+  if (typeof hands !== 'object' || hands === null || Array.isArray(hands)) {
+    throw new Error(`hands must be an object in ${file}`);
+  }
+  for (const [name, ref] of Object.entries(hands as Record<string, unknown>)) {
+    if (typeof ref !== 'object' || ref === null || Array.isArray(ref)) {
+      throw new Error(`hand ${name} must be an object in ${file}`);
+    }
+    const fb = (ref as { forward_brand?: unknown }).forward_brand;
+    if (fb !== undefined && !(FORWARD_BRAND_KEYS as readonly unknown[]).includes(fb)) {
+      throw new Error(`hand ${name}: forward_brand must be one of ${FORWARD_BRAND_KEYS.join(', ')} in ${file}`);
+    }
+  }
+}
+
+/** The query key a hand wants the brand id under, or undefined when it opted out. */
+export function forwardBrandKey(brand: BrandConfig, hand: string): ForwardBrandKey | undefined {
+  return Object.hasOwn(brand.hands, hand) ? brand.hands[hand]!.forward_brand : undefined;
 }
 
 export function resolveHand(

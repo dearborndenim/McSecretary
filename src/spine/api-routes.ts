@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
-import { loadBrandConfig, resolveHand } from './brand-config.js';
+import { forwardBrandKey, loadBrandConfig, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
@@ -234,6 +234,18 @@ const RUN_FIELDS = ['run_id', 'brand_id', 'skill_commit', 'model', 'started_at',
 const LANES = ['marketing', 'ops', 'product'];
 const RUN_OUTCOMES = ['ok', 'nothing_to_do', 'contract_violation', 'hand_error', 'running'];
 
+/**
+ * `?brand=` on the event routes: absent → undefined (every brand, as before
+ * per-brand drains existed); present and a valid slug → the brand id;
+ * present but malformed (including empty) → null, which the caller answers 400.
+ */
+function optionalBrandParam(params: URLSearchParams): string | undefined | null {
+  if (!params.has('brand')) return undefined;
+  const values = params.getAll('brand');
+  if (values.length !== 1 || !BRAND_ID_RE.test(values[0]!)) return null;
+  return values[0];
+}
+
 /** Parse a JSON object body or return the 400 message to send. Only the request body's own parse maps to 400; a SyntaxError from anywhere else is a 500. */
 async function readObject(req: http.IncomingMessage, fields: string[]): Promise<{ body: Record<string, unknown> } | { error: string }> {
   const raw = await readBody(req, MAX_BODY_BYTES);
@@ -293,7 +305,9 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       if (req.method === 'GET' && pathname === '/spine/events/drain') {
         const types = (params.get('types') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-        const events = drainEvents(deps.db, agent, types, deps.now())
+        const brand = optionalBrandParam(params);
+        if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }
+        const events = drainEvents(deps.db, agent, types, deps.now(), brand)
           .map((e) => ({ ...e, payload: JSON.parse(e.payload) as unknown }));
         json(res, 200, { events });
         return true;
@@ -305,7 +319,9 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           json(res, 400, { error: `types must be at most ${MAX_PENDING_TYPES} names of at most ${NAME_MAX} chars` });
           return true;
         }
-        json(res, 200, { counts: countPendingByType(deps.db, types) });
+        const brand = optionalBrandParam(params);
+        if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }
+        json(res, 200, { counts: countPendingByType(deps.db, types, brand) });
         return true;
       }
 
@@ -366,6 +382,10 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           const brand = loadBrandConfig(deps.brandsDir, brandId);
           if (!Object.hasOwn(brand.hands, hand)) { json(res, 404, { error: `Unknown hand: ${hand.slice(0, 64)}` }); return true; }
           target = resolveHand(brand, hand, deps.env);
+          // Opt-in per hand (`forward_brand` in the brand file): the spine's own
+          // brand id wins over anything the caller sent under that key.
+          const fwd = forwardBrandKey(brand, hand);
+          if (fwd) params.set(fwd, brandId);
         } catch (err) {
           console.error('spine: hand proxy config', hand, err);
           json(res, 404, { error: 'Unknown brand or hand' });

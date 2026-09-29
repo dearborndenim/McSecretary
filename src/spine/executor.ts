@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
-import { resolveHand, type BrandConfig } from './brand-config.js';
+import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
 import type { ActionPayload, ProposalRow } from './types.js';
@@ -100,6 +100,20 @@ export function resolveHandUrl(baseUrl: string, path: string): { ok: true; href:
     return { ok: false, error: 'Invalid hand URL or path' };
   }
   return { ok: true, href: u.href };
+}
+
+/**
+ * A write's path can never carry a query (`resolveHandUrl` refuses `?`), so a
+ * hand whose write routes read the brand from the query string (design-module:
+ * `techpack-mark`, `notify`, `PATCH /api/config/personas/<slug>`) would always
+ * see its default brand. A hand that opts in with `forward_brand` gets the
+ * proposal's brand id under that key; every other hand's URL is untouched.
+ */
+export function withForwardedBrand(href: string, key: string | undefined, brandId: string): string {
+  if (!key) return href;
+  const u = new URL(href);
+  u.searchParams.set(key, brandId);
+  return u.href;
 }
 
 function validatePayload(payload: ActionPayload): string | null {
@@ -338,9 +352,10 @@ export async function executeProposal(
 
   const resolved = resolveHandUrl(target.url, payload.path);
   if (!resolved.ok) return fail(resolved.error);
+  const href = withForwardedBrand(resolved.href, forwardBrandKey(brand, payload.hand), row.brand_id);
 
   try {
-    const res = await deps.fetch(resolved.href, {
+    const res = await deps.fetch(href, {
       method: payload.method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.bearer}` },
       body: JSON.stringify(payload.body),

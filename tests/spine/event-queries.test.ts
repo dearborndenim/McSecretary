@@ -34,6 +34,18 @@ describe('event queue', () => {
     expect(countUndrainedUrgent(db, 'dearborn-denim')).toBe(1);
   });
 
+  it('drains one brand at a time when given a brand id, leaving the other brand undrained', () => {
+    const k = { ...ev('design_request', true), brand_id: 'knits' };
+    insertEvent(db, ev('design_request', true), NOW);
+    insertEvent(db, k, NOW);
+    const got = drainEvents(db, 'designer', ['design_request'], NOW, 'knits');
+    expect(got.map((e) => e.brand_id)).toEqual(['knits']);
+    expect(countUndrainedUrgent(db, 'dearborn-denim')).toBe(1);
+    expect(countUndrainedUrgent(db, 'knits')).toBe(0);
+    expect(drainEvents(db, 'designer', ['design_request'], NOW, 'knits')).toEqual([]);
+    expect(drainEvents(db, 'designer', ['design_request'], NOW).map((e) => e.brand_id)).toEqual(['dearborn-denim']);
+  });
+
   it('drain with no types returns nothing and marks nothing', () => {
     insertEvent(db, ev('x'), NOW);
     expect(drainEvents(db, 'a', [], NOW)).toEqual([]);
