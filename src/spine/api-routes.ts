@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
-import { loadBrandConfig, resolveHand } from './brand-config.js';
+import { forwardBrandKey, loadBrandConfig, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
@@ -366,6 +366,10 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           const brand = loadBrandConfig(deps.brandsDir, brandId);
           if (!Object.hasOwn(brand.hands, hand)) { json(res, 404, { error: `Unknown hand: ${hand.slice(0, 64)}` }); return true; }
           target = resolveHand(brand, hand, deps.env);
+          // Opt-in per hand (`forward_brand` in the brand file): the spine's own
+          // brand id wins over anything the caller sent under that key.
+          const fwd = forwardBrandKey(brand, hand);
+          if (fwd) params.set(fwd, brandId);
         } catch (err) {
           console.error('spine: hand proxy config', hand, err);
           json(res, 404, { error: 'Unknown brand or hand' });

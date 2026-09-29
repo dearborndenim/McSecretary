@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { initializeSchema } from '../../src/db/schema.js';
 import { createSpineRouter, type SpineRouterDeps } from '../../src/spine/api-routes.js';
 
@@ -163,6 +165,59 @@ describe('GET /spine/hands/:hand/*', () => {
     expect(out.status).toBe(502);
     expect(out.body).not.toContain('hk');
     expect(JSON.parse(out.body).hand_status).toBe(503);
+  });
+
+  describe('forward_brand', () => {
+    const DM_ENV = {
+      DESIGN_MODULE_URL: 'https://dm.example', DESIGN_MODULE_KEY: 'dk',
+      PRODUCT_DEV_URL: 'https://pd.example', PRODUCT_DEV_KEY: 'pk',
+      PO_RECEIVER_URL: 'https://po.example', PO_RECEIVER_API_KEY: 'pok',
+    };
+    const upstreamUrl = (i = 0) => (fetchMock.mock.calls[i]! as unknown as [string])[0];
+
+    it('sets brand=<spine brand> upstream for a hand that opts in (design-module)', async () => {
+      const h = build(DM_ENV);
+      const { res, out } = fakeRes();
+      await h(fakeReq('GET', '/spine/hands/design-module/api/collections?brand=dearborn-denim&limit=5', `Bearer ${KEY}`), res);
+      expect(out.status).toBe(200);
+      expect(upstreamUrl()).toBe('https://dm.example/api/collections?limit=5&brand=dearborn-denim');
+    });
+
+    it('keeps a caller-supplied brandSlug when the forward key is brand (product-dev: brandSlug wins there)', async () => {
+      const h = build(DM_ENV);
+      await h(fakeReq('GET', '/spine/hands/product-dev/api/integration/products?brandSlug=dearborn-denim&brand=dearborn-denim', `Bearer ${KEY}`), fakeRes().res);
+      expect(upstreamUrl()).toBe('https://pd.example/api/integration/products?brandSlug=dearborn-denim&brand=dearborn-denim');
+    });
+
+    it('forwards nothing to a hand without the flag, even when brand means something else there', async () => {
+      const h = build(DM_ENV);
+      await h(fakeReq('GET', '/spine/hands/purchase-order-receiver/api/pos?brand=dearborn-denim&status=open', `Bearer ${KEY}`), fakeRes().res);
+      expect(upstreamUrl()).toBe('https://po.example/api/pos?status=open');
+    });
+
+    describe('with a brand whose hand forwards under brandSlug', () => {
+      let tmp: string;
+      let h: ReturnType<typeof createSpineRouter>;
+      beforeEach(() => {
+        tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brands-'));
+        const cfg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'config', 'brands', 'dearborn-denim.json'), 'utf8')) as Record<string, unknown>;
+        fs.writeFileSync(path.join(tmp, 'knits.json'), JSON.stringify({
+          ...cfg, brand_id: 'knits',
+          hands: { 'product-dev': { url_env: 'PRODUCT_DEV_URL', key_env: 'PRODUCT_DEV_KEY', forward_brand: 'brandSlug' } },
+        }));
+        h = createSpineRouter({
+          db, now: () => '2026-09-07T12:00:00.000Z', agentKeys: new Map([[KEY, 'finance']]), brandsDir: tmp,
+          file: async () => ({ id: 1, routed: 'card' }),
+          handFetch: fetchMock as unknown as SpineRouterDeps['handFetch'], env: DM_ENV,
+        });
+      });
+      afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+      it('a caller cannot read another brand by sending the forward key itself', async () => {
+        await h(fakeReq('GET', '/spine/hands/product-dev/api/integration/products?brandSlug=dearborn-denim&brandSlug=other&brand=knits', `Bearer ${KEY}`), fakeRes().res);
+        expect(upstreamUrl()).toBe('https://pd.example/api/integration/products?brandSlug=knits');
+      });
+    });
   });
 
   it('maps a throwing handFetch to the generic 500', async () => {

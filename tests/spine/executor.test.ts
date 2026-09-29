@@ -576,3 +576,56 @@ describe('extractNotify', () => {
     expect(extractNotify({ title: 1, summary: 's' })).toBeUndefined();
   });
 });
+
+describe('executeProposal — forward_brand on writes', () => {
+  // A write's path can never carry '?', so a hand whose write routes read the
+  // brand from the query (design-module techpack-mark / notify / personas PATCH)
+  // only sees the right brand when the executor adds it.
+  const multi: BrandConfig = {
+    ...brand,
+    brand_id: 'knits',
+    hands: {
+      'design-module': { url_env: 'DM_URL', key_env: 'DM_KEY', forward_brand: 'brand' },
+      'product-dev': { url_env: 'PD_URL', key_env: 'PD_KEY', forward_brand: 'brandSlug' },
+      'ad-manager': { url_env: 'AM_URL', key_env: 'AM_KEY' },
+    },
+  };
+  const env = {
+    DM_URL: 'https://dm.example/', DM_KEY: 'dk', PD_URL: 'https://pd.example/base', PD_KEY: 'pk',
+    AM_URL: 'https://am.example/', AM_KEY: 'ak',
+  };
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  async function run(hand: string, path: string, method: 'POST' | 'PATCH' = 'POST') {
+    const pid = insertProposal(db, {
+      agent: 'technical-designer', brand_id: 'knits', action_type: 'techpack_mark',
+      action_payload: { hand, method, path, body: { status: 'filed' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    const fetchMock = vi.fn(async () => new Response('{"ok":true}', { status: 200 }));
+    const r = await executeProposal(db, pid, { fetch: fetchMock, env, loadBrand: () => multi, now: () => NOW });
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    return { r, url, init, row: getProposalById(db, pid)! };
+  }
+
+  it('appends the proposal brand under the hand forward key and leaves the body untouched', async () => {
+    const { r, url, init, row } = await run('design-module', '/api/prompts/fall-26/techpack-mark');
+    expect(r.ok).toBe(true);
+    expect(url).toBe('https://dm.example/api/prompts/fall-26/techpack-mark?brand=knits');
+    expect(JSON.parse(init.body as string)).toEqual({ status: 'filed' });
+    // The stored payload is what the agent filed — the forwarded key is not written back.
+    expect(JSON.parse(row.action_payload).path).toBe('/api/prompts/fall-26/techpack-mark');
+  });
+
+  it('uses the configured key name and keeps the hand base path', async () => {
+    const { url } = await run('product-dev', '/api/integration/products/p1', 'PATCH');
+    expect(url).toBe('https://pd.example/base/api/integration/products/p1?brandSlug=knits');
+  });
+
+  it('adds nothing for a hand without forward_brand', async () => {
+    const { url } = await run('ad-manager', '/api/x');
+    expect(url).toBe('https://am.example/api/x');
+  });
+});

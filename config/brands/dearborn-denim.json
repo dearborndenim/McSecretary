@@ -18,7 +18,8 @@
     },
     "product-dev": {
       "url_env": "PRODUCT_DEV_URL",
-      "key_env": "PRODUCT_DEV_KEY"
+      "key_env": "PRODUCT_DEV_KEY",
+      "forward_brand": "brand"
     },
     "piece-work-scanner": {
       "url_env": "PIECE_WORK_SCANNER_URL",
@@ -38,7 +39,8 @@
     },
     "design-module": {
       "url_env": "DESIGN_MODULE_URL",
-      "key_env": "DESIGN_MODULE_KEY"
+      "key_env": "DESIGN_MODULE_KEY",
+      "forward_brand": "brand"
     }
   }
 }
