@@ -1,0 +1,47 @@
+{
+  "_comment": "Ballow. Slug is knits; the public name is Ballow. ad-manager and content-engine point at per-brand services that do not exist until the marketing build (G5); their env vars are unset on purpose and the hand refuses until then.",
+  "brand_id": "knits",
+  "display_name": "Ballow",
+  "inbox_user_id": "robert-mcmillan",
+  "shopify_store": "a5n0dr-bt.myshopify.com",
+  "meta_ad_account": "",
+  "silent_budget_usd": 0,
+  "exploration_share": 0.2,
+  "proposal_expiry_hours": 48,
+  "hands": {
+    "ad-manager": {
+      "url_env": "AD_MANAGER_KNITS_URL",
+      "key_env": "AD_MANAGER_KNITS_KEY"
+    },
+    "content-engine": {
+      "url_env": "CONTENT_ENGINE_KNITS_URL",
+      "key_env": "CONTENT_ENGINE_KNITS_KEY"
+    },
+    "product-dev": {
+      "url_env": "PRODUCT_DEV_URL",
+      "key_env": "PRODUCT_DEV_KEY",
+      "forward_brand": "brand"
+    },
+    "piece-work-scanner": {
+      "url_env": "PIECE_WORK_SCANNER_URL",
+      "key_env": "PIECE_WORK_SCANNER_API_KEY"
+    },
+    "purchase-order-receiver": {
+      "url_env": "PO_RECEIVER_URL",
+      "key_env": "PO_RECEIVER_API_KEY"
+    },
+    "kanban-purchaser": {
+      "url_env": "KANBAN_PURCHASER_URL",
+      "key_env": "KANBAN_PURCHASER_KEY"
+    },
+    "quickbooks-sync": {
+      "url_env": "QUICKBOOKS_SYNC_URL",
+      "key_env": "QUICKBOOKS_SYNC_KEY"
+    },
+    "design-module": {
+      "url_env": "DESIGN_MODULE_URL",
+      "key_env": "DESIGN_MODULE_KEY",
+      "forward_brand": "brand"
+    }
+  }
+}

@@ -195,6 +195,29 @@ describe('GET /spine/hands/:hand/*', () => {
       expect(upstreamUrl()).toBe('https://po.example/api/pos?status=open');
     });
 
+    it('knits reads design-module with brand=knits on the shared service', async () => {
+      const h = build(DM_ENV);
+      const { res, out } = fakeRes();
+      await h(fakeReq('GET', '/spine/hands/design-module/api/config/personas?brand=knits', `Bearer ${KEY}`), res);
+      expect(out.status).toBe(200);
+      expect(upstreamUrl()).toBe('https://dm.example/api/config/personas?brand=knits');
+    });
+
+    it('knits ad-manager (env deliberately unset) answers 404 without calling out or throwing', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        // Dearborn's own AD_MANAGER_URL being set must not leak across to knits.
+        const h = build({ ...DM_ENV, AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'ak' });
+        const { res, out } = fakeRes();
+        await h(fakeReq('GET', '/spine/hands/ad-manager/api/integration/matured-week?brand=knits', `Bearer ${KEY}`), res);
+        expect(out.status).toBe(404);
+        expect(JSON.parse(out.body)).toEqual({ error: 'Unknown brand or hand' });
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     describe('with a brand whose hand forwards under brandSlug', () => {
       let tmp: string;
       let h: ReturnType<typeof createSpineRouter>;

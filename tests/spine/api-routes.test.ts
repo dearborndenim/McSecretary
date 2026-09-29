@@ -314,6 +314,37 @@ describe('spine routes', () => {
     expect(events[0].drained_by).toBe('marketing-manager');
   });
 
+  describe('second brand: knits', () => {
+    const note = {
+      brand_id: 'knits', action_type: 'noop',
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 'smoke', summary: 'loop proof' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    };
+
+    it('files a notes proposal for knits through validateBrandAndHand', async () => {
+      const r = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', note, `Bearer ${KEY}`), r.res);
+      expect(r.out.status).toBe(200);
+      expect(filed).toHaveLength(1);
+      expect((filed[0] as { brand_id: string }).brand_id).toBe('knits');
+    });
+
+    it('refuses a hand knits does not register, with the existing unknown-hand error', async () => {
+      const r = fakeRes();
+      await handle(fakeReq('POST', '/spine/proposals', { ...note, action_payload: { hand: 'shopify', method: 'POST', path: '/x', body: {} } }, `Bearer ${KEY}`), r.res);
+      expect(r.out.status).toBe(400);
+      expect(JSON.parse(r.out.body)).toEqual({ error: 'Unknown hand for knits: shopify' });
+      expect(filed).toHaveLength(0);
+    });
+
+    it('serves the knits brand file on /spine/brands/knits', async () => {
+      const r = fakeRes();
+      await handle(fakeReq('GET', '/spine/brands/knits', undefined, `Bearer ${KEY}`), r.res);
+      expect(r.out.status).toBe(200);
+      expect(JSON.parse(r.out.body)).toMatchObject({ brand_id: 'knits', display_name: 'Ballow' });
+    });
+  });
+
   describe('brand= on /spine/events/drain and /spine/events/pending', () => {
     const e = (brand_id: string, urgent: boolean) => ({ source_hand: 'spine', brand_id, event_type: 'design_request', payload: { b: brand_id }, urgent });
     const get = async (url: string) => {

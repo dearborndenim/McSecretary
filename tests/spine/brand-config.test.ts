@@ -45,6 +45,24 @@ describe('brand config', () => {
     expect(forwardBrandKey(b, 'notes')).toBeUndefined();
   });
 
+  it('loads knits (Ballow) with its _comment key, and lists both brands', () => {
+    expect(listBrandIds(DIR)).toEqual(['dearborn-denim', 'knits']);
+    const k = loadBrandConfig(DIR, 'knits');
+    expect(k.display_name).toBe('Ballow');
+    expect(k.silent_budget_usd).toBe(0);
+    expect(forwardBrandKey(k, 'design-module')).toBe('brand');
+    expect(forwardBrandKey(k, 'product-dev')).toBe('brand');
+    // Per-brand services that do not exist yet: their own env names, unset on purpose.
+    expect(k.hands['ad-manager']).toEqual({ url_env: 'AD_MANAGER_KNITS_URL', key_env: 'AD_MANAGER_KNITS_KEY' });
+    expect(k.hands['content-engine']).toEqual({ url_env: 'CONTENT_ENGINE_KNITS_URL', key_env: 'CONTENT_ENGINE_KNITS_KEY' });
+    expect(() => resolveHand(k, 'ad-manager', { AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'k' })).toThrow(/AD_MANAGER_KNITS_URL/);
+    // Factory hands share Dearborn's services and env names exactly.
+    const dd = loadBrandConfig(DIR, 'dearborn-denim');
+    for (const h of ['product-dev', 'design-module', 'piece-work-scanner', 'purchase-order-receiver', 'kanban-purchaser', 'quickbooks-sync']) {
+      expect(k.hands[h], h).toEqual(dd.hands[h]);
+    }
+  });
+
   describe('forward_brand validation', () => {
     let tmp = '';
     const base = JSON.parse(fs.readFileSync(path.join(DIR, 'dearborn-denim.json'), 'utf8')) as Record<string, unknown>;

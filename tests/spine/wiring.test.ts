@@ -189,11 +189,30 @@ describe('buildSpine', () => {
     expect(bot.sent.at(-1)!.text).toMatch(/failed/);
   });
 
-  it('onText refuses a bare promote when several brands are configured', async () => {
+  it('onText: a bare promote with several brands means the legacy brand dearborn-denim', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spine-brands-'));
     try {
       const base = JSON.parse(fs.readFileSync(path.join(BRANDS, 'dearborn-denim.json'), 'utf8'));
       fs.writeFileSync(path.join(dir, 'dearborn-denim.json'), JSON.stringify(base));
+      // 'aaa' sorts before dearborn-denim: the default must not be "first file".
+      fs.writeFileSync(path.join(dir, 'aaa.json'), JSON.stringify({ ...base, brand_id: 'aaa' }));
+      const s = buildSpine({ db, transport: bot, now: () => NOW, env: {}, brandsDir: dir, agentKeys: new Map(), fetch: async () => new Response('{}') });
+      expect(await s.onText('555', 'promote marketing-manager creative_request 2', 'robert-mcmillan')).toBe(true);
+      expect(bot.sent.at(-1)!.text).toBe('marketing-manager creative_request → level 2 (dearborn-denim).');
+      expect(await s.onText('555', 'promote marketing-manager creative_request 3 brand=aaa', 'robert-mcmillan')).toBe(true);
+      expect(bot.sent.at(-1)!.text).toBe('marketing-manager creative_request → level 3 (aaa).');
+      expect(db.prepare('SELECT brand_id, level FROM trust_ledger ORDER BY brand_id').all())
+        .toEqual([{ brand_id: 'aaa', level: 3 }, { brand_id: 'dearborn-denim', level: 2 }]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('onText refuses a bare promote when several brands are configured and none is the legacy brand', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spine-brands-'));
+    try {
+      const base = JSON.parse(fs.readFileSync(path.join(BRANDS, 'dearborn-denim.json'), 'utf8'));
+      fs.writeFileSync(path.join(dir, 'knits.json'), JSON.stringify({ ...base, brand_id: 'knits' }));
       fs.writeFileSync(path.join(dir, 'other.json'), JSON.stringify({ ...base, brand_id: 'other' }));
       const s = buildSpine({ db, transport: bot, now: () => NOW, env: {}, brandsDir: dir, agentKeys: new Map(), fetch: async () => new Response('{}') });
       expect(await s.onText('555', 'promote marketing-manager creative_request 2', 'robert-mcmillan')).toBe(true);
