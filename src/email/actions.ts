@@ -1,4 +1,5 @@
 import type { ClassifiedEmail } from './types.js';
+import { GRAPH_BASE, lazyGraphToken } from '../auth/graph-base.js';
 
 export interface EmailAction {
   type: 'archive' | 'mark_read' | 'flag_for_review' | 'no_action';
@@ -27,15 +28,8 @@ export function determineAction(email: ClassifiedEmail): EmailAction {
   return { type: 'flag_for_review', reason: `${email.category} — included in briefing` };
 }
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-
-async function getToken(): Promise<string> {
-  const { getGraphToken } = await import('../auth/graph.js');
-  return getGraphToken();
-}
-
 export async function archiveOutlookEmail(userEmail: string, messageId: string): Promise<void> {
-  const token = await getToken();
+  const token = await lazyGraphToken();
 
   const response = await fetch(`${GRAPH_BASE}/users/${userEmail}/messages/${messageId}/move`, {
     method: 'POST',
@@ -53,7 +47,7 @@ export async function archiveOutlookEmail(userEmail: string, messageId: string):
 }
 
 export async function markOutlookAsRead(userEmail: string, messageId: string): Promise<void> {
-  const token = await getToken();
+  const token = await lazyGraphToken();
 
   const response = await fetch(`${GRAPH_BASE}/users/${userEmail}/messages/${messageId}`, {
     method: 'PATCH',
@@ -75,7 +69,7 @@ export async function categorizeOutlookEmail(
   messageId: string,
   category: string,
 ): Promise<void> {
-  const token = await getToken();
+  const token = await lazyGraphToken();
 
   const response = await fetch(`${GRAPH_BASE}/users/${userEmail}/messages/${messageId}`, {
     method: 'PATCH',

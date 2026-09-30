@@ -3,17 +3,7 @@
  * Create, modify, and delete Outlook calendar events.
  */
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-
-async function getToken(): Promise<string> {
-  const { getGraphToken } = await import('../auth/graph.js');
-  return getGraphToken();
-}
-
-async function getDefaultEmail(): Promise<string> {
-  const { config } = await import('../config.js');
-  return config.outlook.email1;
-}
+import { GRAPH_BASE, lazyGraphToken, defaultOutlookMailbox } from '../auth/graph-base.js';
 
 export async function createCalendarEvent(
   userEmail: string | undefined,
@@ -27,8 +17,8 @@ export async function createCalendarEvent(
     isOnline?: boolean;
   },
 ): Promise<{ id: string; subject: string; webLink: string }> {
-  const token = await getToken();
-  const email = userEmail ?? await getDefaultEmail();
+  const token = await lazyGraphToken();
+  const email = userEmail ?? await defaultOutlookMailbox();
 
   const eventBody: any = {
     subject,
@@ -85,8 +75,8 @@ export async function updateCalendarEvent(
     body?: string;
   },
 ): Promise<void> {
-  const token = await getToken();
-  const email = userEmail ?? await getDefaultEmail();
+  const token = await lazyGraphToken();
+  const email = userEmail ?? await defaultOutlookMailbox();
 
   const updateBody: any = {};
 
@@ -115,8 +105,8 @@ export async function deleteCalendarEvent(
   userEmail: string | undefined,
   eventId: string,
 ): Promise<void> {
-  const token = await getToken();
-  const email = userEmail ?? await getDefaultEmail();
+  const token = await lazyGraphToken();
+  const email = userEmail ?? await defaultOutlookMailbox();
 
   const response = await fetch(`${GRAPH_BASE}/users/${email}/events/${eventId}`, {
     method: 'DELETE',

@@ -14,8 +14,7 @@ import { newStorageId, rfqFileUrl, rfqPublicBaseUrl, rfqFilesDir, writeRfqFile }
 import { isRfqReplyAcknowledged, markRfqReplyAcknowledged } from '../db/rfq-queries.js';
 import { fromAddress, mailboxAddress, RFQ_SENDER_NAME } from '../spine/email-hand.js';
 import type { RawEmail } from './types.js';
-
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+import { GRAPH_BASE } from '../auth/graph-base.js';
 
 /** Same Haiku the per-email classifier uses — an option block is extraction, not judgement. */
 export const RFQ_EXTRACTION_MODEL = 'claude-haiku-4-5-20251001';
