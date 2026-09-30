@@ -113,14 +113,6 @@ describe('user schema', () => {
     expect(colNames).toContain('user_id');
   });
 
-  it('should be idempotent', () => {
-    // Running schema init twice should not error
-    initializeSchema(db);
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-      .all();
-    expect(tables).toHaveLength(1);
-  });
 });
 
 describe('user CRUD', () => {

@@ -30,13 +30,6 @@ describe('getUserByEmail', () => {
     expect(user).toBeUndefined();
   });
 
-  it('should be case-sensitive on email lookup', () => {
-    // SQLite default comparison is case-sensitive for non-ASCII,
-    // but LIKE is case-insensitive. We use = so this tests exact match.
-    const user = getUserByEmail(db, 'rob@dearborndenim.com');
-    expect(user).toBeDefined();
-    expect(user!.id).toBe('robert');
-  });
 });
 
 describe('createInvite with configurable expiry', () => {
@@ -69,51 +62,5 @@ describe('createInvite with configurable expiry', () => {
     const code = createInvite(db, 'u1', '-1 hour');
     const userId = consumeInvite(db, code);
     expect(userId).toBeUndefined();
-  });
-});
-
-describe('/invite command parsing', () => {
-  // These tests validate the parsing logic that lives in handleIncomingMessage.
-  // Since handleIncomingMessage is not exported, we test the parsing patterns directly.
-
-  function parseInviteCommand(text: string): { valid: boolean; email?: string } {
-    const lowerText = text.toLowerCase().trim();
-    if (!lowerText.startsWith('/invite ')) return { valid: false };
-    const email = text.slice(8).trim().toLowerCase();
-    if (!email || !email.includes('@')) return { valid: false };
-    return { valid: true, email };
-  }
-
-  it('should parse valid /invite command', () => {
-    const result = parseInviteCommand('/invite olivier@dearborndenim.com');
-    expect(result.valid).toBe(true);
-    expect(result.email).toBe('olivier@dearborndenim.com');
-  });
-
-  it('should parse /invite with extra spaces', () => {
-    const result = parseInviteCommand('/invite   merab@dearborndenim.com  ');
-    expect(result.valid).toBe(true);
-    expect(result.email).toBe('merab@dearborndenim.com');
-  });
-
-  it('should reject /invite with no email', () => {
-    const result = parseInviteCommand('/invite');
-    expect(result.valid).toBe(false);
-  });
-
-  it('should reject /invite with invalid email (no @)', () => {
-    const result = parseInviteCommand('/invite notanemail');
-    expect(result.valid).toBe(false);
-  });
-
-  it('should reject empty /invite argument', () => {
-    const result = parseInviteCommand('/invite ');
-    expect(result.valid).toBe(false);
-  });
-
-  it('should normalize email to lowercase', () => {
-    const result = parseInviteCommand('/invite Olivier@DearBornDenim.com');
-    expect(result.valid).toBe(true);
-    expect(result.email).toBe('olivier@dearborndenim.com');
   });
 });

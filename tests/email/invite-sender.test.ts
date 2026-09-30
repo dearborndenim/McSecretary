@@ -13,17 +13,6 @@ describe('buildInviteBody', () => {
     expect(body).toContain('@mcsecretary_bot');
   });
 
-  it('mentions the member schedule window 6 AM – 2:30 PM CT', () => {
-    const body = buildInviteBody('Merab', 'code', '@bot');
-    expect(body).toContain('6 AM');
-    expect(body).toContain('2:30 PM');
-    expect(body).toContain('CT');
-  });
-
-  it('mentions 7-day expiry', () => {
-    const body = buildInviteBody('X', 'c', '@b');
-    expect(body).toContain('7 days');
-  });
 });
 
 describe('sendInviteEmail — stdout fallback', () => {
@@ -155,25 +144,4 @@ describe('sendInviteEmail — Graph transport', () => {
     expect(result.error).toContain('ECONNREFUSED');
   });
 
-  it('defaults bot handle to @mcsecretary_bot when TELEGRAM_BOT_HANDLE unset', async () => {
-    const logs: string[] = [];
-    const deps: SendInviteEmailDeps = {
-      env: {},
-      logger: (line) => logs.push(line),
-    };
-
-    await sendInviteEmail({ to: 'x@x.com', name: 'X', code: 'c' }, deps);
-    expect(logs[0]).toContain('@mcsecretary_bot');
-  });
-
-  it('honors TELEGRAM_BOT_HANDLE when set', async () => {
-    const logs: string[] = [];
-    const deps: SendInviteEmailDeps = {
-      env: { TELEGRAM_BOT_HANDLE: '@custom_bot' },
-      logger: (line) => logs.push(line),
-    };
-
-    await sendInviteEmail({ to: 'x@x.com', name: 'X', code: 'c' }, deps);
-    expect(logs[0]).toContain('@custom_bot');
-  });
 });

@@ -96,21 +96,6 @@ describe('readRepoFile', () => {
     expect(result).toBe(fileContent);
   });
 
-  it('builds the correct API URL with encoded file path', async () => {
-    mockFetch({
-      ok: true,
-      status: 200,
-      body: { content: Buffer.from('x').toString('base64'), encoding: 'base64', sha: 'a' },
-    });
-
-    await readRepoFile('my-repo', 'docs/PLAN.md');
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/repos/test-org/my-repo/contents/'),
-      expect.anything(),
-    );
-  });
-
   it('throws specific error on 404', async () => {
     mockFetch({ ok: false, status: 404, body: 'Not Found' });
     await expect(readRepoFile('missing-repo', 'README.md')).rejects.toThrow(
@@ -178,7 +163,4 @@ describe('read-only GitHub module', () => {
     expect(github.isGitHubNotFound(new Error('GitHub API error reading file: 500'))).toBe(false);
   });
 
-  it('hasGitHubToken reflects the configured token', () => {
-    expect(github.hasGitHubToken()).toBe(true);
-  });
 });

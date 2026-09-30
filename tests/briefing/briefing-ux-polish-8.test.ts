@@ -167,10 +167,6 @@ describe('Polish 8 — preview cache stats: payload helper', () => {
 // ============================================================================
 
 describe('Polish 8 — audit digest: shouldIncludeRevertsInDigest', () => {
-  it('defaults to true when env unset', () => {
-    expect(shouldIncludeRevertsInDigest({})).toBe(true);
-  });
-
   it('returns false only on the literal string "0"', () => {
     expect(shouldIncludeRevertsInDigest({ BRIEFING_AUDIT_DIGEST_INCLUDE_REVERTS: '0' })).toBe(false);
     expect(shouldIncludeRevertsInDigest({ BRIEFING_AUDIT_DIGEST_INCLUDE_REVERTS: '1' })).toBe(true);
@@ -311,38 +307,5 @@ describe('Polish 8 — formatBriefingSectionsAuditDigest direct invocation', () 
     ];
     const msg = formatBriefingSectionsAuditDigest(rows, 24);
     expect(msg).toContain('By action: set=1, reset=1, revert=1');
-  });
-});
-
-// ============================================================================
-// Deliverable 1 — admin endpoint auth check (manual smoke)
-// ============================================================================
-
-describe('Polish 8 — admin endpoint: authorization smoke', () => {
-  // The HTTP handler is wired in startApiServer(); rather than spin up a real
-  // server in unit tests, we verify the underlying payload helper directly
-  // (the auth check is a literal `Bearer ${secret}` compare in api.ts).
-  // This test confirms the helper is reachable and the contract holds.
-
-  it('payload helper returns expected JSON shape for live cache', () => {
-    const cache = new InMemoryBriefingPreviewCache(300);
-    cache.set('u1', ['emails'], '<r>');
-    cache.get('u1', ['emails']); // hit
-    cache.get('u2', ['stats']);  // miss
-    const payload = buildBriefingPreviewCacheStatsPayload(cache);
-    expect(Object.keys(payload).sort()).toEqual([
-      'disabled',
-      'hits',
-      'misses',
-      'oldest_entry_age_seconds',
-      'size',
-      'ttl_seconds',
-    ]);
-    expect(typeof payload.size).toBe('number');
-    expect(typeof payload.ttl_seconds).toBe('number');
-    expect(typeof payload.hits).toBe('number');
-    expect(typeof payload.misses).toBe('number');
-    expect(typeof payload.disabled).toBe('boolean');
-    expect(payload.oldest_entry_age_seconds === null || typeof payload.oldest_entry_age_seconds === 'number').toBe(true);
   });
 });

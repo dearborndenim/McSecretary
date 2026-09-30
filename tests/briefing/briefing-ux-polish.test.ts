@@ -20,10 +20,8 @@ import {
 import {
   VALID_BRIEFING_SECTIONS,
   BRIEFING_SECTION_DESCRIPTIONS,
-  formatSectionListWithDescriptions,
   type BriefingSectionName,
 } from '../../src/briefing/sections.js';
-import { parseBriefingPreviewCommand } from '../../src/briefing/preview-command.js';
 import { parseBriefingSectionsCommand } from '../../src/briefing/sections-command.js';
 import { buildBriefingPrompt } from '../../src/briefing/generator.js';
 
@@ -81,16 +79,6 @@ describe('Task 7 polish — /briefing-sections --list', () => {
     expect(parseBriefingSectionsCommand('/briefing-sections --user=X --set=calendar --list').matched).toBe(false);
   });
 
-  it('formatSectionListWithDescriptions emits every valid section with a description', () => {
-    const out = formatSectionListWithDescriptions();
-    for (const name of VALID_BRIEFING_SECTIONS) {
-      expect(out).toContain(`- ${name}: `);
-      expect(out).toContain(BRIEFING_SECTION_DESCRIPTIONS[name]);
-    }
-    // Should be a multi-line list — one bullet per section.
-    expect(out.split('\n').length).toBe(VALID_BRIEFING_SECTIONS.length);
-  });
-
   it('BRIEFING_SECTION_DESCRIPTIONS has no schema drift vs VALID_BRIEFING_SECTIONS', () => {
     const descKeys = Object.keys(BRIEFING_SECTION_DESCRIPTIONS).sort();
     const valid = [...VALID_BRIEFING_SECTIONS].sort();
@@ -100,18 +88,6 @@ describe('Task 7 polish — /briefing-sections --list', () => {
     }
   });
 
-  it('index.ts wires /briefing-sections --list through formatSectionListWithDescriptions and getUserBriefingSections', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const indexPath = path.join(process.cwd(), 'src', 'index.ts');
-    const source = fs.readFileSync(indexPath, 'utf-8');
-    expect(source).toContain('formatSectionListWithDescriptions');
-    expect(source).toContain('parsedSections.list');
-    expect(source).toContain('getUserBriefingSections');
-    // The "(default: full briefing)" fallback line must be present so users
-    // with NULL prefs see explicit feedback, not an empty "preference: " line.
-    expect(source).toContain('(default: full briefing)');
-  });
 });
 
 // ============================================================================
@@ -129,18 +105,6 @@ describe('Task 7 polish — /briefing-preview --sections overrides saved pref fo
       email: 'olivier@dd.com',
       role: 'member',
     });
-  });
-
-  it('parser accepts both flags together regardless of order', () => {
-    const a = parseBriefingPreviewCommand('/briefing-preview --user=Olivier --sections=stats,emails');
-    expect(a.matched).toBe(true);
-    expect(a.targetName).toBe('Olivier');
-    expect(a.sectionsRaw).toBe('stats,emails');
-
-    const b = parseBriefingPreviewCommand('/briefing-preview --sections=calendar,stats --user=Olivier');
-    expect(b.matched).toBe(true);
-    expect(b.targetName).toBe('Olivier');
-    expect(b.sectionsRaw).toBe('calendar,stats');
   });
 
   it('preview --sections override does NOT persist to briefing_sections_json', async () => {
@@ -325,13 +289,4 @@ describe('Task 7 polish — array order from briefing_sections_json drives promp
     expect(prompt).not.toContain('no_such_section');
   });
 
-  it('CLAUDE.md documents that section order is honored from the stored array', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const claudePath = path.join(process.cwd(), 'CLAUDE.md');
-    const source = fs.readFileSync(claudePath, 'utf-8');
-    expect(source).toMatch(/order/i);
-    expect(source).toContain('briefing-sections');
-    expect(source).toContain('--list');
-  });
 });

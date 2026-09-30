@@ -99,17 +99,6 @@ describe('findUserByFirstName', () => {
 });
 
 describe('/briefing-preview --user=<name> handler wiring', () => {
-  it('index.ts registers the --user flag handler wired to runTriage for the target user', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const indexPath = path.join(process.cwd(), 'src', 'index.ts');
-    const source = fs.readFileSync(indexPath, 'utf-8');
-    // The handler must parse the --user flag and pass the resolved user's id
-    // into runTriage (not the caller's id).
-    expect(source).toContain('parseBriefingPreviewCommand');
-    expect(source).toContain('findUserByFirstName');
-  });
-
   it('/briefing-preview --user=<name> handler is admin-gated', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');

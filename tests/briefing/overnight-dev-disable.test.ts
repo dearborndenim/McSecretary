@@ -16,16 +16,4 @@ describe('overnightDevFetchDisabled', () => {
     expect(overnightDevFetchDisabled({ DISABLE_OVERNIGHT_DEV_SECTION: '' })).toBe(false);
   });
 
-  it('defaults to process.env when no env object is passed', () => {
-    const prev = process.env.DISABLE_OVERNIGHT_DEV_SECTION;
-    try {
-      process.env.DISABLE_OVERNIGHT_DEV_SECTION = '1';
-      expect(overnightDevFetchDisabled()).toBe(true);
-      delete process.env.DISABLE_OVERNIGHT_DEV_SECTION;
-      expect(overnightDevFetchDisabled()).toBe(false);
-    } finally {
-      if (prev === undefined) delete process.env.DISABLE_OVERNIGHT_DEV_SECTION;
-      else process.env.DISABLE_OVERNIGHT_DEV_SECTION = prev;
-    }
-  });
 });

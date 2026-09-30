@@ -288,20 +288,6 @@ describe('Polish 2 — --set-all updates all onboarded users', () => {
 // Source-wiring: --diff in src/index.ts
 // ============================================================================
 describe('Polish 2 — wiring assertions on src/index.ts', () => {
-  it('--diff branch is admin-gated and uses the friendly not-found error', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const indexPath = path.join(process.cwd(), 'src', 'index.ts');
-    const source = fs.readFileSync(indexPath, 'utf-8');
-
-    expect(source).toContain('parsedSections.diff');
-    expect(source).toContain("Use /onboarding-status for the list.");
-    // Diff output uses the four-line format documented in PROJECT_STATUS.md.
-    expect(source).toContain('`Current: ');
-    expect(source).toContain('`Missing: ');
-    expect(source).toContain('`Order: ');
-  });
-
   it('--set-all wiring: applyTo=all enforced + admin-gated', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');

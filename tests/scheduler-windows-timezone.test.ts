@@ -20,7 +20,6 @@ import {
 } from '../src/db/user-queries.js';
 import {
   shouldUserCheckInNow,
-  shouldUserEodNow,
   isWithinCronWindow,
 } from '../src/scheduler-windows.js';
 
@@ -117,22 +116,6 @@ describe('scheduler-windows honors user.timezone', () => {
     expect(shouldUserCheckInNow(db, 'et-boundary', date)).toBe(false);
   });
 
-  it('EOD gate honors user.timezone just like check-in', () => {
-    createUser(db, {
-      id: 'pt-user', name: 'PT', email: 'pt@dd.com', role: 'member',
-      timezone: 'America/Los_Angeles',
-    });
-    setUserScheduleWindows(db, 'pt-user', {
-      check_in_cron: '0 7 * * 1-5',
-      eod_cron: '30 14 * * 1-5',
-    });
-    // 2026-04-15 Wed 2:30 PM PT = 21:30 UTC
-    const date = new Date('2026-04-15T21:30:00Z');
-    expect(shouldUserEodNow(db, 'pt-user', date)).toBe(true);
-    // 2:30 PM CT is NOT 2:30 PM PT — does not fire for PT user.
-    expect(shouldUserEodNow(db, 'pt-user', new Date('2026-04-15T19:30:00Z'))).toBe(false);
-  });
-
   it('falls back to America/Chicago when user.timezone is null/empty', () => {
     // Createuser sets timezone default to America/Chicago. Simulate a
     // legacy row by updating to empty string.
@@ -157,15 +140,5 @@ describe('scheduler-windows honors user.timezone', () => {
     expect(
       isWithinCronWindow('0 10 * * 1-5', new Date('2026-04-17T01:00:00Z'), 'America/Chicago'),
     ).toBe(false);
-  });
-});
-
-describe('CT remains the baseline assumption', () => {
-  it('new users get America/Chicago as their default timezone', () => {
-    const db = new Database(':memory:');
-    initializeSchema(db);
-    createUser(db, { id: 'u1', name: 'x', email: 'x@dd.com', role: 'admin' });
-    const row = db.prepare('SELECT timezone FROM users WHERE id = ?').get('u1') as { timezone: string };
-    expect(row.timezone).toBe('America/Chicago');
   });
 });

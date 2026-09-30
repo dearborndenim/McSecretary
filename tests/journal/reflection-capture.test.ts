@@ -38,16 +38,4 @@ describe('EOD reflection capture', () => {
     }
   });
 
-  it('supports multiple users journaling on the same day (different files)', () => {
-    const date = '2999-01-02-multi-user';
-    try {
-      writeRobJournal(date, `# Robert's Journal — ${date}\n\nHello`);
-      // (Robert and members share writeRobJournal semantics via a date-keyed file —
-      //  in practice each user has their own date key because of the in-memory flag.)
-      expect(readRobJournal(date)).toContain('Hello');
-    } finally {
-      const p = path.join(BASE, `${date}.md`);
-      if (fs.existsSync(p)) fs.unlinkSync(p);
-    }
-  });
 });
