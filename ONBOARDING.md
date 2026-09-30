@@ -170,10 +170,9 @@ the columns are null:
 |--------|------------------------|--------------------|
 | admin  | `0 6-19 * * 1-5`       | `0 19 * * 1-5`     |
 | member | `0 6-14 * * 1-5`       | `30 14 * * 1-5`    |
-| staff  | `0 7-13 * * 1-5`       | `30 13 * * 1-5`    |
 
-Staff bounds are configurable via `STAFF_SCHEDULE_WINDOW_START` /
-`STAFF_SCHEDULE_WINDOW_END` env vars (integer hours 0–23).
+A `pending_invites.json` entry's `role` (`admin` / `staff`) does not
+change these windows; the user row's `role` (`admin` / `member`) does.
 
 Members thus get 6 AM – 2 PM CT hourly check-ins and a 2:30 PM CT EOD
 summary. Admins get 6 AM – 7 PM CT check-ins and a 7 PM CT EOD. Admins

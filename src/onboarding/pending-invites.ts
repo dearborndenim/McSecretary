@@ -29,9 +29,8 @@ import { createInvite, getUserByEmail } from '../db/user-queries.js';
 import { sendInviteEmail, type SendInviteEmailDeps } from '../email/invite-sender.js';
 
 /**
- * Pending-invite role. Admin invitees receive the admin schedule window;
- * staff invitees receive a narrower configurable window (see
- * `STAFF_SCHEDULE_WINDOW_START` / `STAFF_SCHEDULE_WINDOW_END` env vars). An
+ * Pending-invite role, recorded on the manifest entry. It does not pick a
+ * schedule window (that comes from the user row's `role`). An
  * entry without a `role` is treated as `"staff"` for backward compatibility
  * with manifests that pre-date multi-role support.
  */

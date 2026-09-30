@@ -185,21 +185,6 @@ export async function completeTask(listId: string, taskId: string): Promise<void
   }
 }
 
-export async function deleteTask(listId: string, taskId: string): Promise<void> {
-  const token = await getToken();
-  const email = await getUserEmail();
-
-  const response = await fetch(`${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks/${taskId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to delete task: ${response.status} ${text}`);
-  }
-}
-
 // === Convenience: formatted task list for AI context ===
 
 export async function getFormattedTaskLists(): Promise<string> {
