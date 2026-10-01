@@ -3,6 +3,12 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
+## 2026-10-01 — Agent policy (branch `feat/agent-policy`)
+- **Why:** Grok bots will share one key (`grok-bots`); `AGENT_POLICY` bounds what a keyed agent may do (root plan `docs/superpowers/plans/2026-10-01-grok-spine-bridge.md` build 1, spec §7).
+- `src/spine/agent-policy.ts` (parse, default-deny entries, fail-loud boot checks), `countEventsSince` for the hourly cap, checks in `api-routes.ts`, new `GET /spine/policy/self`; graph tools skip policy agents.
+- No `AGENT_POLICY` and no `grok-` keys → behaviour unchanged; every existing spine test passes untouched.
+- Deploy step (Foreman): add the three Grok keys to `AGENT_KEYS` and set `AGENT_POLICY` in one Railway change.
+
 ## 2026-09-29 — Multi-brand spine, G1 Task A (branch `feat/multi-brand-spine`)
 - **Why:** a second brand (Ballow, slug `knits`) must run through the agent graph without reading, overwriting or draining Dearborn's data (plan `docs/superpowers/plans/2026-09-29-multi-brand-foundation.md` in the root repo, review `docs/brand-launch/2026-09-29-ballow-systems-review.md` §4).
 - **A1 `forward_brand`:** opt-in per hand in the brand file (`brand` | `brandSlug`, validated at load). The hand proxy sets that key to the request's brand upstream; the executor appends it to a proposal's write URL (a write path can never carry a query, so design-module's query-brand write routes always saw their default). On for design-module and product-dev in both brand files.

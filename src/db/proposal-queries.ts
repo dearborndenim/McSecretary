@@ -43,6 +43,12 @@ export function insertProposal(
   return { id: Number(result.lastInsertRowid), deduped: false };
 }
 
+/** Proposals `agent` filed at or after `sinceIso` (created_at is the router's toISOString() `now`). */
+export function countProposalsSince(db: Database.Database, agent: string, sinceIso: string): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM proposals WHERE agent = ? AND created_at >= ?')
+    .get(agent, sinceIso) as { n: number }).n;
+}
+
 export function getProposalById(db: Database.Database, id: number): ProposalRow | undefined {
   return db.prepare('SELECT * FROM proposals WHERE id = ?').get(id) as ProposalRow | undefined;
 }

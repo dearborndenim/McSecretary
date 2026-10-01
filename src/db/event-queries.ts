@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
 import type { SpineEventInput, SpineEventRow } from '../spine/types.js';
 
-export function insertEvent(db: Database.Database, e: SpineEventInput, nowIso: string): number {
+/** `postedBy` is the authenticated agent for an HTTP post; omitted (null) for in-process events. */
+export function insertEvent(db: Database.Database, e: SpineEventInput, nowIso: string, postedBy?: string): number {
   const r = db.prepare(`
-    INSERT INTO spine_events (source_hand, brand_id, event_type, payload, urgent, received_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(e.source_hand, e.brand_id, e.event_type, JSON.stringify(e.payload), e.urgent ? 1 : 0, nowIso);
+    INSERT INTO spine_events (source_hand, brand_id, event_type, payload, urgent, received_at, posted_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(e.source_hand, e.brand_id, e.event_type, JSON.stringify(e.payload), e.urgent ? 1 : 0, nowIso, postedBy ?? null);
   return Number(r.lastInsertRowid);
 }
 
@@ -37,6 +38,12 @@ export function listStaleEvents(db: Database.Database, olderThanDays: number, no
   return db.prepare(
     'SELECT * FROM spine_events WHERE drained_at IS NULL AND received_at < ? ORDER BY received_at ASC, id ASC',
   ).all(cutoff) as SpineEventRow[];
+}
+
+/** Events `agent` posted over HTTP (posted_by) received at or after `sinceIso`. */
+export function countEventsSince(db: Database.Database, agent: string, sinceIso: string): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM spine_events WHERE posted_by = ? AND received_at >= ?')
+    .get(agent, sinceIso) as { n: number }).n;
 }
 
 export function countUndrainedUrgent(db: Database.Database, brandId: string): number {

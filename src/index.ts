@@ -56,6 +56,7 @@ import { lionsConfig } from './lions/config.js';
 import { buildSpine } from './spine/wiring.js';
 import { createTelegramTransport } from './spine/telegram-card.js';
 import { parseAgentKeys } from './spine/agent-keys.js';
+import { parseAgentPolicy } from './spine/agent-policy.js';
 import { getGraphToken } from './auth/graph.js';
 import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRepliesFrom, type RfqScanSummary } from './email/rfq-intake.js';
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
@@ -1648,13 +1649,17 @@ async function main() {
   // grammY's default error handler STOPS the bot on any handler throw. Never let that happen.
   bot.catch((err) => { console.error('Telegram handler error', err.ctx?.update?.update_id, err.error); });
 
+  // Parsed once; a bad AGENT_KEYS or AGENT_POLICY throws here and stops the boot.
+  const agentKeys = parseAgentKeys(config.spine.agentKeys, { minLength: 16 });
+  const agentPolicy = parseAgentPolicy(config.spine.agentPolicy, agentKeys.values());
   const spine = buildSpine({
     db,
     transport: createTelegramTransport(bot.api),
     now: () => new Date().toISOString(),
     env: process.env,
     brandsDir: config.spine.brandsDir,
-    agentKeys: parseAgentKeys(config.spine.agentKeys, { minLength: 16 }),
+    agentKeys,
+    agentPolicy,
     fetch: (url, init) => fetch(url, init),
     getGraphToken,
   });
@@ -1670,7 +1675,8 @@ async function main() {
     db,
     brandId: process.env.GRAPH_BRAND_ID || rfqBrandId,
     brandsDir: config.spine.brandsDir,
-    agentKeys: parseAgentKeys(config.spine.agentKeys, { minLength: 16 }),
+    agentKeys,
+    agentPolicy,
     env: process.env,
     now: () => new Date().toISOString(),
     file: spine.file,

@@ -26,6 +26,7 @@ import { latestRunStartedAt } from '../db/run-index-queries.js';
 import { insertEvent, countPendingByType } from '../db/event-queries.js';
 import type { ActionPayload, ProposalInput } from '../spine/types.js';
 import type { Routed } from '../spine/router.js';
+import type { AgentPolicy } from '../spine/agent-policy.js';
 
 export interface GraphDeps {
   db: Database.Database;
@@ -33,6 +34,8 @@ export interface GraphDeps {
   brandsDir: string;
   /** key -> agent, from parseAgentKeys. The values are the known agent names. */
   agentKeys: Map<string, string>;
+  /** Agents with an AGENT_POLICY entry (the Grok keys) are not runner agents and are left out of the known list. */
+  agentPolicy?: AgentPolicy;
   env: Record<string, string | undefined>;
   now: () => string;
   file: (input: ProposalInput) => Promise<{ id: number; routed: Routed }>;
@@ -132,7 +135,7 @@ function callingUser(d: GraphDeps, userId: string | undefined): { name: string; 
 
 /** The agents that can be read or woken. `mcsecretary` is the caller, not a callee. */
 function knownAgents(d: GraphDeps): string[] {
-  return [...new Set(d.agentKeys.values())].sort();
+  return [...new Set(d.agentKeys.values())].filter((a) => !d.agentPolicy?.has(a)).sort();
 }
 
 function unknownAgentMessage(d: GraphDeps, name: string): string {

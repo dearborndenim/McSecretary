@@ -8,6 +8,9 @@ import { getFinalOutcomes } from '../../src/db/outcome-queries.js';
 import { getRun } from '../../src/db/run-index-queries.js';
 import { insertEvent } from '../../src/db/event-queries.js';
 import { getTrustRow } from '../../src/db/trust-queries.js';
+import { insertProposal } from '../../src/db/proposal-queries.js';
+import type { ProposalInput } from '../../src/spine/types.js';
+import { parseAgentPolicy } from '../../src/spine/agent-policy.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 const KEY = 'k'.repeat(24);
@@ -716,5 +719,167 @@ describe('spine routes', () => {
       expect(out.body).toContain('in-process');
     }
     expect(filed).toEqual([]);
+  });
+});
+
+describe('agent policy', () => {
+  const BOTS = 'b'.repeat(24);
+  const INBOX = 'i'.repeat(24);
+  const TASK = 'q'.repeat(24);
+  // Spec §7 verbatim, except events_per_hour: 3 and proposals_per_hour: 2 so the caps are testable.
+  const POLICY_JSON = `{
+  "grok-bots":  { "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_signal", "grok_report", "grok_cs_case"] },
+                  "events":  { "post_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "source_hand": "grok-*", "drain_types": ["grok_task_*"] },
+                  "hands_proxy": false, "outcomes": false, "rate": { "events_per_hour": 3, "proposals_per_hour": 2 } },
+  "grok-inbox": { "events": { "drain_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "post_types": [] },
+                  "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_cs_case", "grok_result", "grok_drafts_waiting", "grok_inbox_rejects"] }, "hands_proxy": false },
+  "grok-task":  { "events": { "post_types": ["grok_task_*"], "source_hand": "self", "drain_types": [] }, "propose": null, "hands_proxy": false }
+}`;
+  const note = (action_type: string, hand = 'notes', title = 't') => ({
+    brand_id: 'dearborn-denim', action_type,
+    action_payload: { hand, method: 'POST', path: hand === 'notes' ? '/note' : '/send', body: { title, summary: 's' } },
+    reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+  });
+  const ev = (event_type: string, source_hand: string) => ({ source_hand, brand_id: 'dearborn-denim', event_type, payload: {}, urgent: false });
+
+  let db: Database.Database;
+  let handle: ReturnType<typeof createSpineRouter>;
+  let filed: Array<{ agent: string }>;
+  let handFetch: ReturnType<typeof vi.fn>;
+  let policy: ReturnType<typeof parseAgentPolicy>;
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db); filed = [];
+    handFetch = vi.fn(async () => new Response('{}'));
+    const agentKeys = new Map([[KEY, 'marketing-manager'], [BOTS, 'grok-bots'], [INBOX, 'grok-inbox'], [TASK, 'grok-task']]);
+    policy = parseAgentPolicy(POLICY_JSON, agentKeys.values());
+    handle = createSpineRouter({
+      db, now: () => NOW, agentKeys, agentPolicy: policy,
+      brandsDir: path.join(process.cwd(), 'config', 'brands'),
+      // Inserts like the real router so the proposal cap has rows to count.
+      file: async (input) => { insertProposal(db, input, NOW); filed.push(input as unknown as { agent: string }); return { id: 1, routed: 'card' }; },
+      handFetch: handFetch as unknown as SpineRouterDeps['handFetch'], env: {},
+    });
+  });
+  afterEach(() => db.close());
+
+  const call = async (method: string, url: string, key?: string, body?: unknown) => {
+    const r = fakeRes();
+    await handle(fakeReq(method, url, body, key ? `Bearer ${key}` : undefined), r.res);
+    return { status: r.out.status, body: r.out.body ? JSON.parse(r.out.body) as Record<string, unknown> : {} };
+  };
+  const eventCount = () => (db.prepare('SELECT COUNT(*) AS n FROM spine_events').get() as { n: number }).n;
+  const undrained = (t: string) => (db.prepare('SELECT COUNT(*) AS n FROM spine_events WHERE event_type = ? AND drained_at IS NULL').get(t) as { n: number }).n;
+
+  it('grok-bots may file a notes grok_lead card and nothing else', async () => {
+    expect((await call('POST', '/spine/proposals', BOTS, note('grok_lead'))).status).toBe(200);
+    expect(filed).toEqual([expect.objectContaining({ agent: 'grok-bots' })]);
+    const email = await call('POST', '/spine/proposals', BOTS, note('grok_lead', 'email'));
+    expect(email.status).toBe(403);
+    expect(email.body).toEqual({ error: 'policy: grok-bots may not propose grok_lead on email' });
+    expect((await call('POST', '/spine/proposals', BOTS, note('rfq_send'))).status).toBe(403);
+    expect(filed).toHaveLength(1);
+  });
+
+  it('grok-bots may post its own event types as a grok-<slug> only', async () => {
+    expect((await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-gina'))).status).toBe(200);
+    const design = await call('POST', '/spine/events', BOTS, ev('design_request', 'grok-gina'));
+    expect(design).toEqual({ status: 403, body: { error: 'policy: grok-bots may not post design_request' } });
+    const asInbox = await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-inbox'));
+    expect(asInbox).toEqual({ status: 403, body: { error: 'policy: grok-bots may not post as grok-inbox' } });
+    expect((await call('POST', '/spine/events', BOTS, ev('grok_daily', 'marketing-manager'))).status).toBe(403);
+    expect(eventCount()).toBe(1);
+  });
+
+  it('grok-bots may drain grok_task_* only, and a refused type drains nothing', async () => {
+    insertEvent(db, ev('grok_task_gina', 'grok-task'), NOW);
+    insertEvent(db, ev('grok_task_bob', 'grok-task'), NOW);
+    insertEvent(db, ev('grok_daily', 'grok-gina'), NOW);
+    const ok = await call('GET', '/spine/events/drain?types=grok_task_gina', BOTS);
+    expect(ok.status).toBe(200);
+    expect(ok.body.events).toHaveLength(1);
+    expect(await call('GET', '/spine/events/drain?types=grok_daily', BOTS))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not drain grok_daily' } });
+    expect((await call('GET', '/spine/events/drain?types=grok_task_bob,grok_daily', BOTS)).status).toBe(403);
+    expect(undrained('grok_task_bob')).toBe(1);
+    expect(undrained('grok_daily')).toBe(1);
+  });
+
+  it('grok-bots may not read pending, post outcomes, read hands or read brands', async () => {
+    expect(await call('GET', '/spine/events/pending?types=design_request', BOTS))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not read pending design_request' } });
+    expect(await call('POST', '/spine/outcomes', BOTS, {}))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not post outcomes' } });
+    expect(await call('GET', '/spine/hands/content-engine/x?brand=dearborn-denim', BOTS))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not read hands' } });
+    expect(handFetch).not.toHaveBeenCalled();
+    for (const url of ['/spine/brands', '/spine/brands/dearborn-denim']) {
+      expect(await call('GET', url, BOTS)).toEqual({ status: 403, body: { error: 'policy: grok-bots may not read brands' } });
+    }
+  });
+
+  it('caps grok-bots at events_per_hour by the posting key, ignoring older events and other keys', async () => {
+    insertEvent(db, ev('grok_daily', 'grok-old'), '2026-09-07T10:00:00.000Z', 'grok-bots');
+    // grok-task's own posts are named grok-… but must not use up the bots' budget.
+    for (let i = 0; i < 3; i++) {
+      expect((await call('POST', '/spine/events', TASK, ev('grok_task_gina', 'grok-task'))).status).toBe(200);
+    }
+    for (const bot of ['grok-a', 'grok-b', 'grok-c']) {
+      expect((await call('POST', '/spine/events', BOTS, ev('grok_daily', bot))).status, bot).toBe(200);
+    }
+    expect(await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-d')))
+      .toEqual({ status: 429, body: { error: 'policy: grok-bots is over 3 events per hour' } });
+    expect(eventCount()).toBe(7);
+  });
+
+  it('stores the authenticated agent as posted_by whatever source_hand says', async () => {
+    await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-gina'));
+    await call('POST', '/spine/events', KEY, ev('po_received', 'grok-gina'));
+    expect(db.prepare('SELECT source_hand, posted_by FROM spine_events ORDER BY id').all()).toEqual([
+      { source_hand: 'grok-gina', posted_by: 'grok-bots' },
+      { source_hand: 'grok-gina', posted_by: 'marketing-manager' },
+    ]);
+  });
+
+  it('caps grok-bots at proposals_per_hour, ignoring older proposals', async () => {
+    insertProposal(db, { ...note('grok_lead', 'notes', 'old'), agent: 'grok-bots' } as ProposalInput, '2026-09-07T10:00:00.000Z');
+    for (const title of ['a', 'b']) {
+      expect((await call('POST', '/spine/proposals', BOTS, note('grok_lead', 'notes', title))).status, title).toBe(200);
+    }
+    expect(await call('POST', '/spine/proposals', BOTS, note('grok_lead', 'notes', 'c')))
+      .toEqual({ status: 429, body: { error: 'policy: grok-bots is over 2 proposals per hour' } });
+    expect(filed).toHaveLength(2);
+  });
+
+  it('grok-bots may not post runs', async () => {
+    expect(await call('POST', '/spine/runs', BOTS, {}))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not post runs' } });
+  });
+
+  it('grok-inbox may drain bot reports and file notes cards but may not post events', async () => {
+    insertEvent(db, ev('grok_daily', 'grok-gina'), NOW);
+    const drained = await call('GET', '/spine/events/drain?types=grok_daily', INBOX);
+    expect(drained.status).toBe(200);
+    expect(drained.body.events).toHaveLength(1);
+    expect((await call('POST', '/spine/events', INBOX, ev('grok_daily', 'grok-inbox'))).status).toBe(403);
+    expect((await call('POST', '/spine/proposals', INBOX, note('grok_lead'))).status).toBe(200);
+    expect(filed).toEqual([expect.objectContaining({ agent: 'grok-inbox' })]);
+  });
+
+  it('grok-task may post grok_task_* as itself only, and may not drain or propose', async () => {
+    expect((await call('POST', '/spine/events', TASK, ev('grok_task_gina', 'grok-task'))).status).toBe(200);
+    expect((await call('POST', '/spine/events', TASK, ev('grok_task_gina', 'grok-gina'))).status).toBe(403);
+    expect((await call('GET', '/spine/events/drain?types=grok_task_gina', TASK)).status).toBe(403);
+    expect(undrained('grok_task_gina')).toBe(1);
+    expect(await call('POST', '/spine/proposals', TASK, note('grok_lead')))
+      .toEqual({ status: 403, body: { error: 'policy: grok-task may not file proposals' } });
+    expect(filed).toHaveLength(0);
+  });
+
+  it('GET /spine/policy/self returns the caller\'s own entry', async () => {
+    expect(await call('GET', '/spine/policy/self', BOTS))
+      .toEqual({ status: 200, body: { agent: 'grok-bots', restricted: true, policy: policy.get('grok-bots') } });
+    expect(await call('GET', '/spine/policy/self', KEY))
+      .toEqual({ status: 200, body: { agent: 'marketing-manager', restricted: false, policy: null } });
+    expect((await call('GET', '/spine/policy/self')).status).toBe(401);
   });
 });

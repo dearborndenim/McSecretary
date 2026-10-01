@@ -50,6 +50,7 @@ export const config = {
   spine: {
     brandsDir: optional('SPINE_BRANDS_DIR', 'config/brands'),
     agentKeys: optional('AGENT_KEYS', ''),
+    agentPolicy: optional('AGENT_POLICY', ''),
     monthlySummaryUserId: optional('SPINE_SUMMARY_USER_ID', 'robert-mcmillan'),
   },
 } as const;
