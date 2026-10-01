@@ -1,6 +1,7 @@
 {
   "brand_id": "dearborn-denim",
   "display_name": "Dearborn Denim",
+  "active": true,
   "inbox_user_id": "robert-mcmillan",
   "shopify_store": "dearborn-denim-apparel.myshopify.com",
   "meta_ad_account": "1560973277494547",
