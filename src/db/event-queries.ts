@@ -39,6 +39,18 @@ export function listStaleEvents(db: Database.Database, olderThanDays: number, no
   ).all(cutoff) as SpineEventRow[];
 }
 
+/** Events received at or after `sinceIso` whose source_hand equals `exact` or starts with `prefix`. */
+export function countEventsSince(
+  db: Database.Database, sinceIso: string, match: { exact: string } | { prefix: string },
+): number {
+  // substr, not LIKE, so `_` and `%` in a name are literal.
+  const r = 'exact' in match
+    ? db.prepare('SELECT COUNT(*) AS n FROM spine_events WHERE received_at >= ? AND source_hand = ?').get(sinceIso, match.exact)
+    : db.prepare('SELECT COUNT(*) AS n FROM spine_events WHERE received_at >= ? AND substr(source_hand, 1, ?) = ?')
+      .get(sinceIso, match.prefix.length, match.prefix);
+  return (r as { n: number }).n;
+}
+
 export function countUndrainedUrgent(db: Database.Database, brandId: string): number {
   return (db.prepare(
     'SELECT COUNT(*) AS n FROM spine_events WHERE drained_at IS NULL AND urgent = 1 AND brand_id = ?',
