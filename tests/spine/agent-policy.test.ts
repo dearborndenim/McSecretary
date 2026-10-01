@@ -35,6 +35,11 @@ describe('parseAgentPolicy', () => {
       .toEqual(['grok_task_*']);
   });
 
+  it('refuses any * in the exact propose lists', () => {
+    expect(() => parseAgentPolicy('{"finance": {"propose": {"hands": ["notes"], "action_types": ["grok_*"]}}}', ['finance']))
+      .toThrow("AGENT_POLICY finance: propose.action_types entries are exact; '*' is not allowed");
+  });
+
   it('throws on an entry for an agent with no key', () => {
     expect(() => parseAgentPolicy('{"grok-typo": {}}', ['finance']))
       .toThrow('AGENT_POLICY names grok-typo, which has no key in AGENT_KEYS');

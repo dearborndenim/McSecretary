@@ -72,6 +72,11 @@ function parseEntry(agent: string, raw: unknown): AgentPolicyEntry {
       hands: parseList(agent, 'propose.hands', raw.propose.hands),
       action_types: parseList(agent, 'propose.action_types', raw.propose.action_types),
     };
+    for (const name of ['hands', 'action_types'] as const) {
+      if (propose[name].some((s) => s.includes('*'))) {
+        throw new Error(`AGENT_POLICY ${agent}: propose.${name} entries are exact; '*' is not allowed`);
+      }
+    }
   }
 
   let events: AgentPolicyEntry['events'] = { post_types: [], drain_types: [], source_hand: 'self' };
