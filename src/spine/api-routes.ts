@@ -1,11 +1,12 @@
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
+import { matchesType, mayPropose, sourceHandAllowed, type AgentPolicy } from './agent-policy.js';
 import { forwardBrandKey, isBrandActive, listBrandIds, loadBrandConfig, publicBrandEntry, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
-import { insertEvent, drainEvents, countPendingByType } from '../db/event-queries.js';
+import { insertEvent, drainEvents, countPendingByType, countEventsSince } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
 import { listTrustRowsForAgent, promoteTrust, getTrustRow } from '../db/trust-queries.js';
@@ -21,6 +22,8 @@ export interface SpineRouterDeps {
   /** Used only by the read-only hand proxy; the executor has its own fetch. */
   handFetch: (url: string, init: RequestInit) => Promise<Response>;
   env: Record<string, string | undefined>;
+  /** Per-agent restrictions (AGENT_POLICY). Absent = every agent unrestricted. */
+  agentPolicy?: AgentPolicy;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -41,6 +44,12 @@ const PROMOTE_FIELDS = ['agent', 'action_type', 'level'];
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+/** 403 for a request the caller's AGENT_POLICY entry does not grant. `thing` is sliced to 64 chars. */
+function refuse(res: http.ServerResponse, agent: string, verb: string, thing: string): true {
+  json(res, 403, { error: `policy: ${agent} may not ${verb} ${thing.slice(0, 64)}` });
+  return true;
 }
 
 function requireFields(obj: Record<string, unknown>, fields: string[]): string | null {
@@ -208,6 +217,9 @@ function handleBrandsRoute(req: http.IncomingMessage, res: http.ServerResponse, 
     json(res, 401, { error: 'Unauthorized' });
     return true;
   }
+  const agent = agentForBearer(deps.agentKeys, auth);
+  const policy = agent ? deps.agentPolicy?.get(agent) : undefined;
+  if (agent && policy && !policy.brands) return refuse(res, agent, 'read', 'brands');
   try {
     if (pathname === '/spine/brands') {
       const brands: Array<{ brand_id: string; active: boolean }> = [];
@@ -328,11 +340,27 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
     const agent = agentForBearer(deps.agentKeys, req.headers.authorization);
     if (!agent) { json(res, 401, { error: 'Unauthorized' }); return true; }
+    const policy = deps.agentPolicy?.get(agent) ?? null;
+    const known = new Set(deps.agentKeys.values());
 
     try {
+      if (req.method === 'GET' && pathname === '/spine/policy/self') {
+        json(res, 200, { agent, restricted: policy !== null, policy });
+        return true;
+      }
+
       if (req.method === 'POST' && pathname === '/spine/proposals') {
         const parsed = await readObject(req, PROPOSAL_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+        if (policy) {
+          if (policy.propose === null) return refuse(res, agent, 'file', 'proposals');
+          const ap = parsed.body.action_payload;
+          const hand = isPlainObject(ap) && typeof ap.hand === 'string' ? ap.hand : null;
+          const actionType = typeof parsed.body.action_type === 'string' ? parsed.body.action_type : null;
+          if (hand !== null && actionType !== null && !mayPropose(policy, hand, actionType)) {
+            return refuse(res, agent, `propose ${actionType.slice(0, 64)} on`, hand);
+          }
+        }
         const bad = validateProposal(parsed.body)
           ?? validateBrandAndHand(deps.brandsDir, parsed.body.brand_id as string, (parsed.body.action_payload as { hand: string }).hand);
         if (bad) { json(res, 400, { error: bad }); return true; }
@@ -344,8 +372,22 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       if (req.method === 'POST' && pathname === '/spine/events') {
         const parsed = await readObject(req, EVENT_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
+        const { event_type: eventType, source_hand: sourceHand } = parsed.body;
+        if (policy && typeof eventType === 'string' && typeof sourceHand === 'string') {
+          if (!matchesType(policy.events.post_types, eventType)) return refuse(res, agent, 'post', eventType);
+          if (!sourceHandAllowed(policy, agent, sourceHand, known)) return refuse(res, agent, 'post as', sourceHand);
+        }
         const bad = validateEvent(parsed.body);
         if (bad) { json(res, 400, { error: bad }); return true; }
+        if (policy?.rate) {
+          const since = new Date(Date.parse(deps.now()) - 3_600_000).toISOString();
+          const rule = policy.events.source_hand;
+          const n = countEventsSince(deps.db, since, rule === 'self' ? { exact: agent } : { prefix: rule.slice(0, -1) });
+          if (n >= policy.rate.events_per_hour) {
+            json(res, 429, { error: `policy: ${agent} is over ${policy.rate.events_per_hour} events per hour` });
+            return true;
+          }
+        }
         const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now());
         json(res, 200, { id });
         return true;
@@ -353,6 +395,8 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       if (req.method === 'GET' && pathname === '/spine/events/drain') {
         const types = (params.get('types') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+        const refused = policy ? types.find((t) => !matchesType(policy.events.drain_types, t)) : undefined;
+        if (refused !== undefined) return refuse(res, agent, 'drain', refused);
         const brand = optionalBrandParam(params);
         if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }
         const events = drainEvents(deps.db, agent, types, deps.now(), brand)
@@ -367,6 +411,8 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           json(res, 400, { error: `types must be at most ${MAX_PENDING_TYPES} names of at most ${NAME_MAX} chars` });
           return true;
         }
+        const refused = policy ? types.find((t) => !matchesType(policy.events.drain_types, t)) : undefined;
+        if (refused !== undefined) return refuse(res, agent, 'read pending', refused);
         const brand = optionalBrandParam(params);
         if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }
         json(res, 200, { counts: countPendingByType(deps.db, types, brand) });
@@ -374,6 +420,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       }
 
       if (req.method === 'POST' && pathname === '/spine/outcomes') {
+        if (policy && !policy.outcomes) return refuse(res, agent, 'post', 'outcomes');
         const parsed = await readObject(req, OUTCOME_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
         const bad = validateOutcome(parsed.body);
@@ -403,6 +450,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       // Read-only proxy so an agent can read a hand's data without holding the hand's bearer.
       if (pathname.startsWith('/spine/hands/')) {
+        if (policy && !policy.hands_proxy) return refuse(res, agent, 'read', 'hands');
         if (req.method !== 'GET') { json(res, 405, { error: 'Only GET is proxied' }); return true; }
         const rest = pathname.slice('/spine/hands/'.length);
         const slash = rest.indexOf('/');
