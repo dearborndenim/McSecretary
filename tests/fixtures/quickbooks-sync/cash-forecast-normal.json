@@ -1,0 +1,59 @@
+{
+  "ending_cash": [
+    {
+      "week_start": "2026-09-28",
+      "ending_cash_usd": 98410.22
+    },
+    {
+      "week_start": "2026-10-05",
+      "ending_cash_usd": 91388.4
+    },
+    {
+      "week_start": "2026-10-12",
+      "ending_cash_usd": 86020.15
+    },
+    {
+      "week_start": "2026-10-19",
+      "ending_cash_usd": 79874.63
+    },
+    {
+      "week_start": "2026-10-26",
+      "ending_cash_usd": 74210.9
+    },
+    {
+      "week_start": "2026-11-02",
+      "ending_cash_usd": 69502.31
+    },
+    {
+      "week_start": "2026-11-09",
+      "ending_cash_usd": 65118.77
+    },
+    {
+      "week_start": "2026-11-16",
+      "ending_cash_usd": 62004.12
+    },
+    {
+      "week_start": "2026-11-23",
+      "ending_cash_usd": 61240.5
+    },
+    {
+      "week_start": "2026-11-30",
+      "ending_cash_usd": 63117.84
+    },
+    {
+      "week_start": "2026-12-07",
+      "ending_cash_usd": 66932.05
+    },
+    {
+      "week_start": "2026-12-14",
+      "ending_cash_usd": 70415.66
+    },
+    {
+      "week_start": "2026-12-21",
+      "ending_cash_usd": 74890.13
+    }
+  ],
+  "low_point_usd": 61240.5,
+  "low_point_week": "2026-11-23",
+  "headroom_usd": 11240.5
+}

@@ -1,0 +1,9 @@
+{
+  "as_of": "2026-10-01",
+  "loans": [],
+  "monthly_debt_service": 0,
+  "floors": {
+    "covenant_floor": null,
+    "cash_floor_ref": "agents/marketing-manager/inputs/marketing_policy.json#cash.floor_usd"
+  }
+}
