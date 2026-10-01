@@ -1,0 +1,73 @@
+{
+  "as_of": "2026-10-01",
+  "loans": [
+    {
+      "id": 1,
+      "lender": "Kabbage",
+      "kind": "term",
+      "brand": "company",
+      "principal": 60000.0,
+      "rate_pct": 18.0,
+      "payment": 2450.0,
+      "due_day": 5,
+      "maturity": "2027-06-05",
+      "covenant_floor": null,
+      "active": true,
+      "next_due": "2026-10-05",
+      "paid_to_date": 14700.0,
+      "payment_count": 6,
+      "last_payment": {
+        "paid_on": "2026-09-05",
+        "amount": 2450.0
+      },
+      "notes": null
+    },
+    {
+      "id": 2,
+      "lender": "Web Bank",
+      "kind": "term",
+      "brand": "company",
+      "principal": 40000.0,
+      "rate_pct": 21.0,
+      "payment": 1890.0,
+      "due_day": 20,
+      "maturity": "2027-03-20",
+      "covenant_floor": null,
+      "active": true,
+      "next_due": "2026-10-20",
+      "paid_to_date": 9450.0,
+      "payment_count": 5,
+      "last_payment": {
+        "paid_on": "2026-09-20",
+        "amount": 1890.0
+      },
+      "notes": null
+    },
+    {
+      "id": 3,
+      "lender": "Geneva",
+      "kind": "term",
+      "brand": "company",
+      "principal": 15000.0,
+      "rate_pct": 12.0,
+      "payment": 900.0,
+      "due_day": 10,
+      "maturity": "2026-06-10",
+      "covenant_floor": null,
+      "active": false,
+      "next_due": null,
+      "paid_to_date": 15000.0,
+      "payment_count": 17,
+      "last_payment": {
+        "paid_on": "2026-06-10",
+        "amount": 900.0
+      },
+      "notes": "paid off"
+    }
+  ],
+  "monthly_debt_service": 4340.0,
+  "floors": {
+    "covenant_floor": null,
+    "cash_floor_ref": "agents/marketing-manager/inputs/marketing_policy.json#cash.floor_usd"
+  }
+}

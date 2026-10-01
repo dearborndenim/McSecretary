@@ -1,0 +1,56 @@
+{
+  "as_of": "2026-10-01T05:40:12.318204-05:00",
+  "sync": {
+    "last_sync_at": "2026-10-01T09:58:40.112903",
+    "authenticated": true
+  },
+  "cash": {
+    "checking": 98120.4,
+    "savings": 4249.66,
+    "total": 102370.06,
+    "credit_card_balance": -431212.18,
+    "ar_balance": 12840.0,
+    "ap_balance": 18322.51,
+    "net": -334324.63
+  },
+  "weeks": [
+    {
+      "week_start": "2026-09-14",
+      "revenue_usd": 28813.0,
+      "expenses_usd": 47120.33,
+      "net_usd": -18307.33,
+      "by_category": {
+        "Sales": 28813.0,
+        "Payroll Expenses": -27481.87,
+        "Rent or Lease": -6200.0,
+        "Materials": -13438.46
+      }
+    },
+    {
+      "week_start": "2026-09-21",
+      "revenue_usd": 30543.0,
+      "expenses_usd": 44912.37,
+      "net_usd": -14369.37,
+      "by_category": {
+        "Sales": 30543.0,
+        "Payroll Expenses": -27481.87,
+        "Materials": -17430.5
+      }
+    },
+    {
+      "week_start": "2026-09-28",
+      "revenue_usd": 9874.15,
+      "expenses_usd": 21003.92,
+      "net_usd": -11129.77,
+      "by_category": {
+        "Sales": 9874.15,
+        "Payroll Expenses": -21003.92
+      }
+    }
+  ],
+  "open_anomalies": {
+    "count": 0,
+    "items": []
+  },
+  "alerts": []
+}

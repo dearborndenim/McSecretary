@@ -2,6 +2,7 @@
   "_generated_from": "brands/knits/brand.json",
   "brand_id": "knits",
   "display_name": "Ballow",
+  "active": true,
   "inbox_user_id": "robert-mcmillan",
   "shopify_store": "a5n0dr-bt.myshopify.com",
   "meta_ad_account": "",

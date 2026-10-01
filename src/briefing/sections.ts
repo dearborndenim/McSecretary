@@ -19,6 +19,7 @@ export const VALID_BRIEFING_SECTIONS = [
   'dev_requests',    // Pending dev requests awaiting admin approval
   'emails',          // Critical/high/medium/low urgency emails
   'stats',           // Emails processed / archived / flagged counts
+  'cash',            // Cash today, 13-week low vs floor, last week, debt due, unassigned (quickbooks-sync)
 ] as const;
 
 export type BriefingSectionName = (typeof VALID_BRIEFING_SECTIONS)[number];
@@ -38,6 +39,7 @@ export const BRIEFING_SECTION_DESCRIPTIONS: Record<BriefingSectionName, string> 
   dev_requests:  'Pending team dev requests awaiting admin review.',
   emails:        'Critical / high / medium / low urgency email triage list.',
   stats:         'Counts: emails processed, auto-archived, flagged for review.',
+  cash:          'Cash today, 13-week low against the floor, last week, debt due, unassigned transactions (Robert by default).',
 };
 
 /**
@@ -65,6 +67,16 @@ export function isValidBriefingSection(name: string): name is BriefingSectionNam
  */
 export function overnightDevFetchDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.DISABLE_OVERNIGHT_DEV_SECTION === '1';
+}
+
+/**
+ * Who gets the `cash` section fetched at all: user ids in
+ * `BRIEFING_CASH_USERS` (CSV), default Robert only. A user who has it here
+ * still drops it by leaving `cash` out of `briefing_sections_json`.
+ */
+export function cashSectionEnabledFor(userId: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.BRIEFING_CASH_USERS ?? 'robert-mcmillan';
+  return raw.split(',').map((s) => s.trim()).filter(Boolean).includes(userId);
 }
 
 /**

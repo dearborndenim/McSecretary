@@ -23,7 +23,7 @@ import { determineAction, archiveOutlookEmail, markOutlookAsRead, categorizeOutl
 import { generateBriefing } from './briefing/generator.js';
 import type { UserBriefingContext } from './briefing/generator.js';
 import { readRepoFile } from './empire/github.js';
-import { overnightDevFetchDisabled } from './briefing/sections.js';
+import { cashSectionEnabledFor, overnightDevFetchDisabled } from './briefing/sections.js';
 import { formatPendingRequestsForBriefing } from './empire/request-sync.js';
 import { getUserById } from './db/user-queries.js';
 import { fetchOutlookCalendarEvents } from './calendar/outlook-calendar.js';
@@ -417,6 +417,25 @@ export async function runTriage(
       // Non-critical
     }
 
+    // Cash (finance F6): Robert only by default (BRIEFING_CASH_USERS), and not
+    // fetched when the user's stored section list leaves it out. buildCashSection
+    // never throws and logs once when quickbooks-sync or cash-forecast is down.
+    let cashSection: string | undefined;
+    const wantsCash = !options?.sections?.length || options.sections.includes('cash');
+    if (cashSectionEnabledFor(userId) && wantsCash) {
+      try {
+        const { buildCashSection } = await import('./briefing/cash.js');
+        cashSection = (await buildCashSection({
+          brandsDir: config.spine.brandsDir,
+          env: process.env,
+          fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(20_000) }),
+          today: now.toLocaleDateString('en-CA', { timeZone: TIMEZONE }),
+        })) ?? undefined;
+      } catch (err) {
+        console.log(`Skipping cash section: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     console.log('Generating morning briefing...');
     // Preserve array ORDER when passing to the renderer (Task 7 polish,
     // 2026-04-23). Previously this was wrapped in a Set, which silently
@@ -429,7 +448,7 @@ export async function runTriage(
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered, agentActionsSection);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered, agentActionsSection, cashSection);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

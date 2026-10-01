@@ -509,7 +509,7 @@ describe('agent_actions section registration and gating', () => {
     expect(adminGate).toBeGreaterThan(-1);
     expect(loaderCall).toBeGreaterThan(adminGate);
     expect(loaderCall).toBeLessThan(adminOpsAssign);
-    // ...and it is the LAST positional argument handed to generateBriefing.
-    expect(source).toContain('sectionsOrdered, agentActionsSection)');
+    // ...and it follows the section filter in generateBriefing's arguments (cash comes after it).
+    expect(source).toContain('sectionsOrdered, agentActionsSection, cashSection)');
   });
 });

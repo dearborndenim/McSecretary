@@ -1,0 +1,31 @@
+{
+  "week_start": "2026-09-21",
+  "week_end": "2026-09-27",
+  "count": 61,
+  "amount_usd": 71455.37,
+  "by_type": {
+    "Deposit": {
+      "count": 14,
+      "amount_usd": 30543.0
+    },
+    "Purchase": {
+      "count": 47,
+      "amount_usd": 40912.37
+    }
+  },
+  "by_class": {
+    "(no class)": 61
+  },
+  "items": [
+    {
+      "id": "Purchase_9912",
+      "txn_type": "Purchase",
+      "txn_date": "2026-09-27",
+      "amount": 412.18,
+      "vendor_name": "Uline",
+      "customer_name": null,
+      "category": "Supplies",
+      "class_name": null
+    }
+  ]
+}
