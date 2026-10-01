@@ -425,20 +425,65 @@ describe('spine routes', () => {
     expect(getRun(db, 'r1')!.agent).toBe('marketing-manager');
   });
 
-  it('GET /spine/brands/:id serves the brand config without env values', async () => {
-    const { res, out } = fakeRes();
-    await handle(fakeReq('GET', '/spine/brands/dearborn-denim', undefined, `Bearer ${KEY}`), res);
-    expect(out.status).toBe(200);
-    const b = JSON.parse(out.body);
-    expect(b.brand_id).toBe('dearborn-denim');
-    expect(b.hands['ad-manager'].url_env).toBe('AD_MANAGER_URL');
-  });
+  describe('brand registry: GET /spine/brands and /spine/brands/<slug>', () => {
+    const ADMIN_TOKEN = 'a'.repeat(20);
+    const PUBLIC_KEYS = [
+      'active', 'ad_accounts', 'brand_id', 'currency', 'display_name', 'esp_lists', 'features',
+      'location_id', 'meta_ad_account', 'primary_domain', 'quickbooks_class', 'shopify_store', 'timezone',
+    ];
+    const withAdmin = () => createSpineRouter({
+      db, now: () => NOW, agentKeys: new Map([[KEY, 'marketing-manager']]),
+      brandsDir: path.join(process.cwd(), 'config', 'brands'),
+      file: async () => ({ id: 1, routed: 'card' as const }), handFetch: async () => new Response('{}'),
+      env: { SPINE_ADMIN_TOKEN: ADMIN_TOKEN },
+    });
+    const get = async (h: ReturnType<typeof createSpineRouter>, url: string, auth?: string) => {
+      const r = fakeRes();
+      await h(fakeReq('GET', url, undefined, auth), r.res);
+      return r.out;
+    };
 
-  it('GET /spine/brands/:id 404s unknown brands', async () => {
-    const { res, out } = fakeRes();
-    await handle(fakeReq('GET', '/spine/brands/nope', undefined, `Bearer ${KEY}`), res);
-    expect(out.status).toBe(404);
-    expect(out.body).toBe('{"error":"Unknown brand"}');
+    it('requires an agent key or the admin token', async () => {
+      const h = withAdmin();
+      for (const url of ['/spine/brands', '/spine/brands/dearborn-denim']) {
+        expect((await get(h, url)).status).toBe(401);
+        expect((await get(h, url, 'Bearer wrong-token-xxxxxxxx')).status).toBe(401);
+        expect((await get(h, url, `Bearer ${KEY}`)).status).toBe(200);
+        expect((await get(h, url, `Bearer ${ADMIN_TOKEN}`)).status).toBe(200);
+      }
+      // With SPINE_ADMIN_TOKEN unset, an empty bearer must not match it.
+      expect((await get(handle, '/spine/brands', 'Bearer ')).status).toBe(401);
+    });
+
+    it('lists both brand files with active', async () => {
+      const out = await get(handle, '/spine/brands', `Bearer ${KEY}`);
+      expect(JSON.parse(out.body)).toEqual({ brands: [
+        { brand_id: 'dearborn-denim', active: true },
+        { brand_id: 'knits', active: true },
+      ] });
+    });
+
+    it('serves only identity and settings, never hands, env names or trust settings', async () => {
+      for (const [slug, name, store] of [
+        ['dearborn-denim', 'Dearborn Denim', 'dearborn-denim-apparel.myshopify.com'],
+        ['knits', 'Ballow', 'a5n0dr-bt.myshopify.com'],
+      ]) {
+        const out = await get(handle, `/spine/brands/${slug}`, `Bearer ${KEY}`);
+        expect(out.status).toBe(200);
+        const b = JSON.parse(out.body) as Record<string, unknown>;
+        expect(Object.keys(b).sort()).toEqual(PUBLIC_KEYS);
+        expect(b).toMatchObject({ brand_id: slug, display_name: name, shopify_store: store, active: true });
+        expect(out.body).not.toMatch(/_env|_URL|_KEY|hands|inbox_user_id|silent_budget/);
+      }
+    });
+
+    it('404s an unknown or malformed slug', async () => {
+      for (const url of ['/spine/brands/nope', '/spine/brands/', '/spine/brands/../dearborn-denim']) {
+        const out = await get(handle, url, `Bearer ${KEY}`);
+        expect(out.status).toBe(404);
+        expect(out.body).toBe('{"error":"Unknown brand"}');
+      }
+    });
   });
 
   it('GET /spine/trust returns the ledger rows for the calling agent', async () => {

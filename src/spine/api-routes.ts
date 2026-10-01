@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
-import { forwardBrandKey, loadBrandConfig, resolveHand } from './brand-config.js';
+import { forwardBrandKey, isBrandActive, listBrandIds, loadBrandConfig, publicBrandEntry, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
@@ -190,6 +190,52 @@ function promoteRefusalMessage(actionType: string, reason: 'pinned' | 'out_of_ra
     : 'Level must be 0–3.';
 }
 
+/** True when the header is `Bearer <SPINE_ADMIN_TOKEN>`; false when the token is unset. */
+function isAdminBearer(env: Record<string, string | undefined>, auth: string | undefined): boolean {
+  const adminToken = env.SPINE_ADMIN_TOKEN;
+  return !!adminToken && !!auth && auth.startsWith('Bearer ') && auth.slice(7) === adminToken;
+}
+
+/**
+ * Brand registry reads (routing decision 13): `GET /spine/brands` lists every
+ * brand with `active`; `GET /spine/brands/<slug>` serves `publicBrandEntry`
+ * (identity and settings only, never hands or `*_env` names). Readable with an
+ * agent key or SPINE_ADMIN_TOKEN, so a deployed service can hold either.
+ */
+function handleBrandsRoute(req: http.IncomingMessage, res: http.ServerResponse, deps: SpineRouterDeps, pathname: string): true {
+  const auth = req.headers.authorization;
+  if (!agentForBearer(deps.agentKeys, auth) && !isAdminBearer(deps.env, auth)) {
+    json(res, 401, { error: 'Unauthorized' });
+    return true;
+  }
+  try {
+    if (pathname === '/spine/brands') {
+      const brands: Array<{ brand_id: string; active: boolean }> = [];
+      for (const id of listBrandIds(deps.brandsDir)) {
+        try { brands.push({ brand_id: id, active: isBrandActive(loadBrandConfig(deps.brandsDir, id)) }); }
+        catch (err) { console.error('spine: brand config load failed', id, err); }
+      }
+      json(res, 200, { brands });
+      return true;
+    }
+    const brandId = pathname.slice('/spine/brands/'.length);
+    let brand;
+    try {
+      brand = loadBrandConfig(deps.brandsDir, brandId);
+    } catch (err) {
+      console.error('spine: brand config load failed', brandId.slice(0, 64), err);
+      json(res, 404, { error: 'Unknown brand' });
+      return true;
+    }
+    json(res, 200, publicBrandEntry(brand));
+    return true;
+  } catch (err) {
+    console.error('spine route error', err);
+    json(res, 500, { error: 'Internal error' });
+    return true;
+  }
+}
+
 /**
  * `/spine/trust/promote` is gated by SPINE_ADMIN_TOKEN, not agent keys — a
  * valid agent bearer must NOT unlock it, so this runs before (and instead of)
@@ -199,8 +245,7 @@ async function handlePromoteRoute(req: http.IncomingMessage, res: http.ServerRes
   try {
     const adminToken = deps.env.SPINE_ADMIN_TOKEN;
     if (!adminToken) { json(res, 503, { error: 'SPINE_ADMIN_TOKEN is not configured' }); return true; }
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith('Bearer ') || auth.slice(7) !== adminToken) {
+    if (!isAdminBearer(deps.env, req.headers.authorization)) {
       json(res, 401, { error: 'Unauthorized' });
       return true;
     }
@@ -277,6 +322,9 @@ export function createSpineRouter(deps: SpineRouterDeps) {
     if (req.method === 'POST' && pathname === '/spine/trust/promote') {
       return handlePromoteRoute(req, res, deps);
     }
+    if (req.method === 'GET' && (pathname === '/spine/brands' || pathname.startsWith('/spine/brands/'))) {
+      return handleBrandsRoute(req, res, deps, pathname);
+    }
 
     const agent = agentForBearer(deps.agentKeys, req.headers.authorization);
     if (!agent) { json(res, 401, { error: 'Unauthorized' }); return true; }
@@ -345,20 +393,6 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const ok = upsertRun(deps.db, { ...r, agent, finished_at: r.finished_at ?? null, notes: r.notes ?? '' });
         if (!ok) { json(res, 409, { error: 'run_id belongs to another agent' }); return true; }
         json(res, 200, { ok: true });
-        return true;
-      }
-
-      if (req.method === 'GET' && pathname.startsWith('/spine/brands/')) {
-        const brandId = pathname.slice('/spine/brands/'.length);
-        let brand;
-        try {
-          brand = loadBrandConfig(deps.brandsDir, brandId);
-        } catch (err) {
-          console.error('spine: brand config load failed', brandId, err);
-          json(res, 404, { error: 'Unknown brand' });
-          return true;
-        }
-        json(res, 200, brand);
         return true;
       }
 
