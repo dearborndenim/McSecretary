@@ -373,15 +373,19 @@ export async function runTriage(
         // Admin-only: the newest digest of what Robert's Grok bots reported
         // (posted by the Mac mini inbox). Loader and formatter return null when
         // there is no Grok activity; digests are then drained so they never
-        // trip the stale-event warning (the loader ignores drained_at).
-        try {
-          const { loadGrokBotsData, formatGrokBotsSection, consumeGrokDigests } = await import('./briefing/grok-bots.js');
-          const nowIso = now.toISOString();
-          grokBotsSection = formatGrokBotsSection(loadGrokBotsData(db, nowIso), nowIso) ?? undefined;
-          consumeGrokDigests(db, nowIso);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.log(`Skipping Grok bots section: ${msg}`);
+        // trip the stale-event warning (the loader ignores drained_at). Skipped
+        // when the stored section list leaves grok_bots out, like cash.
+        const wantsGrokBots = !options?.sections?.length || options.sections.includes('grok_bots');
+        if (wantsGrokBots) {
+          try {
+            const { loadGrokBotsData, formatGrokBotsSection, consumeGrokDigests } = await import('./briefing/grok-bots.js');
+            const nowIso = now.toISOString();
+            grokBotsSection = formatGrokBotsSection(loadGrokBotsData(db, nowIso), nowIso) ?? undefined;
+            consumeGrokDigests(db, nowIso);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`Skipping Grok bots section: ${msg}`);
+          }
         }
 
         // Admin-only operations snapshot: inventory, uninvoiced PO totals, WIP.
