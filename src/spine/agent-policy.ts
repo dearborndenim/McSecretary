@@ -17,7 +17,8 @@ export interface AgentPolicyEntry {
   hands_proxy: boolean;
   outcomes: boolean;
   brands: boolean;
-  rate: { events_per_hour: number } | null;
+  runs: boolean;
+  rate: { events_per_hour: number | null; proposals_per_hour: number | null } | null;
 }
 export type AgentPolicy = Map<string, AgentPolicyEntry>;
 
@@ -25,10 +26,10 @@ export type AgentPolicy = Map<string, AgentPolicyEntry>;
 export const RESTRICTED_PREFIXES = ['grok-'];
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
-const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'rate'];
+const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'runs', 'rate'];
 const PROPOSE_FIELDS = ['hands', 'action_types'];
 const EVENTS_FIELDS = ['post_types', 'drain_types', 'source_hand'];
-const RATE_FIELDS = ['events_per_hour'];
+const RATE_FIELDS = ['events_per_hour', 'proposals_per_hour'];
 const ITEM_MAX = 128;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -48,6 +49,7 @@ function parseList(agent: string, name: string, v: unknown): string[] {
   }
   for (const s of v as string[]) {
     if (s.slice(0, -1).includes('*')) throw new Error(`AGENT_POLICY ${agent}: ${name} entry ${s.slice(0, 64)} may have '*' only as its last character`);
+    if (s === '*') throw new Error(`AGENT_POLICY ${agent}: ${name} entry * needs a prefix before '*'`);
   }
   return [...(v as string[])];
 }
@@ -92,9 +94,16 @@ function parseEntry(agent: string, raw: unknown): AgentPolicyEntry {
   if (raw.rate !== undefined && raw.rate !== null) {
     if (!isPlainObject(raw.rate)) throw new Error(`AGENT_POLICY ${agent}: rate must be an object`);
     checkFields(agent, 'rate.', raw.rate, RATE_FIELDS);
-    const n = raw.rate.events_per_hour;
-    if (!Number.isInteger(n) || (n as number) < 1) throw new Error(`AGENT_POLICY ${agent}: rate.events_per_hour must be an integer >= 1`);
-    rate = { events_per_hour: n as number };
+    const cap = (name: string): number | null => {
+      const n = (raw.rate as Record<string, unknown>)[name];
+      if (n === undefined) return null;
+      if (!Number.isInteger(n) || (n as number) < 1) throw new Error(`AGENT_POLICY ${agent}: rate.${name} must be an integer >= 1`);
+      return n as number;
+    };
+    rate = { events_per_hour: cap('events_per_hour'), proposals_per_hour: cap('proposals_per_hour') };
+    if (rate.events_per_hour === null && rate.proposals_per_hour === null) {
+      throw new Error(`AGENT_POLICY ${agent}: rate must set events_per_hour or proposals_per_hour`);
+    }
   }
 
   return {
@@ -103,6 +112,7 @@ function parseEntry(agent: string, raw: unknown): AgentPolicyEntry {
     hands_proxy: parseFlag(agent, 'hands_proxy', raw.hands_proxy),
     outcomes: parseFlag(agent, 'outcomes', raw.outcomes),
     brands: parseFlag(agent, 'brands', raw.brands),
+    runs: parseFlag(agent, 'runs', raw.runs),
     rate,
   };
 }

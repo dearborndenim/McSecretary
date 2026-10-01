@@ -28,6 +28,13 @@ describe('parseAgentPolicy', () => {
     }
   });
 
+  it('refuses a bare * so no pattern can match every type', () => {
+    expect(() => parseAgentPolicy('{"finance": {"events": {"drain_types": ["*"]}}}', KNOWN))
+      .toThrow("AGENT_POLICY finance: events.drain_types entry * needs a prefix before '*'");
+    expect(parseAgentPolicy('{"finance": {"events": {"drain_types": ["grok_task_*"]}}}', ['finance']).get('finance')!.events.drain_types)
+      .toEqual(['grok_task_*']);
+  });
+
   it('throws on an entry for an agent with no key', () => {
     expect(() => parseAgentPolicy('{"grok-typo": {}}', ['finance']))
       .toThrow('AGENT_POLICY names grok-typo, which has no key in AGENT_KEYS');
@@ -45,7 +52,7 @@ describe('parseAgentPolicy', () => {
     expect(p.get('grok-task')).toEqual({
       propose: null,
       events: { post_types: ['grok_task_*'], drain_types: [], source_hand: 'self' },
-      hands_proxy: false, outcomes: false, brands: false, rate: null,
+      hands_proxy: false, outcomes: false, brands: false, runs: false, rate: null,
     });
   });
 });
@@ -63,7 +70,7 @@ describe('matchesType', () => {
 describe('sourceHandAllowed', () => {
   const entry = (source_hand: string): AgentPolicyEntry => ({
     propose: null, events: { post_types: [], drain_types: [], source_hand },
-    hands_proxy: false, outcomes: false, brands: false, rate: null,
+    hands_proxy: false, outcomes: false, brands: false, runs: false, rate: null,
   });
   const known = new Set(KNOWN);
 
