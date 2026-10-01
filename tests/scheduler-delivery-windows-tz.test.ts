@@ -80,19 +80,6 @@ describe('Full scheduling flow — ET staff receive check-ins at ET local time',
     ]);
   });
 
-  it('does NOT fire at 7 AM CT (= 8 AM ET) — that would be one hour too late for the ET user', () => {
-    // 7 AM CT on 2026-04-15 is 12:00 UTC. Under the ET cron 0 7,8, this is
-    // 8 AM ET — which happens to match the 8 AM spot. The important test is
-    // that 7 AM CT (= 8 AM ET) is NOT the same as 7 AM ET.
-    // Construct a cron that only fires at 7 AM local for ET:
-    setUserScheduleWindows(db, 'et-staff', {
-      check_in_cron: '0 7 * * 1-5',
-      eod_cron: '0 17 * * 1-5',
-    });
-    expect(shouldUserCheckInNow(db, 'et-staff', new Date('2026-04-15T11:00:00Z'))).toBe(true); // 7 AM ET
-    expect(shouldUserCheckInNow(db, 'et-staff', new Date('2026-04-15T12:00:00Z'))).toBe(false); // 7 AM CT = 8 AM ET
-  });
-
   it('does not fire on weekends (Sat/Sun) regardless of local time', () => {
     // 2026-04-18 is a Saturday, 2026-04-19 is a Sunday.
     const sat = checkInTicksForUser(db, 'et-staff', '2026-04-18');

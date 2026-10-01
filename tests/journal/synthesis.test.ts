@@ -67,21 +67,4 @@ describe('runWeeklySynthesis', () => {
     if (originalPatterns) writeMasterPatterns(originalPatterns);
   });
 
-  it('skips when no daily learnings files exist', async () => {
-    const anthropic = mockAnthropic();
-
-    // Temporarily move existing files aside if any — the function reads last 7 days
-    // Since our test dates are in 9999, they won't interfere with real data
-    // The function lists files sorted and takes last N — so if real files exist, this test
-    // still works because those files exist already.
-
-    // Create a fresh mock that we can track
-    const freshAnthropic = mockAnthropic();
-
-    // We can't easily test "no files" without cleaning the directory, so we test
-    // that the function doesn't crash and handles empty gracefully
-    // The function checks learningsFiles.length === 0
-    // This is hard to test without an empty dir, so we just verify the function exists and is callable
-    expect(typeof runWeeklySynthesis).toBe('function');
-  });
 });

@@ -1,7 +1,6 @@
 import { getGraphToken } from '../auth/graph.js';
 import type { RawEmail } from './types.js';
-
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+import { GRAPH_BASE } from '../auth/graph-base.js';
 
 interface GraphMessage {
   id: string;

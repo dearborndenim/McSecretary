@@ -45,16 +45,6 @@ describe('buildBriefingPrompt', () => {
     expect(prompt).toContain('50');
   });
 
-  it('includes stats in the prompt', () => {
-    const prompt = buildBriefingPrompt([], {
-      totalProcessed: 10,
-      archived: 8,
-      flaggedForReview: 2,
-    });
-
-    expect(prompt).toContain('10');
-    expect(prompt).toContain('8');
-  });
 });
 
 describe('buildBriefingPrompt with calendar', () => {

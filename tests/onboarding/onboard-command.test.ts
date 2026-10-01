@@ -10,44 +10,6 @@ import {
   formatOnboardingSummary,
 } from '../../src/onboarding/pending-invites.js';
 
-/**
- * The `/onboard-all-pending` Telegram command is admin-gated in index.ts by
- * the same `user.role === 'admin'` check the other admin commands use (like
- * /review, /approve, /invite). Since handleIncomingMessage is not exported,
- * we verify the gate by asserting the command-parsing + admin-role logic
- * explicitly here, and we confirm the processPendingInvites + summary flow
- * wires together for an admin happy-path.
- */
-
-describe('/onboard-all-pending gating', () => {
-  function isAdminOnboardCommand(text: string, role: 'admin' | 'member'): boolean {
-    const lowerText = text.toLowerCase().trim();
-    return lowerText === '/onboard-all-pending' && role === 'admin';
-  }
-
-  it('matches admin user sending /onboard-all-pending', () => {
-    expect(isAdminOnboardCommand('/onboard-all-pending', 'admin')).toBe(true);
-  });
-
-  it('ignores member user sending /onboard-all-pending', () => {
-    expect(isAdminOnboardCommand('/onboard-all-pending', 'member')).toBe(false);
-  });
-
-  it('is case-insensitive on the command text', () => {
-    expect(isAdminOnboardCommand('/Onboard-All-Pending', 'admin')).toBe(true);
-  });
-
-  it('does not match with trailing args (strict equality)', () => {
-    // We keep the command argumentless by design; the manifest lives on disk.
-    expect(isAdminOnboardCommand('/onboard-all-pending now', 'admin')).toBe(false);
-  });
-
-  it('does not match partial prefixes', () => {
-    expect(isAdminOnboardCommand('/onboard', 'admin')).toBe(false);
-    expect(isAdminOnboardCommand('/onboard-all', 'admin')).toBe(false);
-  });
-});
-
 describe('/onboard-all-pending admin happy-path wiring', () => {
   let db: Database.Database;
   let manifestPath: string;

@@ -7,7 +7,7 @@ vi.mock('../src/config.js', () => ({
     azure: { tenantId: 't', clientId: 'c', clientSecret: 's' },
     telegram: { botToken: 'x', chatId: '' },
     github: { token: 'test-token', org: 'test-org' },
-    outlook: { email1: '', email2: '' },
+    outlook: { email1: '' },
   },
 }));
 vi.mock('../src/telegram/bot.js', () => ({

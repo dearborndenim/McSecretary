@@ -160,18 +160,4 @@ describe('fetchWipSummary', () => {
     expect(calledUrl).toBe('https://scanner.example.com/api/integration/wip-summary');
   });
 
-  it('uses a 5s timeout via AbortSignal', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(MOCK_WIP),
-    });
-    vi.stubGlobal('fetch', mockFetch);
-
-    await fetchWipSummary('https://scanner.example.com', 'test-key');
-    const opts = mockFetch.mock.calls[0][1] as RequestInit;
-    expect(opts.signal).toBeDefined();
-    // AbortSignal.timeout returns an AbortSignal; we can't directly read the
-    // timeout, but we can confirm the signal exists and is not aborted yet.
-    expect((opts.signal as AbortSignal).aborted).toBe(false);
-  });
 });

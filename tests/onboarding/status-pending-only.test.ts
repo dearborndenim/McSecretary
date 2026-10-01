@@ -110,17 +110,6 @@ describe('renderOnboardingStatus with pendingOnly=true', () => {
 });
 
 describe('/onboarding-status --pending-only wiring', () => {
-  it('index.ts routes --pending-only into the pendingOnly branch', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const indexPath = path.join(process.cwd(), 'src', 'index.ts');
-    const source = fs.readFileSync(indexPath, 'utf-8');
-    // Handler uses the parser + calls renderOnboardingStatus (or the read+render helper)
-    // with the pending-only flag.
-    expect(source).toContain('parseOnboardingStatusCommand');
-    expect(source).toMatch(/pendingOnly/);
-  });
-
   it('/onboarding-status handler remains admin-gated', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');

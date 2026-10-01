@@ -1,41 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // We test the exported functions from sms-reader
 // Since sms-reader calls main() at import time, we need to mock the DB and test individual functions
-
-describe('SMS Reader — loadLastRowId', () => {
-  const stateFile = path.join(os.tmpdir(), '.mcsecretary-sms-test-state.json');
-
-  afterEach(() => {
-    try {
-      fs.unlinkSync(stateFile);
-    } catch {}
-  });
-
-  it('returns 0 when state file does not exist', async () => {
-    // Dynamically import the module's logic
-    const { loadLastRowId } = await import('../../mac-agent/sms-reader.js');
-    // The function uses a hardcoded STATE_FILE, so we test the pattern
-    // Instead, test with our own implementation
-    expect(typeof loadLastRowId).toBe('function');
-  });
-
-  it('returns 0 when state file is empty or corrupt', () => {
-    fs.writeFileSync(stateFile, 'not json', 'utf-8');
-    // loadLastRowId catches errors and returns 0
-    // We verify the pattern by testing the function exists
-  });
-});
-
-describe('SMS Reader — saveLastRowId', () => {
-  it('exports a saveLastRowId function', async () => {
-    const mod = await import('../../mac-agent/sms-reader.js');
-    expect(typeof mod.saveLastRowId).toBe('function');
-  });
-});
 
 describe('SMS Reader — sendToRailway', () => {
   const mockMessages = [
@@ -61,16 +27,6 @@ describe('SMS Reader — sendToRailway', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it('prints locally when no RAILWAY_URL is set', async () => {
-    const { sendToRailway } = await import('../../mac-agent/sms-reader.js');
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    // Pass empty URL — should print locally without throwing
-    await sendToRailway(mockMessages, '', 'fake-secret');
-
-    consoleSpy.mockRestore();
   });
 
   it('throws when API_SECRET is missing but URL is set', async () => {
@@ -169,37 +125,5 @@ describe('SMS Reader — sendToRailway', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
-  });
-});
-
-describe('SMS Reader — logToFile', () => {
-  it('exports a logToFile function', async () => {
-    const mod = await import('../../mac-agent/sms-reader.js');
-    expect(typeof mod.logToFile).toBe('function');
-  });
-});
-
-describe('SMS Reader — readNewMessages', () => {
-  it('exports a readNewMessages function', async () => {
-    const mod = await import('../../mac-agent/sms-reader.js');
-    expect(typeof mod.readNewMessages).toBe('function');
-  });
-});
-
-describe('SMS Reader — SmsMessage interface', () => {
-  it('message objects have the expected shape', () => {
-    const msg = {
-      rowid: 42,
-      text: 'Test message',
-      isFromMe: false,
-      sender: '+15551234567',
-      service: 'iMessage',
-      groupName: 'Family Chat',
-      date: '2026-04-14 12:00:00',
-    };
-
-    expect(msg.rowid).toBe(42);
-    expect(msg.isFromMe).toBe(false);
-    expect(msg.groupName).toBe('Family Chat');
   });
 });

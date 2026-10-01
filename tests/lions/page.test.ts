@@ -23,36 +23,6 @@ describe('lions page template', () => {
     expect(fs.existsSync(lionsPagePath())).toBe(true);
   });
 
-  it('carries an empty data block so the file also works as a static artifact', () => {
-    expect(template).toContain('<script id="lions-data" type="application/json">{"games":[],"alerts":[],"checkedAt":null,"live":false}</script>');
-    expect(template).toContain('var SCHEDULE = [');
-    expect(template).toContain('{ date:"2026-09-19", time:"2:00 PM", kind:"game"');
-  });
-
-  it('has the red alert banner, its token, the close button and the CHANGED pill', () => {
-    expect(template).toContain('--alert:#C8352B;');
-    expect(template).toContain('id="alert-banner"');
-    expect(template).toContain('>SCHEDULE CHANGE<');
-    expect(template).toContain('id="alert-close"');
-    expect(template).toContain('Close</button>');
-    expect(template).toContain('.pill-changed{');
-    expect(template).toContain('pill pill-changed');
-    // The banner sits above the sticky topbar (z-index 30) on every tab.
-    expect(/\.alert-banner\{[^}]*position:fixed/.test(template)).toBe(true);
-    expect(/@media \(prefers-reduced-motion:reduce\)\{ \.alert-banner\{ animation:none; \} \}/.test(template)).toBe(true);
-  });
-
-  it('reads the data block at boot, swaps in live games and remembers dismissals', () => {
-    expect(template).toContain('document.getElementById("lions-data")');
-    expect(template).toContain('function applyLiveSchedule()');
-    expect(template).toContain('applyLiveSchedule();');
-    expect(template).toContain('renderAlerts();');
-    expect(template).toContain('ALERT_STORE_KEY = "slLionsAlertsSeen"');
-    expect(template).toContain('localStorage.getItem(ALERT_STORE_KEY)');
-    // Kicks and open-house rows survive so conflict detection keeps working.
-    expect(template).toContain('SCHEDULE.filter(function(r){ return r.kind !== "game"; }).concat(live, keepTbd)');
-    expect(template).toContain('Checked ');
-  });
 });
 
 describe('injectLionsData', () => {

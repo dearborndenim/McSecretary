@@ -16,10 +16,9 @@ export const config = {
     clientId: required('AZURE_CLIENT_ID'),
     clientSecret: required('AZURE_CLIENT_SECRET'),
   },
-  // Legacy single-user config — used for seed only, not for runtime email fetching
+  // Default mailbox for the To Do and calendar-write tools (not for triage fetching)
   outlook: {
     email1: optional('OUTLOOK_USER_EMAIL_1', ''),
-    email2: optional('OUTLOOK_USER_EMAIL_2', ''),
   },
   anthropic: {
     apiKey: required('ANTHROPIC_API_KEY'),

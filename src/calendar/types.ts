@@ -32,28 +32,6 @@ export interface FreeSlot {
   durationMinutes: number;
 }
 
-export interface WeeklyScheduleDay {
-  weekStart: string;   // YYYY-MM-DD (Monday)
-  dayOfWeek: number;   // 0=Monday, 6=Sunday
-  workStart: string;   // HH:MM, default "06:00"
-  workEnd: string;     // HH:MM, default "16:00"
-  morningRoutine: 'bike' | 'gym' | 'default';
-  notes: string;
-}
-
-export interface PendingAction {
-  id?: number;
-  createdAt?: string;
-  actionType: 'move_event' | 'cancel_event' | 'create_event';
-  sourceEventId: string;
-  source: string;
-  calendarEmail: string;
-  description: string;
-  proposedData: string;  // JSON
-  status: 'pending' | 'approved' | 'rejected' | 'expired';
-  expiresAt: string;
-}
-
 export const TIMEZONE = 'America/Chicago';
 
 export const DEFAULT_WORK_START = '06:00';

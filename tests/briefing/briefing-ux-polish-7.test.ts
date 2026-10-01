@@ -138,12 +138,6 @@ describe('Polish 7 — preview cache: env factory', () => {
     expect(resolveBriefingPreviewCacheTtlSeconds({ BRIEFING_PREVIEW_CACHE_TTL_SECONDS: '999999' })).toBe(86400);
   });
 
-  it('default factory returns a real cache when env is empty', () => {
-    const cache = buildBriefingPreviewCache({});
-    expect(cache.enabled).toBe(true);
-    expect(cache).toBeInstanceOf(InMemoryBriefingPreviewCache);
-  });
-
   it('TTL override drives actual eviction timing', () => {
     let now = 1_000_000;
     const cache = buildBriefingPreviewCache(

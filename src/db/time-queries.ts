@@ -27,10 +27,3 @@ export function getTimeLogsForDate(db: Database.Database, userId: string, date: 
     SELECT * FROM time_log WHERE user_id = ? AND date = ? ORDER BY hour ASC
   `).all(userId, date) as TimeLogRow[];
 }
-
-export function getTodayTrackedHours(db: Database.Database, userId: string, date: string): number {
-  const row = db.prepare(`
-    SELECT COUNT(*) as count FROM time_log WHERE user_id = ? AND date = ?
-  `).get(userId, date) as { count: number };
-  return row.count;
-}

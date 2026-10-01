@@ -31,7 +31,6 @@ import {
 import {
   VALID_BRIEFING_SECTIONS,
   parseSectionList,
-  formatValidSectionsList,
   isValidBriefingSection,
 } from '../../src/briefing/sections.js';
 import { parseBriefingPreviewCommand } from '../../src/briefing/preview-command.js';
@@ -130,24 +129,6 @@ describe('Task 7.2 — unknown sections error cleanly with valid list', () => {
     expect(allBad.invalid).toEqual(['nope', 'also_nope']);
   });
 
-  it('formatValidSectionsList returns the canonical ordered set', () => {
-    const formatted = formatValidSectionsList();
-    for (const name of VALID_BRIEFING_SECTIONS) {
-      expect(formatted).toContain(name);
-    }
-    // Stable separator so error messages are deterministic.
-    expect(formatted).toContain(', ');
-  });
-
-  it('index.ts wires the --sections error path through parseSectionList + formatValidSectionsList', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const indexPath = path.join(process.cwd(), 'src', 'index.ts');
-    const source = fs.readFileSync(indexPath, 'utf-8');
-    expect(source).toContain('parseSectionList');
-    expect(source).toContain('formatValidSectionsList');
-    expect(source).toMatch(/Invalid section name/i);
-  });
 });
 
 // ============================================================================

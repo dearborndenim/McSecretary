@@ -44,7 +44,3 @@ export function enableScheduledTask(db: Database.Database, name: string): void {
     UPDATE scheduled_tasks SET enabled = 1, updated_at = datetime('now') WHERE name = ?
   `).run(name);
 }
-
-export function deleteScheduledTask(db: Database.Database, name: string): void {
-  db.prepare(`DELETE FROM scheduled_tasks WHERE name = ?`).run(name);
-}

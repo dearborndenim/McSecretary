@@ -3,7 +3,7 @@
  * Manages task lists and tasks for Rob's daily todo lists and project tracking.
  */
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+import { GRAPH_BASE, lazyGraphToken, defaultOutlookMailbox } from '../auth/graph-base.js';
 
 export interface TodoTaskList {
   id: string;
@@ -22,21 +22,11 @@ export interface TodoTask {
   lastModifiedDateTime?: string;
 }
 
-async function getToken(): Promise<string> {
-  const { getGraphToken } = await import('../auth/graph.js');
-  return getGraphToken();
-}
-
-async function getUserEmail(): Promise<string> {
-  const { config } = await import('../config.js');
-  return config.outlook.email1;
-}
-
 // === Task Lists ===
 
 export async function getTaskLists(): Promise<TodoTaskList[]> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   const response = await fetch(`${GRAPH_BASE}/users/${email}/todo/lists`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -52,8 +42,8 @@ export async function getTaskLists(): Promise<TodoTaskList[]> {
 }
 
 export async function createTaskList(name: string): Promise<TodoTaskList> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   const response = await fetch(`${GRAPH_BASE}/users/${email}/todo/lists`, {
     method: 'POST',
@@ -82,8 +72,8 @@ export async function findOrCreateTaskList(name: string): Promise<TodoTaskList> 
 // === Tasks ===
 
 export async function getTasks(listId: string): Promise<TodoTask[]> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   const response = await fetch(
     `${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks?$orderby=createdDateTime desc&$top=50`,
@@ -100,8 +90,8 @@ export async function getTasks(listId: string): Promise<TodoTask[]> {
 }
 
 export async function getIncompleteTasks(listId: string): Promise<TodoTask[]> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   const response = await fetch(
     `${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime desc&$top=50`,
@@ -126,8 +116,8 @@ export async function createTask(
     body?: string;
   },
 ): Promise<TodoTask> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   const taskBody: any = { title };
 
@@ -167,8 +157,8 @@ export async function createTask(
 }
 
 export async function completeTask(listId: string, taskId: string): Promise<void> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   const response = await fetch(`${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks/${taskId}`, {
     method: 'PATCH',
@@ -182,21 +172,6 @@ export async function completeTask(listId: string, taskId: string): Promise<void
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Failed to complete task: ${response.status} ${text}`);
-  }
-}
-
-export async function deleteTask(listId: string, taskId: string): Promise<void> {
-  const token = await getToken();
-  const email = await getUserEmail();
-
-  const response = await fetch(`${GRAPH_BASE}/users/${email}/todo/lists/${listId}/tasks/${taskId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to delete task: ${response.status} ${text}`);
   }
 }
 
@@ -230,8 +205,8 @@ export async function getFormattedTaskLists(): Promise<string> {
 // === Recently completed tasks ===
 
 export async function getCompletedTasks(listId: string, limit: number = 20): Promise<TodoTask[]> {
-  const token = await getToken();
-  const email = await getUserEmail();
+  const token = await lazyGraphToken();
+  const email = await defaultOutlookMailbox();
 
   // To Do API is picky — keep the query simple. No $orderby with $filter, no $select.
   const response = await fetch(
