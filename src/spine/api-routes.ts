@@ -8,6 +8,7 @@ import { validateEmailPayload } from './email-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
 import { insertEvent, drainEvents, countPendingByType, countEventsSince } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
+import { countProposalsSince } from '../db/proposal-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
 import { listTrustRowsForAgent, promoteTrust, getTrustRow } from '../db/trust-queries.js';
 import type { Routed } from './router.js';
@@ -322,6 +323,7 @@ async function readObject(req: http.IncomingMessage, fields: string[]): Promise<
  * untouched for any other path so the existing api.ts chain continues.
  */
 export function createSpineRouter(deps: SpineRouterDeps) {
+  const known: ReadonlySet<string> = new Set(deps.agentKeys.values());
   return async function handleSpineRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
     const url = req.url ?? '';
     if (!url.startsWith('/spine/')) return false;
@@ -341,7 +343,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
     const agent = agentForBearer(deps.agentKeys, req.headers.authorization);
     if (!agent) { json(res, 401, { error: 'Unauthorized' }); return true; }
     const policy = deps.agentPolicy?.get(agent) ?? null;
-    const known = new Set(deps.agentKeys.values());
+    const hourAgo = () => new Date(Date.parse(deps.now()) - 3_600_000).toISOString();
 
     try {
       if (req.method === 'GET' && pathname === '/spine/policy/self') {
@@ -364,6 +366,11 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const bad = validateProposal(parsed.body)
           ?? validateBrandAndHand(deps.brandsDir, parsed.body.brand_id as string, (parsed.body.action_payload as { hand: string }).hand);
         if (bad) { json(res, 400, { error: bad }); return true; }
+        const proposalCap = policy?.rate?.proposals_per_hour;
+        if (proposalCap && countProposalsSince(deps.db, agent, hourAgo()) >= proposalCap) {
+          json(res, 429, { error: `policy: ${agent} is over ${proposalCap} proposals per hour` });
+          return true;
+        }
         const input = { ...(parsed.body as unknown as ProposalInput), agent };
         json(res, 200, await deps.file(input));
         return true;
@@ -379,12 +386,12 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         }
         const bad = validateEvent(parsed.body);
         if (bad) { json(res, 400, { error: bad }); return true; }
-        if (policy?.rate) {
-          const since = new Date(Date.parse(deps.now()) - 3_600_000).toISOString();
+        const eventCap = policy?.rate?.events_per_hour;
+        if (policy && eventCap) {
           const rule = policy.events.source_hand;
-          const n = countEventsSince(deps.db, since, rule === 'self' ? { exact: agent } : { prefix: rule.slice(0, -1) });
-          if (n >= policy.rate.events_per_hour) {
-            json(res, 429, { error: `policy: ${agent} is over ${policy.rate.events_per_hour} events per hour` });
+          const n = countEventsSince(deps.db, hourAgo(), rule === 'self' ? { exact: agent } : { prefix: rule.slice(0, -1) });
+          if (n >= eventCap) {
+            json(res, 429, { error: `policy: ${agent} is over ${eventCap} events per hour` });
             return true;
           }
         }
@@ -432,6 +439,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
       }
 
       if (req.method === 'POST' && pathname === '/spine/runs') {
+        if (policy && !policy.runs) return refuse(res, agent, 'post', 'runs');
         const parsed = await readObject(req, RUN_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
         const bad = validateRun(parsed.body);

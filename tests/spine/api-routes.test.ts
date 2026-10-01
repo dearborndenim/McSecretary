@@ -8,6 +8,8 @@ import { getFinalOutcomes } from '../../src/db/outcome-queries.js';
 import { getRun } from '../../src/db/run-index-queries.js';
 import { insertEvent } from '../../src/db/event-queries.js';
 import { getTrustRow } from '../../src/db/trust-queries.js';
+import { insertProposal } from '../../src/db/proposal-queries.js';
+import type { ProposalInput } from '../../src/spine/types.js';
 import { parseAgentPolicy } from '../../src/spine/agent-policy.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
@@ -724,18 +726,18 @@ describe('agent policy', () => {
   const BOTS = 'b'.repeat(24);
   const INBOX = 'i'.repeat(24);
   const TASK = 'q'.repeat(24);
-  // Spec §7 verbatim, except events_per_hour: 3 so the cap is testable.
+  // Spec §7 verbatim, except events_per_hour: 3 and proposals_per_hour: 2 so the caps are testable.
   const POLICY_JSON = `{
   "grok-bots":  { "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_signal", "grok_report", "grok_cs_case"] },
                   "events":  { "post_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "source_hand": "grok-*", "drain_types": ["grok_task_*"] },
-                  "hands_proxy": false, "outcomes": false, "rate": { "events_per_hour": 3 } },
+                  "hands_proxy": false, "outcomes": false, "rate": { "events_per_hour": 3, "proposals_per_hour": 2 } },
   "grok-inbox": { "events": { "drain_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "post_types": [] },
                   "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_cs_case", "grok_result", "grok_drafts_waiting", "grok_inbox_rejects"] }, "hands_proxy": false },
   "grok-task":  { "events": { "post_types": ["grok_task_*"], "source_hand": "self", "drain_types": [] }, "propose": null, "hands_proxy": false }
 }`;
-  const note = (action_type: string, hand = 'notes') => ({
+  const note = (action_type: string, hand = 'notes', title = 't') => ({
     brand_id: 'dearborn-denim', action_type,
-    action_payload: { hand, method: 'POST', path: hand === 'notes' ? '/note' : '/send', body: { title: 't', summary: 's' } },
+    action_payload: { hand, method: 'POST', path: hand === 'notes' ? '/note' : '/send', body: { title, summary: 's' } },
     reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
   });
   const ev = (event_type: string, source_hand: string) => ({ source_hand, brand_id: 'dearborn-denim', event_type, payload: {}, urgent: false });
@@ -753,7 +755,8 @@ describe('agent policy', () => {
     handle = createSpineRouter({
       db, now: () => NOW, agentKeys, agentPolicy: policy,
       brandsDir: path.join(process.cwd(), 'config', 'brands'),
-      file: async (input) => { filed.push(input as unknown as { agent: string }); return { id: 1, routed: 'card' }; },
+      // Inserts like the real router so the proposal cap has rows to count.
+      file: async (input) => { insertProposal(db, input, NOW); filed.push(input as unknown as { agent: string }); return { id: 1, routed: 'card' }; },
       handFetch: handFetch as unknown as SpineRouterDeps['handFetch'], env: {},
     });
   });
@@ -822,6 +825,21 @@ describe('agent policy', () => {
     expect(await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-d')))
       .toEqual({ status: 429, body: { error: 'policy: grok-bots is over 3 events per hour' } });
     expect(eventCount()).toBe(4);
+  });
+
+  it('caps grok-bots at proposals_per_hour, ignoring older proposals', async () => {
+    insertProposal(db, { ...note('grok_lead', 'notes', 'old'), agent: 'grok-bots' } as ProposalInput, '2026-09-07T10:00:00.000Z');
+    for (const title of ['a', 'b']) {
+      expect((await call('POST', '/spine/proposals', BOTS, note('grok_lead', 'notes', title))).status, title).toBe(200);
+    }
+    expect(await call('POST', '/spine/proposals', BOTS, note('grok_lead', 'notes', 'c')))
+      .toEqual({ status: 429, body: { error: 'policy: grok-bots is over 2 proposals per hour' } });
+    expect(filed).toHaveLength(2);
+  });
+
+  it('grok-bots may not post runs', async () => {
+    expect(await call('POST', '/spine/runs', BOTS, {}))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not post runs' } });
   });
 
   it('grok-inbox may drain bot reports and file notes cards but may not post events', async () => {
