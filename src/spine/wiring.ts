@@ -11,6 +11,7 @@ import {
 import { createSpineRouter } from './api-routes.js';
 import { parsePromoteCommand, runPromoteCommand } from './promote-command.js';
 import type { ProposalInput } from './types.js';
+import type { AgentPolicy } from './agent-policy.js';
 
 export interface SpineBuildDeps {
   db: Database.Database;
@@ -20,6 +21,8 @@ export interface SpineBuildDeps {
   env: Record<string, string | undefined>;
   brandsDir: string;
   agentKeys: Map<string, string>;
+  /** Per-agent restrictions (AGENT_POLICY); absent = every agent unrestricted. */
+  agentPolicy?: AgentPolicy;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
   /** Abort a hand call after this long so a hung hand can't wedge a callback. Default 20 s. */
   handTimeoutMs?: number;
@@ -96,6 +99,7 @@ export function buildSpine(d: SpineBuildDeps) {
 
   const handleHttp = createSpineRouter({
     db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file, handFetch: fetchWithTimeout, env: d.env,
+    agentPolicy: d.agentPolicy,
   });
 
   return { file, onCallback, onText, handleHttp, execute, handFetch: fetchWithTimeout, loadBrand };
