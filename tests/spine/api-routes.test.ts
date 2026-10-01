@@ -817,14 +817,27 @@ describe('agent policy', () => {
     }
   });
 
-  it('caps grok-bots at events_per_hour across every grok- source, ignoring older events', async () => {
-    insertEvent(db, ev('grok_daily', 'grok-old'), '2026-09-07T10:00:00.000Z');
+  it('caps grok-bots at events_per_hour by the posting key, ignoring older events and other keys', async () => {
+    insertEvent(db, ev('grok_daily', 'grok-old'), '2026-09-07T10:00:00.000Z', 'grok-bots');
+    // grok-task's own posts are named grok-… but must not use up the bots' budget.
+    for (let i = 0; i < 3; i++) {
+      expect((await call('POST', '/spine/events', TASK, ev('grok_task_gina', 'grok-task'))).status).toBe(200);
+    }
     for (const bot of ['grok-a', 'grok-b', 'grok-c']) {
       expect((await call('POST', '/spine/events', BOTS, ev('grok_daily', bot))).status, bot).toBe(200);
     }
     expect(await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-d')))
       .toEqual({ status: 429, body: { error: 'policy: grok-bots is over 3 events per hour' } });
-    expect(eventCount()).toBe(4);
+    expect(eventCount()).toBe(7);
+  });
+
+  it('stores the authenticated agent as posted_by whatever source_hand says', async () => {
+    await call('POST', '/spine/events', BOTS, ev('grok_daily', 'grok-gina'));
+    await call('POST', '/spine/events', KEY, ev('po_received', 'grok-gina'));
+    expect(db.prepare('SELECT source_hand, posted_by FROM spine_events ORDER BY id').all()).toEqual([
+      { source_hand: 'grok-gina', posted_by: 'grok-bots' },
+      { source_hand: 'grok-gina', posted_by: 'marketing-manager' },
+    ]);
   });
 
   it('caps grok-bots at proposals_per_hour, ignoring older proposals', async () => {

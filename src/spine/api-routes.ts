@@ -214,11 +214,11 @@ function isAdminBearer(env: Record<string, string | undefined>, auth: string | u
  */
 function handleBrandsRoute(req: http.IncomingMessage, res: http.ServerResponse, deps: SpineRouterDeps, pathname: string): true {
   const auth = req.headers.authorization;
-  if (!agentForBearer(deps.agentKeys, auth) && !isAdminBearer(deps.env, auth)) {
+  const agent = agentForBearer(deps.agentKeys, auth);
+  if (!agent && !isAdminBearer(deps.env, auth)) {
     json(res, 401, { error: 'Unauthorized' });
     return true;
   }
-  const agent = agentForBearer(deps.agentKeys, auth);
   const policy = agent ? deps.agentPolicy?.get(agent) : undefined;
   if (agent && policy && !policy.brands) return refuse(res, agent, 'read', 'brands');
   try {
@@ -387,15 +387,11 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const bad = validateEvent(parsed.body);
         if (bad) { json(res, 400, { error: bad }); return true; }
         const eventCap = policy?.rate?.events_per_hour;
-        if (policy && eventCap) {
-          const rule = policy.events.source_hand;
-          const n = countEventsSince(deps.db, hourAgo(), rule === 'self' ? { exact: agent } : { prefix: rule.slice(0, -1) });
-          if (n >= eventCap) {
-            json(res, 429, { error: `policy: ${agent} is over ${eventCap} events per hour` });
-            return true;
-          }
+        if (eventCap && countEventsSince(deps.db, agent, hourAgo()) >= eventCap) {
+          json(res, 429, { error: `policy: ${agent} is over ${eventCap} events per hour` });
+          return true;
         }
-        const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now());
+        const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now(), agent);
         json(res, 200, { id });
         return true;
       }
