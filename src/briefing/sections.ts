@@ -13,6 +13,7 @@
 export const VALID_BRIEFING_SECTIONS = [
   'overnight_dev',   // NIGHTLY_PLAN.md summary from GitHub
   'agent_actions',   // Business-agent spine: executed / failed / pending (admin-only source)
+  'grok_bots',       // Grok bots digest from the Mac mini inbox (admin-only source)
   'production',      // Factory production from piece-work-scanner
   'admin_ops',       // Inventory + uninvoiced + WIP (admin-only source)
   'calendar',        // Today's schedule + conflicts + free time
@@ -33,6 +34,7 @@ export type BriefingSectionName = (typeof VALID_BRIEFING_SECTIONS)[number];
 export const BRIEFING_SECTION_DESCRIPTIONS: Record<BriefingSectionName, string> = {
   overnight_dev: 'Overnight AI agent empire build report from NIGHTLY_PLAN.md.',
   agent_actions: 'What the business agents executed, what failed, what awaits you (admin only).',
+  grok_bots:     'What Robert\'s Grok bots reported: dailies, commitments, what needs you, who went quiet (admin only).',
   production:    'Factory production numbers and trends from piece-work-scanner.',
   admin_ops:     'Inventory on hand, uninvoiced PO totals, and WIP (admin only).',
   calendar:      "Today's schedule, conflicts, and free time blocks.",

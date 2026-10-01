@@ -461,10 +461,10 @@ describe('agent_actions section registration and gating', () => {
     expect(isValidBriefingSection('agent_actions')).toBe(true);
     expect(VALID_BRIEFING_SECTIONS).toContain('agent_actions');
     expect(BRIEFING_SECTION_DESCRIPTIONS.agent_actions.length).toBeGreaterThan(0);
-    // Placed right after overnight_dev, before production.
+    // Placed right after overnight_dev, before grok_bots.
     const idx = VALID_BRIEFING_SECTIONS.indexOf('agent_actions');
     expect(VALID_BRIEFING_SECTIONS[idx - 1]).toBe('overnight_dev');
-    expect(VALID_BRIEFING_SECTIONS[idx + 1]).toBe('production');
+    expect(VALID_BRIEFING_SECTIONS[idx + 1]).toBe('grok_bots');
   });
 
   it('renders in the prompt when supplied and is absent when it is not (member briefing)', () => {
@@ -510,6 +510,6 @@ describe('agent_actions section registration and gating', () => {
     expect(loaderCall).toBeGreaterThan(adminGate);
     expect(loaderCall).toBeLessThan(adminOpsAssign);
     // ...and it follows the section filter in generateBriefing's arguments (cash comes after it).
-    expect(source).toContain('sectionsOrdered, agentActionsSection, cashSection)');
+    expect(source).toContain('sectionsOrdered, agentActionsSection, cashSection, grokBotsSection)');
   });
 });

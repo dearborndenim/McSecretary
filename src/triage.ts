@@ -339,6 +339,7 @@ export async function runTriage(
     let pendingDevRequests: string | undefined;
     let adminOps: { inventory?: string; uninvoiced?: string; wip?: string } | undefined;
     let agentActionsSection: string | undefined;
+    let grokBotsSection: string | undefined;
     try {
       const user = getUserById(db, userId);
       if (user?.role === 'admin') {
@@ -367,6 +368,24 @@ export async function runTriage(
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.log(`Skipping agent actions section: ${msg}`);
+        }
+
+        // Admin-only: the newest digest of what Robert's Grok bots reported
+        // (posted by the Mac mini inbox). Loader and formatter return null when
+        // there is no Grok activity; digests are then drained so they never
+        // trip the stale-event warning (the loader ignores drained_at). Skipped
+        // when the stored section list leaves grok_bots out, like cash.
+        const wantsGrokBots = !options?.sections?.length || options.sections.includes('grok_bots');
+        if (wantsGrokBots) {
+          try {
+            const { loadGrokBotsData, formatGrokBotsSection, consumeGrokDigests } = await import('./briefing/grok-bots.js');
+            const nowIso = now.toISOString();
+            grokBotsSection = formatGrokBotsSection(loadGrokBotsData(db, nowIso), nowIso) ?? undefined;
+            consumeGrokDigests(db, nowIso);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`Skipping Grok bots section: ${msg}`);
+          }
         }
 
         // Admin-only operations snapshot: inventory, uninvoiced PO totals, WIP.
@@ -448,7 +467,7 @@ export async function runTriage(
       totalProcessed,
       archived: totalArchived,
       flaggedForReview: totalFlagged,
-    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered, agentActionsSection, cashSection);
+    }, calendarData, overnightDevSummary, productionSection, userContext, pendingDevRequests, adminOps, sectionsOrdered, agentActionsSection, cashSection, grokBotsSection);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
