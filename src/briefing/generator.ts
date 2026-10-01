@@ -58,6 +58,7 @@ const DEFAULT_BRIEFING_SECTION_ORDER: readonly string[] = [
   'cash',
   'overnight_dev',
   'agent_actions',
+  'grok_bots',
   'production',
   'admin_ops',
   'calendar',
@@ -118,6 +119,7 @@ export function buildBriefingPrompt(
   sections?: BriefingSectionFilter,
   agentActions?: string,
   cash?: string,
+  grokBots?: string,
 ): string {
   const critical = emails.filter((e) => e.urgency === 'critical');
   const high = emails.filter((e) => e.urgency === 'high');
@@ -190,6 +192,15 @@ ${agentActions}
 `;
   }
 
+  // Pre-rendered by src/briefing/grok-bots.ts (admin only; null -> undefined
+  // when there is no Grok activity), so an empty string means "render nothing".
+  let grokBotsSection = '';
+  if (grokBots && sectionEnabled(sections, 'grok_bots')) {
+    grokBotsSection = `
+${grokBots}
+`;
+  }
+
   // Pre-rendered by src/briefing/cash.ts (null -> undefined when the hand or
   // cash-forecast is unavailable), so an empty string means "render nothing".
   let cashSection = '';
@@ -257,6 +268,7 @@ ${formatEmails(low)}`
     cash: cashSection,
     overnight_dev: overnightSection,
     agent_actions: agentActionsSection,
+    grok_bots: grokBotsSection,
     production: productionSection,
     admin_ops: adminOpsSection,
     calendar: calendarSection,
@@ -291,13 +303,14 @@ export async function generateBriefing(
   sections?: BriefingSectionFilter,
   agentActions?: string,
   cash?: string,
+  grokBots?: string,
 ): Promise<string> {
   if (!anthropicClient) {
     const { config } = await import('../config.js');
     anthropicClient = new Anthropic({ apiKey: config.anthropic.apiKey });
   }
   const client = anthropicClient;
-  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps, sections, agentActions, cash);
+  const prompt = buildBriefingPrompt(emails, stats, calendar, overnightDevSummary, productionSummary, userContext, pendingDevRequests, adminOps, sections, agentActions, cash, grokBots);
   const systemPrompt = getBriefingSystemPrompt(userContext);
 
   const response = await client.messages.create({
