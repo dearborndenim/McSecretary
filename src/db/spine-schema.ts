@@ -50,7 +50,8 @@ export function initializeSpineSchema(db: Database.Database): void {
       urgent INTEGER NOT NULL DEFAULT 0,
       received_at TEXT NOT NULL DEFAULT (datetime('now')),
       drained_by TEXT,
-      drained_at TEXT
+      drained_at TEXT,
+      posted_by TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_spine_events_drain ON spine_events(drained_at, event_type);
 
@@ -137,6 +138,13 @@ export function initializeSpineSchema(db: Database.Database): void {
   // Additive migration: proposals.run_id (Stage 0B provenance link). PRAGMA-gated like user-schema.ts.
   const cols = (db.prepare('PRAGMA table_info(proposals)').all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes('run_id')) db.exec('ALTER TABLE proposals ADD COLUMN run_id TEXT');
+
+  // Additive migration: spine_events.posted_by — the agent whose bearer posted
+  // the event over HTTP (null for in-process events). The AGENT_POLICY hourly
+  // cap counts by it, never by the client-supplied source_hand.
+  const eventCols = (db.prepare('PRAGMA table_info(spine_events)').all() as { name: string }[]).map((c) => c.name);
+  if (!eventCols.includes('posted_by')) db.exec('ALTER TABLE spine_events ADD COLUMN posted_by TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_spine_events_posted ON spine_events(posted_by, received_at)');
 
   // Additive migration: rfq_messages.ack_message_id / acknowledged_at (RFQ reply
   // acknowledgement, spec change 2). ack_message_id holds the *inbound* vendor

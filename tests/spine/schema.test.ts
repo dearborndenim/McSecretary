@@ -38,6 +38,24 @@ describe('spine schema', () => {
     }
   });
 
+  it('adds spine_events.posted_by to an existing table without touching its rows', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE spine_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, source_hand TEXT NOT NULL, brand_id TEXT NOT NULL,
+      event_type TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', urgent INTEGER NOT NULL DEFAULT 0,
+      received_at TEXT NOT NULL DEFAULT (datetime('now')), drained_by TEXT, drained_at TEXT
+    )`);
+    db.prepare("INSERT INTO spine_events (source_hand, brand_id, event_type, payload, urgent, received_at) VALUES ('h', 'dearborn-denim', 'po_received', '{\"po\":9}', 1, '2026-09-07T12:00:00.000Z')").run();
+    const before = db.prepare('SELECT * FROM spine_events').all();
+    initializeSchema(db);
+    const after = db.prepare('SELECT * FROM spine_events').all();
+    expect(after).toEqual([{ ...(before[0] as object), posted_by: null }]);
+    initializeSchema(db);
+    expect(db.prepare('SELECT * FROM spine_events').all()).toEqual(after);
+    const cols = (db.prepare('PRAGMA table_info(spine_events)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols.filter((c) => c === 'posted_by')).toHaveLength(1);
+  });
+
   it('is idempotent', () => {
     const db = new Database(':memory:');
     initializeSchema(db);

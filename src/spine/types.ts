@@ -75,6 +75,8 @@ export interface SpineEventRow {
   received_at: string;
   drained_by: string | null;
   drained_at: string | null;
+  /** Agent whose bearer posted it over HTTP; null for in-process events. */
+  posted_by: string | null;
 }
 
 export interface TrustRow {
