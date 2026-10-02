@@ -52,12 +52,17 @@ describe('brand config', () => {
     expect(k.silent_budget_usd).toBe(0);
     expect(forwardBrandKey(k, 'design-module')).toBe('brand');
     expect(forwardBrandKey(k, 'product-dev')).toBe('brand');
-    // Per-brand services that do not exist yet: their own env names, unset on purpose.
-    expect(k.hands['ad-manager']).toEqual({ url_env: 'AD_MANAGER_KNITS_URL', key_env: 'AD_MANAGER_KNITS_KEY' });
-    expect(k.hands['content-engine']).toEqual({ url_env: 'CONTENT_ENGINE_KNITS_URL', key_env: 'CONTENT_ENGINE_KNITS_KEY' });
-    expect(() => resolveHand(k, 'ad-manager', { AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'k' })).toThrow(/AD_MANAGER_KNITS_URL/);
-    // Factory hands share Dearborn's services and env names exactly.
+    // Parked until Robert launches it (decision 61).
+    expect(k.active).toBe(false);
+    // ad-manager and content-engine are shared, brand-keyed deployments (decision 48): Dearborn's
+    // env names, with the brand id stamped on every call.
     const dd = loadBrandConfig(DIR, 'dearborn-denim');
+    for (const h of ['ad-manager', 'content-engine']) {
+      expect(k.hands[h], h).toEqual({ ...dd.hands[h], forward_brand: 'brand' });
+      expect(forwardBrandKey(dd, h), h).toBeUndefined();
+    }
+    expect(resolveHand(k, 'ad-manager', { AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'k' })).toEqual({ url: 'https://am.example', bearer: 'k' });
+    // Factory hands share Dearborn's services and env names exactly.
     for (const h of ['product-dev', 'design-module', 'piece-work-scanner', 'purchase-order-receiver', 'kanban-purchaser', 'quickbooks-sync']) {
       expect(k.hands[h], h).toEqual(dd.hands[h]);
     }

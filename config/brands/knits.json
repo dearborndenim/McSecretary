@@ -2,21 +2,28 @@
   "_generated_from": "brands/knits/brand.json",
   "brand_id": "knits",
   "display_name": "Ballow",
-  "active": true,
+  "active": false,
   "inbox_user_id": "robert-mcmillan",
   "shopify_store": "a5n0dr-bt.myshopify.com",
+  "primary_domain": "ballow.us",
+  "location_id": "gid://shopify/Location/75414765653",
+  "currency": "USD",
+  "timezone": "America/Chicago",
+  "quickbooks_class": "Ballow",
   "meta_ad_account": "",
   "silent_budget_usd": 0,
   "exploration_share": 0.2,
   "proposal_expiry_hours": 48,
   "hands": {
     "ad-manager": {
-      "url_env": "AD_MANAGER_KNITS_URL",
-      "key_env": "AD_MANAGER_KNITS_KEY"
+      "url_env": "AD_MANAGER_URL",
+      "key_env": "AD_MANAGER_KEY",
+      "forward_brand": "brand"
     },
     "content-engine": {
-      "url_env": "CONTENT_ENGINE_KNITS_URL",
-      "key_env": "CONTENT_ENGINE_KNITS_KEY"
+      "url_env": "CONTENT_ENGINE_URL",
+      "key_env": "CONTENT_ENGINE_KEY",
+      "forward_brand": "brand"
     },
     "product-dev": {
       "url_env": "PRODUCT_DEV_URL",
