@@ -1,7 +1,7 @@
 {
   "build": { "builder": "NIXPACKS" },
   "deploy": {
-    "startCommand": "npx tsx src/index.ts",
+    "startCommand": "node --import tsx src/index.ts",
     "restartPolicyType": "ON_FAILURE"
   },
   "volumes": [
