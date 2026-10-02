@@ -203,19 +203,12 @@ describe('GET /spine/hands/:hand/*', () => {
       expect(upstreamUrl()).toBe('https://dm.example/api/config/personas?brand=knits');
     });
 
-    it('knits ad-manager (env deliberately unset) answers 404 without calling out or throwing', async () => {
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      try {
-        // Dearborn's own AD_MANAGER_URL being set must not leak across to knits.
-        const h = build({ ...DM_ENV, AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'ak' });
-        const { res, out } = fakeRes();
-        await h(fakeReq('GET', '/spine/hands/ad-manager/api/integration/matured-week?brand=knits', `Bearer ${KEY}`), res);
-        expect(out.status).toBe(404);
-        expect(JSON.parse(out.body)).toEqual({ error: 'Unknown brand or hand' });
-        expect(fetchMock).not.toHaveBeenCalled();
-      } finally {
-        spy.mockRestore();
-      }
+    it('knits reads the shared ad-manager with brand=knits stamped over the caller\'s value', async () => {
+      const h = build({ ...DM_ENV, AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'ak' });
+      const { res, out } = fakeRes();
+      await h(fakeReq('GET', '/spine/hands/ad-manager/api/integration/matured-week?brand=knits&weeks=2', `Bearer ${KEY}`), res);
+      expect(out.status).toBe(200);
+      expect(upstreamUrl()).toBe('https://am.example/api/integration/matured-week?weeks=2&brand=knits');
     });
 
     describe('with a brand whose hand forwards under brandSlug', () => {
