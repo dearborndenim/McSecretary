@@ -1831,15 +1831,17 @@ async function main() {
   });
 
   const shutdown = createShutdown({
-    stopBot: async () => {
-      stopAllJobs();
-      await bot.stop();
-    },
-    stopServer: () =>
-      new Promise<void>((resolve) => {
-        apiServer.close(() => resolve());
-        db.close();
+    // close() stops accepting and drops idle keep-alive sockets; in-flight
+    // requests finish (bounded by the shutdown timeout).
+    closeServer: () =>
+      new Promise<void>((resolve, reject) => {
+        apiServer.close((err) => (err ? reject(err) : resolve()));
       }),
+    stopBot: () => bot.stop(),
+    stopCron: () => stopAllJobs(),
+    closeDb: () => {
+      db.close();
+    },
     exit: (code) => process.exit(code),
     setTimer: (callback, ms) => setTimeout(callback, ms),
   });
