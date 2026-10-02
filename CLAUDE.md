@@ -54,7 +54,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `src/index.ts` — main entry, Telegram routing, scheduler
 
 ## Commands
-- `npx tsx src/index.ts` — run the service (Telegram bot + scheduler)
+- `node --import tsx src/index.ts` — run the service (Telegram bot + scheduler); same as `npm start` and Railway's `startCommand`. Node is the container's main process so Railway's SIGTERM reaches `createShutdown` (`src/shutdown.ts`); never put `npx`/`npm` back in front of it: npm died on the signal and Railway reported every replaced deployment as failed
 - `npx vitest run` — run tests once (5 tests in `tests/briefing/briefing-ux-polish-4.test.ts` fail on any run: their audit fixtures are stamped 2026-04-25, outside the 90-day window)
 - `npm run typecheck` — `tsc --noEmit` over `src/`
 - `npx tsx src/admin.ts add-user --name X --email Y --role member` — create user + invite
