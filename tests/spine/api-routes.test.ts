@@ -462,20 +462,20 @@ describe('spine routes', () => {
       const out = await get(handle, '/spine/brands', `Bearer ${KEY}`);
       expect(JSON.parse(out.body)).toEqual({ brands: [
         { brand_id: 'dearborn-denim', active: true },
-        { brand_id: 'knits', active: true },
+        { brand_id: 'knits', active: false },
       ] });
     });
 
     it('serves only identity and settings, never hands, env names or trust settings', async () => {
-      for (const [slug, name, store] of [
-        ['dearborn-denim', 'Dearborn Denim', 'dearborn-denim-apparel.myshopify.com'],
-        ['knits', 'Ballow', 'a5n0dr-bt.myshopify.com'],
-      ]) {
+      for (const [slug, name, store, active] of [
+        ['dearborn-denim', 'Dearborn Denim', 'dearborn-denim-apparel.myshopify.com', true],
+        ['knits', 'Ballow', 'a5n0dr-bt.myshopify.com', false],
+      ] as const) {
         const out = await get(handle, `/spine/brands/${slug}`, `Bearer ${KEY}`);
         expect(out.status).toBe(200);
         const b = JSON.parse(out.body) as Record<string, unknown>;
         expect(Object.keys(b).sort()).toEqual(PUBLIC_KEYS);
-        expect(b).toMatchObject({ brand_id: slug, display_name: name, shopify_store: store, active: true });
+        expect(b).toMatchObject({ brand_id: slug, display_name: name, shopify_store: store, active });
         expect(out.body).not.toMatch(/_env|_URL|_KEY|hands|inbox_user_id|silent_budget/);
       }
     });
