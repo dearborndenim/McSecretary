@@ -1,9 +1,8 @@
 import type Database from 'better-sqlite3';
-import { expireProposals } from '../db/proposal-queries.js';
 import { listStaleEvents } from '../db/event-queries.js';
 import { listFailedRunsSince } from '../db/run-index-queries.js';
 import { trustSummarySince } from '../db/trust-queries.js';
-import { emitDecisionEvent } from './executor.js';
+import { expireAndNotify } from './decision-events.js';
 
 const LIST_CAP = 10;
 
@@ -13,8 +12,7 @@ const LIST_CAP = 10;
  * Returns null when there is nothing to report (no message is sent).
  */
 export function runExpirySweep(db: Database.Database, nowIso: string): string | null {
-  const expired = expireProposals(db, nowIso);
-  for (const p of expired) emitDecisionEvent(db, p, 'expired', null, nowIso);
+  const expired = expireAndNotify(db, nowIso);
   const stale = listStaleEvents(db, 7, nowIso);
   const since = new Date(new Date(nowIso).getTime() - 86_400_000).toISOString();
   const failed = listFailedRunsSince(db, since);

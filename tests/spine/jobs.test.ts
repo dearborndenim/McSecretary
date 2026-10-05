@@ -37,12 +37,12 @@ describe('spine jobs', () => {
     expect(report).toContain('  …and 2 more');
   });
 
-  it('expiry sweep tells the filer once per expired non-notes proposal', () => {
+  it('expiry sweep tells the filer once per expired opted-in proposal, notes included', () => {
     const file = (action_type: string, hand: string, body: Record<string, unknown>, expires_at: string) =>
       insertProposal(db, { agent: 'kanban-purchaser', brand_id: 'b', action_type, action_payload: { hand, method: 'POST', path: '/x', body }, reason: 'r', evidence: { decision_events: true }, cost_usd: 0, reversible: false, level_required: 1, expires_at }, '2026-09-06T00:00:00.000Z').id;
     const a = file('po_draft', 'kanban-purchaser', { id: 1, fingerprint: 'f1' }, '2026-09-08T00:00:00.000Z');
     const b = file('po_draft_over_threshold', 'kanban-purchaser', { id: 2, fingerprint: 'f2' }, '2026-09-08T00:00:00.000Z');
-    file('purchasing_alert', 'notes', { title: 't', summary: 's' }, '2026-09-08T00:00:00.000Z');
+    const n = file('purchasing_alert', 'notes', { title: 't', summary: 's' }, '2026-09-08T00:00:00.000Z');
     file('po_draft', 'kanban-purchaser', { id: 3 }, '2026-09-10T00:00:00.000Z'); // not yet expired
     runExpirySweep(db, NOW);
     runExpirySweep(db, NOW); // nothing new expires, nothing new emitted
@@ -50,9 +50,11 @@ describe('spine jobs', () => {
     expect(rows.map((r) => [r.event_type, r.source_hand, r.urgent, r.received_at])).toEqual([
       ['po_draft_expired', 'spine', 0, NOW],
       ['po_draft_over_threshold_expired', 'spine', 0, NOW],
+      ['purchasing_alert_expired', 'spine', 0, NOW],
     ]);
     expect(JSON.parse(rows[0]!.payload)).toEqual({ proposal_id: a, agent: 'kanban-purchaser', action_type: 'po_draft', hand: 'kanban-purchaser', path: '/x', decided_by: null, id: 1, fingerprint: 'f1' });
     expect(JSON.parse(rows[1]!.payload)).toMatchObject({ proposal_id: b, decided_by: null, id: 2 });
+    expect(JSON.parse(rows[2]!.payload)).toMatchObject({ proposal_id: n, hand: 'notes', title: 't' });
   });
 
   it('expiry sweep emits nothing for a proposal that did not opt in', () => {

@@ -4,6 +4,7 @@ import { insertEvent } from '../db/event-queries.js';
 import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
+import { copyScalarKeys, isPlainObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -150,77 +151,6 @@ const FIXED_EVENT_KEYS = new Set(['proposal_id', 'agent', 'action_type', 'hand',
 
 /** Identifier fields event-driven skills read at the payload top level, used as a body-fallback when the hand's response omits them. */
 const BODY_FALLBACK_KEYS = ['slug', 'revision', 'id', 'techpack_id'] as const;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-/** Copy every top-level string, number or boolean key of `source` onto `target`, skipping `fixed` keys. */
-function copyScalarKeys(source: unknown, target: Record<string, unknown>, fixed: ReadonlySet<string>): void {
-  if (!isPlainObject(source)) return;
-  for (const [key, value] of Object.entries(source)) {
-    if (fixed.has(key)) continue;
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      target[key] = value;
-    }
-  }
-}
-
-/** Fixed top-level keys on a `*_rejected` / `*_expired` event payload that flattening must never overwrite. */
-const DECISION_EVENT_FIXED_KEYS = new Set(['proposal_id', 'agent', 'action_type', 'hand', 'path', 'decided_by']);
-
-/** True only when the proposal's evidence JSON carries `decision_events: true` (boolean). */
-function wantsDecisionEvents(evidence: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(evidence);
-    return isPlainObject(parsed) && parsed.decision_events === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Best-effort: tell the filer its card was rejected or expired unanswered, by inserting
- * `<action_type>_rejected` / `<action_type>_expired` (not urgent). Opt-in: emitted only when
- * the proposal's `evidence.decision_events` is exactly `true`, and a filer that sets it must
- * drain those event types (otherwise they go stale in the 5 AM health report). Call it only
- * after the status change actually landed. Never emitted for a `notes` proposal. Payload: proposal_id,
- * agent, action_type, hand, path, decided_by (null on expiry), plus the top-level scalar keys
- * of `action_payload.body` (the filer's own identifiers) that do not collide with those.
- * An unparseable payload or a DB error is logged and swallowed — it must never fail the
- * rejection or the expiry sweep.
- */
-export function emitDecisionEvent(
-  db: Database.Database,
-  row: ProposalRow,
-  outcome: 'rejected' | 'expired',
-  decidedBy: string | null,
-  nowIso: string,
-): void {
-  try {
-    const payload: unknown = JSON.parse(row.action_payload);
-    if (!isPlainObject(payload)) throw new Error('action_payload is not an object');
-    if (payload.hand === 'notes' || !wantsDecisionEvents(row.evidence)) return;
-    const eventPayload: Record<string, unknown> = {
-      proposal_id: row.id,
-      agent: row.agent,
-      action_type: row.action_type,
-      hand: payload.hand ?? null,
-      path: payload.path ?? null,
-      decided_by: decidedBy,
-    };
-    copyScalarKeys(payload.body, eventPayload, DECISION_EVENT_FIXED_KEYS);
-    insertEvent(db, {
-      source_hand: 'spine',
-      brand_id: row.brand_id,
-      event_type: `${row.action_type}_${outcome}`,
-      payload: eventPayload,
-      urgent: false,
-    }, nowIso);
-  } catch (err) {
-    console.error(`spine: ${outcome}-event emit failed`, row.id, err);
-  }
-}
 
 /**
  * Best-effort: after a proposal executes successfully, insert `<action_type>_executed`

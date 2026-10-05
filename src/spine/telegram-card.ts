@@ -7,7 +7,9 @@ import {
 import { recordTrustDecision } from '../db/trust-queries.js';
 import { parseEdit, applyEdit } from './edits.js';
 import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
-import { extractNotify, emitDecisionEvent, type ExecutionResult } from './executor.js';
+import { extractNotify, type ExecutionResult } from './executor.js';
+import { rejectProposal } from './decision-events.js';
+import { safeJsonObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface CardDeps {
@@ -119,16 +121,6 @@ function asFiniteNumber(v: unknown): number | null {
 
 function asPlainObject(v: unknown): Record<string, unknown> | null {
   return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-}
-
-/** Parse a stored JSON column defensively — malformed text or a non-object value both yield `{}`. */
-function safeJsonObject(json: string | null | undefined): Record<string, unknown> {
-  if (!json) return {};
-  try {
-    return asPlainObject(JSON.parse(json)) ?? {};
-  } catch {
-    return {};
-  }
 }
 
 /**
@@ -287,7 +279,9 @@ export function renderProposalCard(p: ProposalRow): string {
   const evidence: unknown = JSON.parse(p.evidence);
   const evLines = typeof evidence !== 'object' || evidence === null
     ? []
-    : Object.entries(evidence as Record<string, unknown>).slice(0, 3)
+    : Object.entries(evidence as Record<string, unknown>)
+      .filter(([k]) => k !== 'decision_events') // a spine switch, not evidence for Robert
+      .slice(0, 3)
       .map(([k, v]) => `  ${k}: ${cap(String(v), EVIDENCE_VALUE_CAP)}`);
   const lines = [
     `#${p.id} ${p.agent} · ${p.brand_id}`,
@@ -365,11 +359,10 @@ export async function handleProposalCallback(
     return approveAndExecute(db, p, 'approved', by, deps);
   }
   if (cb.action === 'reject') {
-    if (!decideProposal(db, p.id, 'rejected', by, deps.now())) {
+    if (!rejectProposal(db, p.id, by, deps.now())) {
       await safeReply(deps, `#${p.id} was already decided.`);
       return { ok: false, message: `#${p.id} was already decided` };
     }
-    emitDecisionEvent(db, p, 'rejected', by, deps.now());
     const t = recordTrustDecision(db, trustKey(p), 'rejected', deps.now());
     await safeReply(deps, `Rejected #${p.id}.${t.demoted ? ' Trust for this action reset to level 1.' : ''}`);
     return { ok: true, message: 'rejected' };

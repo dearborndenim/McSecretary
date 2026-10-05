@@ -162,12 +162,12 @@ describe('telegram card', () => {
     expect(d.executed).toEqual([]);
   });
 
-  it('reject: tells the filer once with the body identifiers; a second reject emits nothing', async () => {
+  it('reject: tells the filer once with the body identifiers (strings over 200 chars dropped); a second reject emits nothing', async () => {
     const po = insertProposal(db, {
       agent: 'kanban-purchaser', brand_id: 'dearborn-denim', action_type: 'po_draft',
       action_payload: {
         hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/pos/42/approve',
-        body: { id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5, agent: 'spoof', lines: [{ q: 1 }] },
+        body: { id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5, agent: 'spoof', lines: [{ q: 1 }], s200: 'a'.repeat(200), s201: 'b'.repeat(201) },
       },
       reason: 'PO 1001', evidence: { decision_events: true }, cost_usd: 180.5, reversible: false, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
     }, NOW).id;
@@ -182,7 +182,7 @@ describe('telegram card', () => {
     expect(JSON.parse(rows[0]!.payload as string)).toEqual({
       proposal_id: po, agent: 'kanban-purchaser', action_type: 'po_draft', hand: 'kanban-purchaser',
       path: '/api/integration/pos/42/approve', decided_by: 'robert',
-      id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5,
+      id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5, s200: 'a'.repeat(200),
     });
   });
 
@@ -192,7 +192,7 @@ describe('telegram card', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
   });
 
-  it('reject of a notes proposal emits no event', async () => {
+  it('reject of an opted-in notes proposal emits one event', async () => {
     const note = insertProposal(db, {
       agent: 'purchasing', brand_id: 'dearborn-denim', action_type: 'purchasing_alert',
       action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } },
@@ -201,7 +201,24 @@ describe('telegram card', () => {
     setTelegramRef(db, note, '555', 4);
     await handleProposalCallback(db, { action: 'reject', id: note }, '555', 'robert', deps(db));
     expect(getProposalById(db, note)!.status).toBe('rejected');
-    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT event_type FROM spine_events').all()).toEqual([{ event_type: 'purchasing_alert_rejected' }]);
+  });
+
+  it('a failed event insert never fails or rolls back the rejection', async () => {
+    db.prepare("UPDATE proposals SET evidence = '{\"decision_events\":true}' WHERE id = ?").run(id);
+    db.exec('DROP TABLE spine_events');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = await handleProposalCallback(db, { action: 'reject', id }, '555', 'robert', deps(db));
+    err.mockRestore();
+    expect(r).toEqual({ ok: true, message: 'rejected' });
+    expect(getProposalById(db, id)!.status).toBe('rejected');
+  });
+
+  it('the decision_events switch never takes an evidence line on the card', () => {
+    db.prepare('UPDATE proposals SET evidence = ? WHERE id = ?').run(JSON.stringify({ decision_events: true, a: 1, b: 2, c: 3 }), id);
+    const text = renderProposalCard(getProposalById(db, id)!);
+    expect(text).not.toContain('decision_events');
+    expect(text).toContain('  c: 3');
   });
 
   it('edit: flags the proposal and asks for key=value', async () => {
