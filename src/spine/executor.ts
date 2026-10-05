@@ -4,6 +4,7 @@ import { insertEvent } from '../db/event-queries.js';
 import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
+import { copyScalarKeys, isPlainObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -151,10 +152,6 @@ const FIXED_EVENT_KEYS = new Set(['proposal_id', 'agent', 'action_type', 'hand',
 /** Identifier fields event-driven skills read at the payload top level, used as a body-fallback when the hand's response omits them. */
 const BODY_FALLBACK_KEYS = ['slug', 'revision', 'id', 'techpack_id'] as const;
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
 /**
  * Best-effort: after a proposal executes successfully, insert `<action_type>_executed`
  * (plus `sourcing_options_executed` for `sourcing_option`) so a downstream agent's
@@ -192,14 +189,7 @@ function emitExecutedEvent(
     response,
   };
 
-  if (isPlainObject(truncated)) {
-    for (const [key, value] of Object.entries(truncated)) {
-      if (FIXED_EVENT_KEYS.has(key)) continue;
-      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        eventPayload[key] = value;
-      }
-    }
-  }
+  copyScalarKeys(truncated, eventPayload, FIXED_EVENT_KEYS);
 
   if (isPlainObject(payload.body)) {
     for (const key of BODY_FALLBACK_KEYS) {
