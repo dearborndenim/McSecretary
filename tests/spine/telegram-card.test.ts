@@ -169,7 +169,7 @@ describe('telegram card', () => {
         hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/pos/42/approve',
         body: { id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5, agent: 'spoof', lines: [{ q: 1 }] },
       },
-      reason: 'PO 1001', evidence: {}, cost_usd: 180.5, reversible: false, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+      reason: 'PO 1001', evidence: { decision_events: true }, cost_usd: 180.5, reversible: false, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
     }, NOW).id;
     setTelegramRef(db, po, '555', 3);
     const d = deps(db);
@@ -186,11 +186,17 @@ describe('telegram card', () => {
     });
   });
 
+  it('reject of a proposal that did not opt in emits no event', async () => {
+    await handleProposalCallback(db, { action: 'reject', id }, '555', 'robert', deps(db));
+    expect(getProposalById(db, id)!.status).toBe('rejected');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
+  });
+
   it('reject of a notes proposal emits no event', async () => {
     const note = insertProposal(db, {
       agent: 'purchasing', brand_id: 'dearborn-denim', action_type: 'purchasing_alert',
       action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } },
-      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+      reason: 'r', evidence: { decision_events: true }, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
     }, NOW).id;
     setTelegramRef(db, note, '555', 4);
     await handleProposalCallback(db, { action: 'reject', id: note }, '555', 'robert', deps(db));

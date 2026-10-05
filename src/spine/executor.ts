@@ -169,10 +169,22 @@ function copyScalarKeys(source: unknown, target: Record<string, unknown>, fixed:
 /** Fixed top-level keys on a `*_rejected` / `*_expired` event payload that flattening must never overwrite. */
 const DECISION_EVENT_FIXED_KEYS = new Set(['proposal_id', 'agent', 'action_type', 'hand', 'path', 'decided_by']);
 
+/** True only when the proposal's evidence JSON carries `decision_events: true` (boolean). */
+function wantsDecisionEvents(evidence: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(evidence);
+    return isPlainObject(parsed) && parsed.decision_events === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Best-effort: tell the filer its card was rejected or expired unanswered, by inserting
- * `<action_type>_rejected` / `<action_type>_expired` (not urgent). Call it only after the
- * status change actually landed. Never emitted for a `notes` proposal. Payload: proposal_id,
+ * `<action_type>_rejected` / `<action_type>_expired` (not urgent). Opt-in: emitted only when
+ * the proposal's `evidence.decision_events` is exactly `true`, and a filer that sets it must
+ * drain those event types (otherwise they go stale in the 5 AM health report). Call it only
+ * after the status change actually landed. Never emitted for a `notes` proposal. Payload: proposal_id,
  * agent, action_type, hand, path, decided_by (null on expiry), plus the top-level scalar keys
  * of `action_payload.body` (the filer's own identifiers) that do not collide with those.
  * An unparseable payload or a DB error is logged and swallowed — it must never fail the
@@ -188,7 +200,7 @@ export function emitDecisionEvent(
   try {
     const payload: unknown = JSON.parse(row.action_payload);
     if (!isPlainObject(payload)) throw new Error('action_payload is not an object');
-    if (payload.hand === 'notes') return;
+    if (payload.hand === 'notes' || !wantsDecisionEvents(row.evidence)) return;
     const eventPayload: Record<string, unknown> = {
       proposal_id: row.id,
       agent: row.agent,

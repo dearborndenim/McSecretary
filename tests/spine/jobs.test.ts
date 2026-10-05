@@ -39,7 +39,7 @@ describe('spine jobs', () => {
 
   it('expiry sweep tells the filer once per expired non-notes proposal', () => {
     const file = (action_type: string, hand: string, body: Record<string, unknown>, expires_at: string) =>
-      insertProposal(db, { agent: 'kanban-purchaser', brand_id: 'b', action_type, action_payload: { hand, method: 'POST', path: '/x', body }, reason: 'r', evidence: {}, cost_usd: 0, reversible: false, level_required: 1, expires_at }, '2026-09-06T00:00:00.000Z').id;
+      insertProposal(db, { agent: 'kanban-purchaser', brand_id: 'b', action_type, action_payload: { hand, method: 'POST', path: '/x', body }, reason: 'r', evidence: { decision_events: true }, cost_usd: 0, reversible: false, level_required: 1, expires_at }, '2026-09-06T00:00:00.000Z').id;
     const a = file('po_draft', 'kanban-purchaser', { id: 1, fingerprint: 'f1' }, '2026-09-08T00:00:00.000Z');
     const b = file('po_draft_over_threshold', 'kanban-purchaser', { id: 2, fingerprint: 'f2' }, '2026-09-08T00:00:00.000Z');
     file('purchasing_alert', 'notes', { title: 't', summary: 's' }, '2026-09-08T00:00:00.000Z');
@@ -53,6 +53,14 @@ describe('spine jobs', () => {
     ]);
     expect(JSON.parse(rows[0]!.payload)).toEqual({ proposal_id: a, agent: 'kanban-purchaser', action_type: 'po_draft', hand: 'kanban-purchaser', path: '/x', decided_by: null, id: 1, fingerprint: 'f1' });
     expect(JSON.parse(rows[1]!.payload)).toMatchObject({ proposal_id: b, decided_by: null, id: 2 });
+  });
+
+  it('expiry sweep emits nothing for a proposal that did not opt in', () => {
+    for (const evidence of [{}, { decision_events: 'true' }, { decision_events: false }]) {
+      insertProposal(db, { agent: 'a', brand_id: 'b', action_type: 'po_draft', action_payload: { hand: 'h', method: 'POST', path: '/', body: { evidence } }, reason: 'r', evidence, cost_usd: 0, reversible: false, level_required: 1, expires_at: '2026-09-08T00:00:00.000Z' }, '2026-09-06T00:00:00.000Z');
+    }
+    expect(runExpirySweep(db, NOW)).toContain('Expired 3 proposals');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
   });
 
   it('monthly summary groups by agent with counts and level, or null when quiet', () => {
