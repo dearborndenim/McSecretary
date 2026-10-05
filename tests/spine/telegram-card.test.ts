@@ -162,6 +162,42 @@ describe('telegram card', () => {
     expect(d.executed).toEqual([]);
   });
 
+  it('reject: tells the filer once with the body identifiers; a second reject emits nothing', async () => {
+    const po = insertProposal(db, {
+      agent: 'kanban-purchaser', brand_id: 'dearborn-denim', action_type: 'po_draft',
+      action_payload: {
+        hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/pos/42/approve',
+        body: { id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5, agent: 'spoof', lines: [{ q: 1 }] },
+      },
+      reason: 'PO 1001', evidence: {}, cost_usd: 180.5, reversible: false, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    setTelegramRef(db, po, '555', 3);
+    const d = deps(db);
+    await handleProposalCallback(db, { action: 'reject', id: po }, '555', 'robert', d);
+    const r = await handleProposalCallback(db, { action: 'reject', id: po }, '555', 'robert', d);
+    expect(r.ok).toBe(false);
+    const rows = db.prepare('SELECT * FROM spine_events').all() as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source_hand: 'spine', brand_id: 'dearborn-denim', event_type: 'po_draft_rejected', urgent: 0 });
+    expect(JSON.parse(rows[0]!.payload as string)).toEqual({
+      proposal_id: po, agent: 'kanban-purchaser', action_type: 'po_draft', hand: 'kanban-purchaser',
+      path: '/api/integration/pos/42/approve', decided_by: 'robert',
+      id: 42, po_number: 'PO-1001', fingerprint: 'abc123', total_usd: 180.5,
+    });
+  });
+
+  it('reject of a notes proposal emits no event', async () => {
+    const note = insertProposal(db, {
+      agent: 'purchasing', brand_id: 'dearborn-denim', action_type: 'purchasing_alert',
+      action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    setTelegramRef(db, note, '555', 4);
+    await handleProposalCallback(db, { action: 'reject', id: note }, '555', 'robert', deps(db));
+    expect(getProposalById(db, note)!.status).toBe('rejected');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
+  });
+
   it('edit: flags the proposal and asks for key=value', async () => {
     const d = deps(db);
     await handleProposalCallback(db, { action: 'edit', id }, '555', 'robert', d);

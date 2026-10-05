@@ -37,6 +37,24 @@ describe('spine jobs', () => {
     expect(report).toContain('  …and 2 more');
   });
 
+  it('expiry sweep tells the filer once per expired non-notes proposal', () => {
+    const file = (action_type: string, hand: string, body: Record<string, unknown>, expires_at: string) =>
+      insertProposal(db, { agent: 'kanban-purchaser', brand_id: 'b', action_type, action_payload: { hand, method: 'POST', path: '/x', body }, reason: 'r', evidence: {}, cost_usd: 0, reversible: false, level_required: 1, expires_at }, '2026-09-06T00:00:00.000Z').id;
+    const a = file('po_draft', 'kanban-purchaser', { id: 1, fingerprint: 'f1' }, '2026-09-08T00:00:00.000Z');
+    const b = file('po_draft_over_threshold', 'kanban-purchaser', { id: 2, fingerprint: 'f2' }, '2026-09-08T00:00:00.000Z');
+    file('purchasing_alert', 'notes', { title: 't', summary: 's' }, '2026-09-08T00:00:00.000Z');
+    file('po_draft', 'kanban-purchaser', { id: 3 }, '2026-09-10T00:00:00.000Z'); // not yet expired
+    runExpirySweep(db, NOW);
+    runExpirySweep(db, NOW); // nothing new expires, nothing new emitted
+    const rows = db.prepare('SELECT event_type, source_hand, urgent, received_at, payload FROM spine_events ORDER BY id').all() as Array<{ event_type: string; source_hand: string; urgent: number; received_at: string; payload: string }>;
+    expect(rows.map((r) => [r.event_type, r.source_hand, r.urgent, r.received_at])).toEqual([
+      ['po_draft_expired', 'spine', 0, NOW],
+      ['po_draft_over_threshold_expired', 'spine', 0, NOW],
+    ]);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({ proposal_id: a, agent: 'kanban-purchaser', action_type: 'po_draft', hand: 'kanban-purchaser', path: '/x', decided_by: null, id: 1, fingerprint: 'f1' });
+    expect(JSON.parse(rows[1]!.payload)).toMatchObject({ proposal_id: b, decided_by: null, id: 2 });
+  });
+
   it('monthly summary groups by agent with counts and level, or null when quiet', () => {
     expect(buildTrustMonthlySummary(db, '2026-09-01T00:00:00.000Z')).toBeNull();
     const k = { agent: 'marketing-manager', brand_id: 'b', action_type: 'creative_request' };

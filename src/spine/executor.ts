@@ -155,6 +155,61 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/** Copy every top-level string, number or boolean key of `source` onto `target`, skipping `fixed` keys. */
+function copyScalarKeys(source: unknown, target: Record<string, unknown>, fixed: ReadonlySet<string>): void {
+  if (!isPlainObject(source)) return;
+  for (const [key, value] of Object.entries(source)) {
+    if (fixed.has(key)) continue;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      target[key] = value;
+    }
+  }
+}
+
+/** Fixed top-level keys on a `*_rejected` / `*_expired` event payload that flattening must never overwrite. */
+const DECISION_EVENT_FIXED_KEYS = new Set(['proposal_id', 'agent', 'action_type', 'hand', 'path', 'decided_by']);
+
+/**
+ * Best-effort: tell the filer its card was rejected or expired unanswered, by inserting
+ * `<action_type>_rejected` / `<action_type>_expired` (not urgent). Call it only after the
+ * status change actually landed. Never emitted for a `notes` proposal. Payload: proposal_id,
+ * agent, action_type, hand, path, decided_by (null on expiry), plus the top-level scalar keys
+ * of `action_payload.body` (the filer's own identifiers) that do not collide with those.
+ * An unparseable payload or a DB error is logged and swallowed — it must never fail the
+ * rejection or the expiry sweep.
+ */
+export function emitDecisionEvent(
+  db: Database.Database,
+  row: ProposalRow,
+  outcome: 'rejected' | 'expired',
+  decidedBy: string | null,
+  nowIso: string,
+): void {
+  try {
+    const payload: unknown = JSON.parse(row.action_payload);
+    if (!isPlainObject(payload)) throw new Error('action_payload is not an object');
+    if (payload.hand === 'notes') return;
+    const eventPayload: Record<string, unknown> = {
+      proposal_id: row.id,
+      agent: row.agent,
+      action_type: row.action_type,
+      hand: payload.hand ?? null,
+      path: payload.path ?? null,
+      decided_by: decidedBy,
+    };
+    copyScalarKeys(payload.body, eventPayload, DECISION_EVENT_FIXED_KEYS);
+    insertEvent(db, {
+      source_hand: 'spine',
+      brand_id: row.brand_id,
+      event_type: `${row.action_type}_${outcome}`,
+      payload: eventPayload,
+      urgent: false,
+    }, nowIso);
+  } catch (err) {
+    console.error(`spine: ${outcome}-event emit failed`, row.id, err);
+  }
+}
+
 /**
  * Best-effort: after a proposal executes successfully, insert `<action_type>_executed`
  * (plus `sourcing_options_executed` for `sourcing_option`) so a downstream agent's
@@ -192,14 +247,7 @@ function emitExecutedEvent(
     response,
   };
 
-  if (isPlainObject(truncated)) {
-    for (const [key, value] of Object.entries(truncated)) {
-      if (FIXED_EVENT_KEYS.has(key)) continue;
-      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        eventPayload[key] = value;
-      }
-    }
-  }
+  copyScalarKeys(truncated, eventPayload, FIXED_EVENT_KEYS);
 
   if (isPlainObject(payload.body)) {
     for (const key of BODY_FALLBACK_KEYS) {

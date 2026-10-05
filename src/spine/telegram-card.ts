@@ -7,7 +7,7 @@ import {
 import { recordTrustDecision } from '../db/trust-queries.js';
 import { parseEdit, applyEdit } from './edits.js';
 import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
-import { extractNotify, type ExecutionResult } from './executor.js';
+import { extractNotify, emitDecisionEvent, type ExecutionResult } from './executor.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface CardDeps {
@@ -369,6 +369,7 @@ export async function handleProposalCallback(
       await safeReply(deps, `#${p.id} was already decided.`);
       return { ok: false, message: `#${p.id} was already decided` };
     }
+    emitDecisionEvent(db, p, 'rejected', by, deps.now());
     const t = recordTrustDecision(db, trustKey(p), 'rejected', deps.now());
     await safeReply(deps, `Rejected #${p.id}.${t.demoted ? ' Trust for this action reset to level 1.' : ''}`);
     return { ok: true, message: 'rejected' };
