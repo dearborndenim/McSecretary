@@ -62,7 +62,7 @@ import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRep
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
-import { runExpirySweep, buildTrustMonthlySummary } from './spine/jobs.js';
+import { runExpirySweep, buildTrustMonthlySummary, buildAgentReview, trailingDaysSince, AGENT_REVIEW_DEFAULT_DAYS, AGENT_REVIEW_MAX_DAYS } from './spine/jobs.js';
 import { getCatalogue, checkCatalogueAgainstBrand } from './staff/catalogue.js';
 import { setStaffDeps, createWriteLimiter, executeStaffTool } from './staff/execute.js';
 import { staffToolsForUser } from './staff/tools.js';
@@ -354,7 +354,11 @@ async function handleSpineSweep(): Promise<void> {
 }
 
 async function handleTrustMonthlySummary(): Promise<void> {
-  const since = new Date(); since.setUTCMonth(since.getUTCMonth() - 1);
+  const now = new Date();
+  const since = new Date(now); since.setUTCMonth(since.getUTCMonth() - 1);
+  // Agent review first (spec 2026-10-08 §4), over the trust summary's own window, then the trust text unchanged.
+  try { await sendMessageToUser(config.spine.monthlySummaryUserId, buildAgentReview(db, since.toISOString(), now.toISOString()), false); }
+  catch (err) { console.error('Agent review failed:', err); }
   const summary = buildTrustMonthlySummary(db, since.toISOString());
   if (!summary) return;
   try { await sendMessageToUser(config.spine.monthlySummaryUserId, summary, false); }
@@ -831,6 +835,15 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
       await sendMessageToUser(req.user_id, `Your request #${id} was not approved: ${reason}`).catch(() => {});
     }
     return `Request #${id} rejected: ${reason}`;
+  }
+
+  // Admin-only: /agentreview [days] — the monthly agent review on demand (default 30, max 90).
+  if (user.role === 'admin' && /^\/agentreview(\s|$)/.test(lowerText)) {
+    const arg = text.trim().split(/\s+/)[1];
+    const days = arg === undefined ? AGENT_REVIEW_DEFAULT_DAYS : Number(arg);
+    if (!Number.isInteger(days) || days < 1) return `Usage: /agentreview [days] (1–${AGENT_REVIEW_MAX_DAYS}, default ${AGENT_REVIEW_DEFAULT_DAYS})`;
+    const nowIso = new Date().toISOString();
+    return buildAgentReview(db, trailingDaysSince(nowIso, Math.min(days, AGENT_REVIEW_MAX_DAYS)), nowIso);
   }
 
   // Admin-only: /invite <user-email> — generate a 7-day invite code

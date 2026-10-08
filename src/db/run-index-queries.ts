@@ -7,13 +7,14 @@ import type { RunIndexInput } from '../spine/types.js';
  */
 export function upsertRun(db: Database.Database, r: RunIndexInput): boolean {
   const result = db.prepare(`
-    INSERT INTO agent_run_index (run_id, agent, brand_id, skill_commit, model, started_at, finished_at, outcome, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_run_index (run_id, agent, brand_id, skill_commit, model, started_at, finished_at, outcome, notes, cost_usd)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(run_id) DO UPDATE SET
       finished_at = excluded.finished_at, outcome = excluded.outcome, notes = excluded.notes,
-      skill_commit = excluded.skill_commit, model = excluded.model
+      skill_commit = excluded.skill_commit, model = excluded.model,
+      cost_usd = COALESCE(excluded.cost_usd, agent_run_index.cost_usd)
     WHERE agent_run_index.agent = excluded.agent
-  `).run(r.run_id, r.agent, r.brand_id, r.skill_commit, r.model, r.started_at, r.finished_at, r.outcome, r.notes);
+  `).run(r.run_id, r.agent, r.brand_id, r.skill_commit, r.model, r.started_at, r.finished_at, r.outcome, r.notes, r.cost_usd ?? null);
   return result.changes === 1;
 }
 

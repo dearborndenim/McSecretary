@@ -56,6 +56,23 @@ describe('spine schema', () => {
     expect(cols.filter((c) => c === 'posted_by')).toHaveLength(1);
   });
 
+  it('adds agent_run_index.cost_usd to an existing table without touching its rows', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE agent_run_index (
+      run_id TEXT PRIMARY KEY, agent TEXT NOT NULL, brand_id TEXT NOT NULL, skill_commit TEXT NOT NULL,
+      model TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, outcome TEXT NOT NULL, notes TEXT NOT NULL DEFAULT ''
+    )`);
+    db.prepare("INSERT INTO agent_run_index (run_id, agent, brand_id, skill_commit, model, started_at, finished_at, outcome, notes) VALUES ('r1', 'sourcing', 'dearborn-denim', 'abc', 'claude-opus-5-5', '2026-09-20T06:00:00.000Z', '2026-09-20T06:09:00.000Z', 'ok', 'filed 3 RFQs')").run();
+    const before = db.prepare('SELECT * FROM agent_run_index').all();
+    initializeSchema(db);
+    const after = db.prepare('SELECT * FROM agent_run_index').all();
+    expect(after).toEqual([{ ...(before[0] as object), cost_usd: null }]);
+    initializeSchema(db);
+    expect(db.prepare('SELECT * FROM agent_run_index').all()).toEqual(after);
+    const cols = (db.prepare('PRAGMA table_info(agent_run_index)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols.filter((c) => c === 'cost_usd')).toHaveLength(1);
+  });
+
   it('is idempotent', () => {
     const db = new Database(':memory:');
     initializeSchema(db);

@@ -123,4 +123,6 @@ export interface RunIndexInput {
   finished_at: string | null;
   outcome: 'ok' | 'nothing_to_do' | 'contract_violation' | 'hand_error' | 'running';
   notes: string;
+  /** The run transcript's total_cost_usd; absent/null when the run reported none. */
+  cost_usd?: number | null;
 }
