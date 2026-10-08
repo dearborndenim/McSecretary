@@ -1,0 +1,197 @@
+{
+  "_comment": "Staff-action catalogue (staff access spec docs/superpowers/specs/2026-10-08-staff-access-design.md §5). Validated at boot by src/staff/catalogue.ts; a malformed entry stops the boot. {name} placeholders come only from validated params and bindings. 'customer order' = a customer's purchase order TO Dearborn Denim (purchase-order-receiver); 'vendor PO' = our purchase order TO a vendor (kanban-purchaser).",
+  "groups": {
+    "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
+    "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "ops_note"],
+    "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
+    "office": ["vendor_po_lookup", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"]
+  },
+  "actions": {
+    "inventory_lookup": {
+      "kind": "read",
+      "description": "Look up Shopify stock for a product at the Factory and at the Andersonville store. Search by product name, color, size or SKU; returns up to 25 variants with their SKU, levels {factory, store} (null = not stocked at that location), sku_class and whether the product is on POS. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all.",
+      "params": {
+        "q": { "type": "string", "required": true, "max": 100, "description": "Product name, color, size or SKU, e.g. \"H201 hoodie medium\"." }
+      },
+      "hand": "factory-fenix",
+      "method": "GET",
+      "path": "/api/integration/inventory?q={q}"
+    },
+    "pos_status": {
+      "kind": "read",
+      "description": "Check whether a product is published to the store's POS and which of its variants are stocked at the store. Search by product name, color, size or SKU. Read-only: publishing to POS is Robert's.",
+      "params": {
+        "q": { "type": "string", "required": true, "max": 100, "description": "Product name, color, size or SKU." }
+      },
+      "hand": "factory-fenix",
+      "method": "GET",
+      "path": "/api/integration/pos-status?q={q}"
+    },
+    "store_inventory_set": {
+      "kind": "write",
+      "description": "Set the on-hand count of one SKU at your store to a counted number (a recount, not a move). Use inventory_lookup first to get the exact SKU. Moving stock between the Factory and the store is inventory_transfer, never this. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "sku": { "type": "string", "required": true, "max": 64, "description": "Exact SKU from inventory_lookup." },
+        "quantity": { "type": "integer", "required": true, "min": 0, "max": 9999, "description": "The counted quantity now at the store." },
+        "reason": { "type": "string", "required": true, "max": 200, "description": "Why the count changed, e.g. \"recount after weekend\"." }
+      },
+      "bind": { "location_id": "user.location_id", "idempotency_key": "proposal.id" },
+      "hand": "factory-fenix",
+      "method": "POST",
+      "path": "/api/integration/inventory/set",
+      "body": { "sku": "{sku}", "location_id": "{location_id}", "quantity": "{quantity}", "reason": "{reason}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "store_inventory_set",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "expires_hours": 24,
+      "summary": "Set {sku} to {quantity} at the store"
+    },
+    "inventory_transfer": {
+      "kind": "write",
+      "description": "Record goods physically moved between the Factory and your store: subtracts the quantity at one location and adds it at the other. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. Use inventory_lookup first to get the exact SKU. Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "sku": { "type": "string", "required": true, "max": 64, "description": "Exact SKU from inventory_lookup." },
+        "quantity": { "type": "integer", "required": true, "min": 1, "max": 9999, "description": "How many units moved." },
+        "direction": { "type": "enum", "required": true, "enum": ["to_store", "to_factory"], "description": "to_store = Factory to store; to_factory = store back to the Factory." },
+        "reason": { "type": "string", "required": true, "max": 200, "description": "Why they moved, e.g. \"restock for the weekend\"." }
+      },
+      "bind": { "store_location_id": "user.location_id", "factory_location_id": "brand.location_id", "idempotency_key": "proposal.id" },
+      "hand": "factory-fenix",
+      "method": "POST",
+      "path": "/api/integration/inventory/transfer",
+      "body": { "sku": "{sku}", "quantity": "{quantity}", "idempotency_key": "{idempotency_key}" },
+      "switch": {
+        "param": "direction",
+        "cases": {
+          "to_store": {
+            "body": { "from_location_id": "{factory_location_id}", "to_location_id": "{store_location_id}" },
+            "summary": "Move {quantity} × {sku} from the Factory to the store"
+          },
+          "to_factory": {
+            "body": { "from_location_id": "{store_location_id}", "to_location_id": "{factory_location_id}" },
+            "summary": "Move {quantity} × {sku} from the store to the Factory"
+          }
+        }
+      },
+      "action_type": "inventory_transfer",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "expires_hours": 24,
+      "summary": "Move {quantity} × {sku} ({direction})"
+    },
+    "vendor_po_lookup": {
+      "kind": "read",
+      "description": "Look up vendor POs: Dearborn Denim's open purchase orders to our vendors (fabric, thread, trims), with each PO's id, PO number, vendor, status and lines, plus pending material requests. Use it to find the vendor PO id before vendor_po_receive. Not for customer orders.",
+      "params": {},
+      "hand": "kanban-purchaser",
+      "method": "GET",
+      "path": "/api/integration/materials"
+    },
+    "vendor_po_receive": {
+      "kind": "write",
+      "description": "Receive materials that arrived from a vendor against a vendor PO (our purchase order to that vendor). Get the vendor PO id and its line ids from vendor_po_lookup first; partial quantities are fine. Never for customer orders. Files a request; it runs once Robert approves.",
+      "params": {
+        "po_id": { "type": "string", "required": true, "max": 64, "description": "The vendor PO id from vendor_po_lookup (not the customer order number)." },
+        "lines": {
+          "type": "array",
+          "required": true,
+          "max": 40,
+          "description": "What arrived, one entry per PO line: {line_id or sku, quantity, unit?}.",
+          "items": {
+            "line_id": { "type": "string", "max": 64, "description": "PO line id from vendor_po_lookup." },
+            "sku": { "type": "string", "max": 64, "description": "Material SKU, when the line id is not known." },
+            "quantity": { "type": "number", "required": true, "min": 0.01, "max": 99999, "description": "Quantity received on this line." },
+            "unit": { "type": "enum", "enum": ["rolls", "yards", "units", "boxes", "cones"], "description": "Unit of the quantity, when it differs from the PO line." }
+          },
+          "items_require_one_of": ["line_id", "sku"]
+        },
+        "note": { "type": "string", "max": 300, "description": "Optional note, e.g. \"2 rolls damaged\"." }
+      },
+      "bind": { "received_by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "kanban-purchaser",
+      "method": "POST",
+      "path": "/api/integration/pos/{po_id}/receive",
+      "body": { "lines": "{lines}", "received_by": "{received_by}", "note": "{note}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "vendor_po_receive",
+      "reversible": false,
+      "cost_usd": 0,
+      "level_required": 1,
+      "expires_hours": 24,
+      "summary": "Receive {lines} on vendor PO {po_id}"
+    },
+    "customer_order_lookup": {
+      "kind": "read",
+      "description": "Look up customer orders: purchase orders customers (VFC, Gibson, DDA work orders) placed with Dearborn Denim / McMillan Manufacturing. scope=open lists the open customer orders; scope=pipeline shows where they are in production. Read-only. Not for vendor POs.",
+      "params": {
+        "scope": { "type": "enum", "required": false, "default": "open", "enum": ["open", "pipeline"], "description": "open (default) or pipeline." }
+      },
+      "hand": "purchase-order-receiver",
+      "method": "GET",
+      "switch": {
+        "param": "scope",
+        "cases": {
+          "open": { "path": "/api/integration/open-pos" },
+          "pipeline": { "path": "/api/integration/po-pipeline" }
+        }
+      }
+    },
+    "material_request": {
+      "kind": "write",
+      "description": "Ask purchasing to reorder a material (fabric, thread, trims). This does not create a vendor PO: purchasing turns it into a vendor PO draft that Robert approves. If the material name matches several, the reply lists the candidates; ask which one and file again.",
+      "params": {
+        "material": { "type": "string", "required": true, "max": 120, "description": "Material as the person names it, e.g. \"14oz indigo\"." },
+        "quantity": { "type": "number", "required": true, "min": 0.01, "max": 99999, "description": "How much to order." },
+        "unit": { "type": "enum", "required": true, "enum": ["rolls", "yards", "units", "boxes", "cones"], "description": "Unit of the quantity." },
+        "reason": { "type": "string", "required": true, "max": 200, "description": "Why, e.g. \"down to 1 roll\"." }
+      },
+      "bind": { "requested_by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "kanban-purchaser",
+      "method": "POST",
+      "path": "/api/integration/requests",
+      "body": { "material": "{material}", "quantity": "{quantity}", "unit": "{unit}", "reason": "{reason}", "requested_by": "{requested_by}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "material_request",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "expires_hours": 24,
+      "summary": "Request {quantity} {unit} of {material}"
+    },
+    "production_lookup": {
+      "kind": "read",
+      "description": "Look up production on the factory floor from the piece-work scanner: view=summary for output by operator and operation, view=wip for bundles in progress by stage.",
+      "params": {
+        "view": { "type": "enum", "required": false, "default": "summary", "enum": ["summary", "wip"], "description": "summary (default) or wip." }
+      },
+      "hand": "piece-work-scanner",
+      "method": "GET",
+      "switch": {
+        "param": "view",
+        "cases": {
+          "summary": { "path": "/api/integration/production-summary" },
+          "wip": { "path": "/api/integration/wip-summary" }
+        }
+      }
+    },
+    "ops_note": {
+      "kind": "write",
+      "description": "Send Robert a note about something on the floor or at the store (a machine down, a delivery problem, a customer issue), or anything you cannot do with your other tools. urgency: fyi, today or now.",
+      "params": {
+        "text": { "type": "string", "required": true, "max": 500, "description": "The note, in the person's own words." },
+        "urgency": { "type": "enum", "required": false, "default": "fyi", "enum": ["fyi", "today", "now"], "description": "fyi (default), today, or now." }
+      },
+      "bind": { "from": "user.name" },
+      "hand": "notes",
+      "method": "POST",
+      "path": "/note",
+      "body": { "title": "Note from {from} ({urgency})", "summary": "{text}" },
+      "action_type": "ops_note",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "expires_hours": 72,
+      "summary": "Note to Robert ({urgency}): {text}"
+    }
+  }
+}

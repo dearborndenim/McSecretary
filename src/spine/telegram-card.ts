@@ -9,13 +9,19 @@ import { parseEdit, applyEdit } from './edits.js';
 import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
 import { extractNotify, type ExecutionResult } from './executor.js';
 import { rejectProposal } from './decision-events.js';
-import { safeJsonObject } from './json-object.js';
+import { cap, safeJsonObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface CardDeps {
   now: () => string;
   execute: (id: number) => Promise<ExecutionResult>;
   reply: (text: string) => Promise<void>;
+  /**
+   * After a card decision lands (approve + execute, or reject): tell whoever
+   * filed it, when that is a staff member (staff access spec §7.3). Optional;
+   * must never throw.
+   */
+  onDecided?: (id: number) => Promise<void>;
 }
 
 export type CallbackAction = 'approve' | 'edit' | 'reject';
@@ -70,12 +76,17 @@ async function safeReply(deps: CardDeps, text: string): Promise<void> {
   }
 }
 
-function money(n: number): string {
-  return `$${Math.round(n).toLocaleString('en-US')}`;
+async function safeDecided(deps: CardDeps, id: number): Promise<void> {
+  if (!deps.onDecided) return;
+  try {
+    await deps.onDecided(id);
+  } catch (err) {
+    console.error('spine: decision notice failed', id, err);
+  }
 }
 
-function cap(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+function money(n: number): string {
+  return `$${Math.round(n).toLocaleString('en-US')}`;
 }
 
 /** `evidence.design_runs_estimated`, when the filing tool put a number there. */
@@ -97,6 +108,28 @@ function designRunsFromReason(reason: string): number | null {
   }
   return null;
 }
+
+/** Max chars of a staff member's message quoted on their card (staff access spec §7.4). */
+const REQUEST_TEXT_CARD_CAP = 200;
+
+/**
+ * `Requested by {name} on Telegram: "{request_text}"` for a card a person
+ * filed from chat, else null. Only when the filer (`agent`) is a users.id:
+ * an HTTP agent can put anything in its evidence, including `requested_by`.
+ */
+export function requesterLine(p: ProposalRow, agentIsUser: boolean): string | null {
+  if (!agentIsUser) return null;
+  const name = requestedBy(p.evidence);
+  if (!name) return null;
+  const e = safeJsonObject(p.evidence);
+  const text = typeof e.request_text === 'string' ? e.request_text.trim() : '';
+  return text
+    ? `Requested by ${name} on Telegram: "${cap(text, REQUEST_TEXT_CARD_CAP)}"`
+    : `Requested by ${name} on Telegram`;
+}
+
+/** Evidence keys the requester line already shows. */
+const REQUESTER_KEYS = new Set(['requested_by', 'request_text']);
 
 /** `evidence.requested_by` — whose message this card came out of. */
 function requestedBy(evidenceJson: string): string | null {
@@ -207,8 +240,11 @@ function renderPatternDraftCard(p: ProposalRow, payload: ActionPayload): string 
   return lines.join('\n');
 }
 
-/** Five-ish lines, phone-readable (spec §4.2). */
-export function renderProposalCard(p: ProposalRow): string {
+/**
+ * Five-ish lines, phone-readable (spec §4.2). `agentIsUser`: the proposal was
+ * filed by a person (staff action), which alone allows the requester line.
+ */
+export function renderProposalCard(p: ProposalRow, agentIsUser = false): string {
   const payload = JSON.parse(p.action_payload) as ActionPayload;
 
   if (p.action_type === 'pattern_draft') {
@@ -224,11 +260,12 @@ export function renderProposalCard(p: ProposalRow): string {
     const summary = typeof body.summary === 'string' ? body.summary : '';
     const lines = [
       `#${p.id} ${p.agent} · ${p.brand_id}`,
+      requesterLine(p, agentIsUser),
       cap(title, REASON_CAP),
       cap(summary, REASON_CAP),
       `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
       `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
-    ];
+    ].filter((l): l is string => l !== null);
     return lines.join('\n');
   }
 
@@ -241,6 +278,7 @@ export function renderProposalCard(p: ProposalRow): string {
     const attCount = Array.isArray(body.attachments) ? body.attachments.length : 0;
     const lines = [
       `#${p.id} ${p.agent} · ${p.brand_id}`,
+      requesterLine(p, agentIsUser),
       `${p.action_type} → email to ${cap(to, EVIDENCE_VALUE_CAP)}`,
       `Subject: ${cap(subject, REASON_CAP)}`,
       cap(typeof body.text === 'string' ? body.text : '', EMAIL_PREVIEW_CAP),
@@ -277,20 +315,23 @@ export function renderProposalCard(p: ProposalRow): string {
   }
 
   const evidence: unknown = JSON.parse(p.evidence);
+  const requester = requesterLine(p, agentIsUser);
   const evLines = typeof evidence !== 'object' || evidence === null
     ? []
     : Object.entries(evidence as Record<string, unknown>)
       .filter(([k]) => k !== 'decision_events') // a spine switch, not evidence for Robert
+      .filter(([k]) => !(requester && REQUESTER_KEYS.has(k))) // already on the requester line
       .slice(0, 3)
       .map(([k, v]) => `  ${k}: ${cap(String(v), EVIDENCE_VALUE_CAP)}`);
   const lines = [
     `#${p.id} ${p.agent} · ${p.brand_id}`,
+    requester,
     `${p.action_type} → ${payload.hand}${payload.path}`,
     cap(p.reason, REASON_CAP),
     ...evLines,
     `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
     `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
-  ];
+  ].filter((l): l is string => l !== null);
   return lines.join('\n');
 }
 
@@ -340,6 +381,7 @@ async function approveAndExecute(
   await safeReply(deps, r.ok
     ? `Approved #${p.id} — executed (${r.http_status}).${notifySuffix(r)}`
     : `Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${r.error ? `: ${r.error}` : ''}.`);
+  await safeDecided(deps, p.id);
   return { ok: true, message: status };
 }
 
@@ -365,6 +407,7 @@ export async function handleProposalCallback(
     }
     const t = recordTrustDecision(db, trustKey(p), 'rejected', deps.now());
     await safeReply(deps, `Rejected #${p.id}.${t.demoted ? ' Trust for this action reset to level 1.' : ''}`);
+    await safeDecided(deps, p.id);
     return { ok: true, message: 'rejected' };
   }
   // A chat waits on at most one edit reply: the newest request wins.

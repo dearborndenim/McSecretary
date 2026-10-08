@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
+import { getUserById } from '../db/user-queries.js';
 import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
@@ -117,6 +118,24 @@ export function withForwardedBrand(href: string, key: string | undefined, brandI
   return u.href;
 }
 
+/** Stands for the proposal's own id in a filed body (staff actions' idempotency keys, spec §7.2 step 4). */
+export const PROPOSAL_ID_PLACEHOLDER = '{{proposal.id}}';
+
+/**
+ * Replace `{{proposal.id}}` in every string value of a body (nested included)
+ * with the row id: the one value unknown when the proposal was filed. Applied
+ * only to the body sent to an HTTP hand, never to the stored row, the path or
+ * the evidence.
+ */
+export function substituteProposalId(value: unknown, id: number): unknown {
+  if (typeof value === 'string') return value.split(PROPOSAL_ID_PLACEHOLDER).join(String(id));
+  if (Array.isArray(value)) return value.map((v) => substituteProposalId(v, id));
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substituteProposalId(v, id)]));
+  }
+  return value;
+}
+
 function validatePayload(payload: ActionPayload): string | null {
   if (!METHODS.has(payload.method)) return `Invalid method: ${String(payload.method)}`;
   if (typeof payload.body !== 'object' || payload.body === null || Array.isArray(payload.body)) {
@@ -178,6 +197,10 @@ function emitExecutedEvent(
   deps: ExecutorDeps,
 ): void {
   if (isSuppressedNotesCard(payload.hand, row.action_type)) return;
+  // A person's filing (a staff action: agent = users.id, which the namespace
+  // rule keeps apart from every agent name) wakes no agent, and an undrained
+  // event would sit in the 5 AM health report for ever.
+  if (getUserById(db, row.agent)) return;
   const truncated = truncateResponseForEvent(responseBody);
   const response = payload.hand === 'notes' ? {} : truncated;
   const eventPayload: Record<string, unknown> = {
@@ -348,7 +371,7 @@ export async function executeProposal(
     const res = await deps.fetch(href, {
       method: payload.method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.bearer}` },
-      body: JSON.stringify(payload.body),
+      body: JSON.stringify(substituteProposalId(payload.body, row.id)),
     });
     const text = await res.text();
     let body: unknown = text;

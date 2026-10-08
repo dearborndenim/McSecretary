@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { insertProposal, setTelegramRef, getProposalById } from '../db/proposal-queries.js';
+import { insertProposal, setTelegramRef, getProposalById, type DedupeMode } from '../db/proposal-queries.js';
 import { getTrustLevel } from '../db/trust-queries.js';
 import { isPinned } from './gates.js';
 import { extractNotify, type ExecutionResult } from './executor.js';
@@ -45,8 +45,9 @@ export async function fileProposal(
   db: Database.Database,
   input: ProposalInput,
   deps: RouterDeps,
+  opts: { dedupe?: DedupeMode } = {},
 ): Promise<{ id: number; routed: Routed }> {
-  const { id, deduped } = insertProposal(db, input, deps.now());
+  const { id, deduped } = insertProposal(db, input, deps.now(), opts.dedupe);
   if (deduped) {
     const existing = getProposalById(db, id);
     if (existing?.status === 'pending' && existing.telegram_chat_id === null && await sendCardAndRef(db, id, deps)) {

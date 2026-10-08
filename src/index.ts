@@ -63,6 +63,10 @@ import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
 import { runExpirySweep, buildTrustMonthlySummary } from './spine/jobs.js';
+import { getCatalogue, checkCatalogueAgainstBrand } from './staff/catalogue.js';
+import { setStaffDeps, createWriteLimiter, executeStaffTool } from './staff/execute.js';
+import { staffToolsForUser } from './staff/tools.js';
+import { loadBrandConfig } from './spine/brand-config.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
 import { seedTeam } from './db/seed-team.js';
 import {
@@ -102,6 +106,8 @@ import {
 
 let db: Database.Database;
 let anthropic: Anthropic;
+/** Set at boot from buildSpine: tells a staff member their proposal expired (staff access spec §7.3). */
+let notifyRequester: ((id: number) => Promise<void>) | null = null;
 // Per-user: users whose hourly check-in is waiting for a reply (logged as time).
 const awaitingCheckInResponse = new Set<string>();
 // Per-user flag: expecting Rob/member's reply to the EOD reflection prompt.
@@ -338,7 +344,10 @@ async function handleBriefingSectionsAuditDigest(): Promise<void> {
 }
 
 async function handleSpineSweep(): Promise<void> {
-  const report = runExpirySweep(db, new Date().toISOString());
+  const report = runExpirySweep(db, new Date().toISOString(), (rows) => {
+    const notify = notifyRequester;
+    if (notify) for (const p of rows) void notify(p.id);
+  });
   if (!report) return;
   try { await sendMessageToUser(config.spine.monthlySummaryUserId, report, false); }
   catch (err) { console.error('Spine sweep report failed:', err); }
@@ -1536,7 +1545,11 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     const smsContext = isAdmin ? getRecentSmsMessages(db, 24, 30) : '';
     const dailyContext = isAdmin ? buildDailyContext() : '';
     const conversationHistory = buildConversationHistory(user.id, today);
-    const userTools = toolsForUser(user, TOOL_DEFINITIONS, ownAccounts);
+    // Staff actions (spec §7.1/§7.2): the user's catalogue actions, as tools.
+    const catalogue = getCatalogue();
+    const staffTools = staffToolsForUser(catalogue, user);
+    const staffToolNames = new Set(staffTools.map((t) => t.name));
+    const userTools = toolsForUser(user, TOOL_DEFINITIONS, ownAccounts, staffTools);
 
     const prefs = getUserPreferences(db, user.id);
     const systemBlocks = buildChatSystemBlocks(
@@ -1546,6 +1559,9 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         accounts: accounts.map((a) => a.email_address),
         is_admin: isAdmin,
         language: user.language ?? null,
+        staff_actions: staffTools.map((t) => ({
+          id: t.name, kind: catalogue.actions[t.name]!.kind, description: catalogue.actions[t.name]!.description,
+        })),
       },
       { dailyContext, taskContext, smsContext, emailContext },
     );
@@ -1614,9 +1630,11 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         console.log(`Executing tool: ${toolUse.name}(${JSON.stringify(toolUse.input)})`);
         // Defence in depth: the model only saw this user's tools, but a call
         // outside them (or on someone else's mailbox) is refused, never run.
-        const refusal = checkToolCall(user, toolUse.name, toolUse.input, ownAccounts);
+        const refusal = checkToolCall(user, toolUse.name, toolUse.input, ownAccounts, staffToolNames);
         const result = refusal
-          ?? await executeTool(toolUse.name, toolUse.input as Record<string, any>, user.id);
+          ?? (staffToolNames.has(toolUse.name)
+            ? await executeStaffTool(toolUse.name, toolUse.input, user, text)
+            : await executeTool(toolUse.name, toolUse.input as Record<string, any>, user.id));
         console.log(`Tool result: ${result}`);
         toolResults.push({
           type: 'tool_result',
@@ -1706,6 +1724,28 @@ async function main() {
     getGraphToken,
   });
   setSpineHttpHandler(spine.handleHttp);
+  notifyRequester = spine.notifyRequester;
+
+  // Staff actions (spec §5, §7.6): a malformed catalogue, a group naming a hand
+  // the legacy brand lacks, or an action id equal to a chat tool stops the
+  // boot; a hand whose env vars are unset only warns (it may not be deployed yet).
+  {
+    const { TOOL_DEFINITIONS } = await import('./tools.js');
+    const warnings = checkCatalogueAgainstBrand(
+      getCatalogue(), loadBrandConfig(config.spine.brandsDir, 'dearborn-denim'), process.env,
+      TOOL_DEFINITIONS.map((t) => t.name),
+    );
+    for (const w of warnings) console.warn(w);
+  }
+  setStaffDeps({
+    db,
+    loadBrand: spine.loadBrand,
+    env: process.env,
+    handFetch: spine.handFetch,
+    file: spine.file,
+    now: () => new Date().toISOString(),
+    limiter: createWriteLimiter(),
+  });
 
   const rfqBrandId = process.env.RFQ_BRAND_ID || 'dearborn-denim';
 

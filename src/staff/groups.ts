@@ -1,13 +1,16 @@
 /**
- * Staff groups a user can be granted (staff access spec §5, §7.5).
- *
- * Build 1 only stores grants; nothing reads them yet. Build 2 replaces this
- * constant with the group names from the staff-action catalogue
- * (config/staff-actions.json) and keeps the export name.
+ * Staff groups a user can be granted (staff access spec §5, §7.5): the group
+ * names in the staff-action catalogue (config/staff-actions.json).
  */
-export const KNOWN_GROUPS: readonly string[] = ['store', 'receiving', 'floor-lead', 'office'];
+
+import { getCatalogue } from './catalogue.js';
+
+export function knownGroups(): string[] {
+  return Object.keys(getCatalogue().groups);
+}
 
 /** The names in `groups` that are not known groups (empty = all valid). */
 export function unknownGroups(groups: string[]): string[] {
-  return groups.filter((g) => !KNOWN_GROUPS.includes(g));
+  const known = new Set(knownGroups());
+  return groups.filter((g) => !known.has(g));
 }

@@ -16,6 +16,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type Database from 'better-sqlite3';
 import { loadBrandConfig, resolveHand } from '../spine/brand-config.js';
 import { resolveHandUrl } from '../spine/executor.js';
+import { readHandPath, HAND_READ_PATH_PREFIX } from '../spine/hand-read.js';
 import { RUN_REQUEST_PREFIX, GRAPH_DISPATCH_PATH } from '../spine/graph-hand.js';
 import {
   validateDispatchPlan, renderPlanReason, type ApprovedPersonaCounts, type DispatchPlan,
@@ -50,8 +51,6 @@ export const GRAPH_NOT_ADMIN_MESSAGE =
 
 const READ_AGENT_OUTPUTS_DEFAULT = 5;
 const READ_AGENT_OUTPUTS_MAX = 20;
-const HAND_READ_PATH_PREFIX = '/api/integration/';
-const HAND_READ_CAP_BYTES = 8192;
 const STALE_MS = 24 * 60 * 60 * 1000;
 /** design-module's persona index — deliberately NOT reachable through read_hand. */
 const PERSONAS_PATH = '/api/config/personas';
@@ -273,11 +272,6 @@ async function readHand(d: GraphDeps, input: Record<string, unknown>): Promise<s
   if (!path.startsWith(HAND_READ_PATH_PREFIX)) {
     return `read_hand only reads ${HAND_READ_PATH_PREFIX} paths; got ${path || '(nothing)'}`;
   }
-  // `..`/`.` segments would resolve back out of the integration prefix before
-  // the request goes out, so the prefix check above would not hold.
-  if (path.split('/').some((seg) => seg === '.' || seg === '..')) {
-    return `read_hand refuses a path with relative segments; got ${path}`;
-  }
 
   let brand;
   try { brand = loadBrandConfig(d.brandsDir, d.brandId); }
@@ -287,20 +281,13 @@ async function readHand(d: GraphDeps, input: Record<string, unknown>): Promise<s
     return `Unknown hand: ${hand || '(none given)'}. Hands: ${Object.keys(brand.hands).join(', ')}.`;
   }
 
-  let target: { url: string; bearer: string };
-  try { target = resolveHand(brand, hand, d.env); }
-  catch (err) { return `Tool error: ${err instanceof Error ? err.message : String(err)}`; }
-
-  const resolved = resolveHandUrl(target.url, path);
-  if (!resolved.ok) return resolved.error;
-
-  const res = await d.handFetch(resolved.href, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${target.bearer}`, Accept: 'application/json' },
-  });
-  if (!res.ok) return `${hand} returned ${res.status}.`;
-  const text = await res.text();
-  return text.length > HAND_READ_CAP_BYTES ? `${text.slice(0, HAND_READ_CAP_BYTES)}…[truncated]` : text;
+  const r = await readHandPath({ brand, hand, path, env: d.env, handFetch: d.handFetch });
+  if (!r.ok) {
+    if (r.reason === 'relative') return `read_hand refuses a path with relative segments; got ${path}`;
+    return r.reason === 'config' ? `Tool error: ${r.error}` : r.error;
+  }
+  if (r.status < 200 || r.status >= 300) return `${hand} returned ${r.status}.`;
+  return r.capped;
 }
 
 function requestAgentRun(d: GraphDeps, input: Record<string, unknown>): string {

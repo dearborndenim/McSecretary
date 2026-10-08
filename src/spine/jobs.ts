@@ -3,6 +3,7 @@ import { listStaleEvents } from '../db/event-queries.js';
 import { listFailedRunsSince } from '../db/run-index-queries.js';
 import { trustSummarySince } from '../db/trust-queries.js';
 import { expireAndNotify } from './decision-events.js';
+import type { ProposalRow } from './types.js';
 
 const LIST_CAP = 10;
 
@@ -10,9 +11,15 @@ const LIST_CAP = 10;
  * 5 AM sweep: expire stale proposals, and build a short health report of
  * expired proposals, undrained events > 7d, and failed runs in the last 24h.
  * Returns null when there is nothing to report (no message is sent).
+ * `onExpired` gets the rows this sweep expired (staff requester notices).
  */
-export function runExpirySweep(db: Database.Database, nowIso: string): string | null {
+export function runExpirySweep(
+  db: Database.Database, nowIso: string, onExpired?: (rows: ProposalRow[]) => void,
+): string | null {
   const expired = expireAndNotify(db, nowIso);
+  if (onExpired && expired.length > 0) {
+    try { onExpired(expired); } catch (err) { console.error('spine: expiry notice failed', err); }
+  }
   const stale = listStaleEvents(db, 7, nowIso);
   const since = new Date(new Date(nowIso).getTime() - 86_400_000).toISOString();
   const failed = listFailedRunsSince(db, since);
