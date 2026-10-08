@@ -24,15 +24,17 @@ import { createUser, getUserById, getUserGrants } from '../../src/db/user-querie
 import { TOOL_DEFINITIONS } from '../../src/tools.js';
 import { EMPIRE_TOOL_DEFINITIONS } from '../../src/empire/tools.js';
 import { GRAPH_TOOL_DEFINITIONS } from '../../src/graph/tools.js';
-import { toolsForUser, isToolAllowed, checkToolCall, PERSONAL_TOOLS } from '../../src/staff/tool-policy.js';
+import { toolsForUser, isToolAllowed, checkToolCall, PERSONAL_TOOLS, ADMIN_ONLY_TOOLS } from '../../src/staff/tool-policy.js';
+import { graphSegment } from '../../src/auth/graph-base.js';
 import { handleStaffAdminCommand } from '../../src/staff/admin-commands.js';
 
 const member = { role: 'member' };
 const admin = { role: 'admin' };
+const OWN = ['olivier@dearborndenim.com'];
 
 describe('toolsForUser (staff access spec §7.1)', () => {
   it("a member's tool list holds the personal tools and no admin-only tool", () => {
-    const names = toolsForUser(member, TOOL_DEFINITIONS).map((t) => t.name).sort();
+    const names = toolsForUser(member, TOOL_DEFINITIONS, OWN).map((t) => t.name).sort();
     expect(names).toEqual([...PERSONAL_TOOLS].sort());
     const adminOnly = [
       'update_schedule', 'toggle_schedule', 'view_schedule', 'check_journal_health',
@@ -46,25 +48,49 @@ describe('toolsForUser (staff access spec §7.1)', () => {
   });
 
   it('an admin gets the full list unchanged', () => {
-    expect(toolsForUser(admin, TOOL_DEFINITIONS)).toBe(TOOL_DEFINITIONS);
+    expect(toolsForUser(admin, TOOL_DEFINITIONS, [])).toBe(TOOL_DEFINITIONS);
   });
 
   it('an unknown tool name is admin-only (fail closed)', () => {
     expect(isToolAllowed(member, 'some_new_tool')).toBe(false);
     expect(isToolAllowed(admin, 'some_new_tool')).toBe(true);
     const extra = [...TOOL_DEFINITIONS, { name: 'some_new_tool', description: 'x', input_schema: { type: 'object' as const, properties: {} } }];
-    expect(toolsForUser(member, extra).map((t) => t.name)).not.toContain('some_new_tool');
+    expect(toolsForUser(member, extra, OWN).map((t) => t.name)).not.toContain('some_new_tool');
   });
 
   it("checkToolCall refuses a member's admin-only tool and another person's mailbox, never throws", () => {
     const own = ['olivier@dearborndenim.com'];
     expect(checkToolCall(member, 'update_schedule', {}, own)).toMatch(/not available/);
     expect(checkToolCall(member, 'send_email', { account: 'rob@dearborndenim.com' }, own)).toMatch(/own linked email/);
-    expect(checkToolCall(member, 'send_email', { account: 42 }, own)).toMatch(/own linked email/);
+    expect(checkToolCall(member, 'send_email', { account: 42 }, own)).toMatch(/account value is not a valid id/);
     expect(checkToolCall(member, 'send_email', { account: 'Olivier@dearborndenim.com' }, own)).toBeNull();
     expect(checkToolCall(member, 'list_calendar_events', {}, own)).toBeNull();
     expect(checkToolCall(member, 'archive_email', null, own)).toBeNull();
     expect(checkToolCall(admin, 'send_email', { account: 'anyone@x.com' }, [])).toBeNull();
+  });
+
+  it('PERSONAL_TOOLS is disjoint from the admin-only, empire and graph tool names', () => {
+    const others = new Set([
+      ...ADMIN_ONLY_TOOLS,
+      ...EMPIRE_TOOL_DEFINITIONS.map((t) => t.name),
+      ...GRAPH_TOOL_DEFINITIONS.map((t) => t.name),
+    ]);
+    expect([...PERSONAL_TOOLS].filter((n) => others.has(n))).toEqual([]);
+  });
+
+  it('a member with no linked account sees no tools at all', () => {
+    expect(toolsForUser(member, TOOL_DEFINITIONS, [])).toEqual([]);
+  });
+
+  it('refuses a path-traversal id into another mailbox; the URL segment encoder keeps it one segment', () => {
+    const traversal = '../../rob@dearborndenim.com/messages/AAMkAD=';
+    expect(checkToolCall(member, 'send_email', { account: OWN[0], reply_to_id: traversal, body: 'x' }, OWN))
+      .toMatch(/reply_to_id value is not a valid id/);
+    expect(checkToolCall(member, 'bulk_archive_emails', { account: OWN[0], email_ids: ['AAMkAD=', '../x'] }, OWN))
+      .toMatch(/email_ids/);
+    expect(checkToolCall(member, 'archive_email', { account: OWN[0], email_id: 'AAMkAGI2-_Tg=' }, OWN)).toBeNull();
+    expect(graphSegment(traversal)).toBe('..%2F..%2Frob@dearborndenim.com%2Fmessages%2FAAMkAD=');
+    expect(graphSegment('..')).toBe('%2E%2E');
   });
 
   it('a member with no linked account is refused every personal tool (the calendar would fall back to Robert)', () => {

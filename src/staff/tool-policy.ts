@@ -10,8 +10,6 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
-import { isEmpireTool } from '../empire/tools.js';
-import { isGraphTool } from '../graph/tools.js';
 
 /** The fields of a users row this policy reads. */
 export interface ToolPolicyUser {
@@ -68,9 +66,8 @@ export function isAdminUser(user: ToolPolicyUser): boolean {
   return user.role === 'admin';
 }
 
-/** True only for names classified PERSONAL; empire, graph and unknown names are admin-only. */
+/** True only for names classified PERSONAL; every other name is admin-only. */
 export function isPersonalTool(name: string): boolean {
-  if (isEmpireTool(name) || isGraphTool(name) || ADMIN_ONLY_TOOLS.has(name)) return false;
   return PERSONAL_TOOLS.has(name);
 }
 
@@ -79,10 +76,31 @@ export function isToolAllowed(user: ToolPolicyUser, name: string): boolean {
   return isPersonalTool(name);
 }
 
-/** The tool definitions to send to the API for this user. An admin gets `allTools` itself. */
-export function toolsForUser(user: ToolPolicyUser, allTools: Anthropic.Tool[]): Anthropic.Tool[] {
+/**
+ * The tool definitions to send to the API for this user. An admin gets
+ * `allTools` itself. A member with no linked account gets none: every
+ * personal tool would fall back to the default (Robert's) mailbox.
+ */
+export function toolsForUser(user: ToolPolicyUser, allTools: Anthropic.Tool[], ownAccounts: string[]): Anthropic.Tool[] {
   if (isAdminUser(user)) return allTools;
+  if (ownAccounts.length === 0) return [];
   return allTools.filter((t) => isToolAllowed(user, t.name));
+}
+
+/** Graph ids are base64url (with `=` padding); mailbox addresses add `@ . + -`. */
+const SAFE_ID_RE = /^[A-Za-z0-9_=@.+-]+$/;
+
+/** The first `account` / `*_id` / `*_ids` field whose value is not a safe id, or null. */
+function unsafeIdField(input: Record<string, unknown>): string | null {
+  for (const [key, value] of Object.entries(input)) {
+    if (key !== 'account' && !key.endsWith('_id') && !key.endsWith('_ids')) continue;
+    if (value === undefined || value === null) continue;
+    const values = Array.isArray(value) ? value : [value];
+    for (const v of values) {
+      if (typeof v !== 'string' || !SAFE_ID_RE.test(v) || v === '.' || v === '..') return key;
+    }
+  }
+  return null;
 }
 
 /**
@@ -112,7 +130,12 @@ export function checkToolCall(
   if (ownAccounts.length === 0) {
     return 'You have no linked email account yet, so email and calendar tools are off; ask Robert to link one.';
   }
-  const account = input && typeof input === 'object' ? (input as Record<string, unknown>).account : undefined;
+  const fields = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  // Ids and the account go into Graph URL paths; a `/` or `..` in one could
+  // walk into another mailbox (the URL builders also encode, this is layer one).
+  const bad = unsafeIdField(fields);
+  if (bad) return `The ${bad} value is not a valid id. Nothing was done.`;
+  const account = fields.account;
   if (account !== undefined && account !== null) {
     const own = new Set(ownAccounts.map((a) => a.toLowerCase()));
     if (typeof account !== 'string' || !own.has(account.trim().toLowerCase())) {

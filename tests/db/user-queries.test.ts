@@ -14,6 +14,7 @@ import {
   consumeInvite,
   linkTelegramChat,
   getUserGrants,
+  getUserByEmail,
   setUserGrants,
   setKeyedAgentNames,
   assertNoAgentUserCollision,
@@ -244,6 +245,13 @@ describe('staff access columns (spec 2026-10-08 §4)', () => {
     });
   });
 
+  it('getUserByEmail matches case-insensitively', () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    createUser(db, { id: 'k', name: 'Kristina', email: 'Kristina@DearbornDenim.com', role: 'member' });
+    expect(getUserByEmail(db, 'kristina@dearborndenim.com')?.id).toBe('k');
+  });
+
   it('getUserGrants reads garbage as no grants; setUserGrants replaces', () => {
     const db = new Database(':memory:');
     initializeSchema(db);
@@ -265,9 +273,11 @@ describe('staff access columns (spec 2026-10-08 §4)', () => {
     });
     afterEach(() => setKeyedAgentNames([]));
 
-    it('createUser refuses an id in the agent-key set and writes nothing', () => {
+    it('createUser refuses an id in the agent-key set or mcsecretary, case-insensitively, and writes nothing', () => {
       setKeyedAgentNames(['finance', 'purchasing']);
-      expect(() => createUser(db, { id: 'finance', name: 'F', email: 'f@x.com', role: 'member' })).toThrow(/AGENT_KEYS/);
+      expect(() => createUser(db, { id: 'finance', name: 'F', email: 'f@x.com', role: 'member' })).toThrow(/reserved agent name/);
+      expect(() => createUser(db, { id: 'Finance', name: 'F', email: 'f2@x.com', role: 'member' })).toThrow(/reserved agent name/);
+      expect(() => createUser(db, { id: 'McSecretary', name: 'M', email: 'm@x.com', role: 'member' })).toThrow(/reserved agent name/);
       expect(getUserById(db, 'finance')).toBeUndefined();
       createUser(db, { id: 'kristina', name: 'K', email: 'k@x.com', role: 'member' });
       expect(getUserById(db, 'kristina')).toBeDefined();
@@ -275,8 +285,11 @@ describe('staff access columns (spec 2026-10-08 §4)', () => {
 
     it('the boot check throws on an existing collision and passes otherwise', () => {
       createUser(db, { id: 'purchasing', name: 'P', email: 'p@x.com', role: 'member' });
-      expect(() => assertNoAgentUserCollision(db, ['finance', 'purchasing'])).toThrow(/purchasing/);
+      expect(() => assertNoAgentUserCollision(db, ['finance', 'Purchasing'])).toThrow(/purchasing/);
       expect(() => assertNoAgentUserCollision(db, ['finance'])).not.toThrow();
+      // A row from before the rule (createUser now refuses it) still stops the boot.
+      db.prepare("INSERT INTO users (id, name, email, role) VALUES ('MCSecretary', 'M', 'm@x.com', 'member')").run();
+      expect(() => assertNoAgentUserCollision(db, [])).toThrow(/MCSecretary/);
     });
   });
 });

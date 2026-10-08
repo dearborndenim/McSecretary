@@ -72,39 +72,44 @@ export interface CreateUserInput {
 
 /**
  * Namespace rule (staff access spec §4): a users.id must never equal an
- * AGENT_KEYS agent name, because the trust ledger and proposals.agent key on
- * that string and a bearer could otherwise file "as" a person. The service
- * registers the keyed agent names here once at boot (src/index.ts, right after
- * parseAgentKeys); a module-level setter keeps every createUser caller (seeds,
- * the admin CLI, tests) unchanged. Until it is called the set is empty, which
- * is the CLI's case: the CLI does not load AGENT_KEYS, and the boot check
- * (assertNoAgentUserCollision) catches any row it creates on the next start.
+ * agent name the spine files under, because the trust ledger and
+ * proposals.agent key on that string and a bearer could otherwise file "as" a
+ * person. Reserved: the in-process system agent `mcsecretary` (graph tools,
+ * RFQ notes cards, the graph hand's source_hand) and every AGENT_KEYS agent
+ * name, compared case-insensitively. The service registers the keyed names
+ * once at boot (src/index.ts, right after parseAgentKeys); a module-level
+ * setter keeps every createUser caller (seeds, the admin CLI, tests)
+ * unchanged. Until it is called only `mcsecretary` is reserved, which is the
+ * CLI's case: the CLI does not load AGENT_KEYS (add-user mints UUID ids), and
+ * the boot check (assertNoAgentUserCollision) catches any clash on the next
+ * start.
  */
+export const SYSTEM_AGENT_NAMES: readonly string[] = ['mcsecretary'];
+
 let _keyedAgentNames: ReadonlySet<string> = new Set();
 
 export function setKeyedAgentNames(names: Iterable<string>): void {
-  _keyedAgentNames = new Set(names);
+  _keyedAgentNames = new Set([...names].map((n) => n.toLowerCase()));
 }
 
 export function isKeyedAgentName(id: string): boolean {
-  return _keyedAgentNames.has(id);
+  const lower = id.toLowerCase();
+  return SYSTEM_AGENT_NAMES.includes(lower) || _keyedAgentNames.has(lower);
 }
 
-/** Boot check: throws when any keyed agent name is also a users.id. */
+/** Boot check: throws when `mcsecretary` or any keyed agent name is also a users.id (case-insensitive). */
 export function assertNoAgentUserCollision(db: Database.Database, agentNames: Iterable<string>): void {
-  const clash: string[] = [];
-  const has = db.prepare('SELECT 1 FROM users WHERE id = ?');
-  for (const name of new Set(agentNames)) {
-    if (has.get(name)) clash.push(name);
-  }
+  const reserved = new Set([...SYSTEM_AGENT_NAMES, ...agentNames].map((n) => n.toLowerCase()));
+  const ids = db.prepare('SELECT id FROM users').all() as { id: string }[];
+  const clash = ids.map((r) => r.id).filter((id) => reserved.has(id.toLowerCase()));
   if (clash.length > 0) {
-    throw new Error(`AGENT_KEYS agent name(s) equal a users.id: ${clash.sort().join(', ')} — rename the agent key or the user`);
+    throw new Error(`Reserved agent name(s) equal a users.id: ${clash.sort().join(', ')} — rename the agent key or the user`);
   }
 }
 
 export function createUser(db: Database.Database, input: CreateUserInput): void {
   if (isKeyedAgentName(input.id)) {
-    throw new Error(`User id "${input.id}" is an AGENT_KEYS agent name; pick another id`);
+    throw new Error(`User id "${input.id}" is a reserved agent name (mcsecretary or AGENT_KEYS); pick another id`);
   }
   db.prepare(`
     INSERT INTO users (id, name, email, role, telegram_chat_id, timezone, briefing_cron, brand_id, location_id, language)
@@ -146,6 +151,15 @@ export function setUserLocation(db: Database.Database, userId: string, locationI
     .run(locationId, userId);
 }
 
+/** BCP-47 tag (lowercase primary subtag), e.g. `es`, `pt-BR`. */
+export const LANGUAGE_TAG_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+/** Sets users.language; null clears it. Caller validates with LANGUAGE_TAG_RE. */
+export function setUserLanguage(db: Database.Database, userId: string, language: string | null): void {
+  db.prepare("UPDATE users SET language = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(language, userId);
+}
+
 export function getUserById(db: Database.Database, id: string): User | undefined {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id) as User | undefined;
 }
@@ -155,7 +169,7 @@ export function getUserByTelegramChatId(db: Database.Database, chatId: string): 
 }
 
 export function getUserByEmail(db: Database.Database, email: string): User | undefined {
-  return db.prepare('SELECT * FROM users WHERE email = ?').get(email) as User | undefined;
+  return db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email) as User | undefined;
 }
 
 export function getActiveUsers(db: Database.Database): User[] {

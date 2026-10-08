@@ -34,6 +34,7 @@ import {
   isGraphTool,
 } from './graph/tools.js';
 import { getJournalHealthReport } from './journal/files.js';
+import { graphSegment } from './auth/graph-base.js';
 import { getUserEmailAccounts, getUserById } from './db/user-queries.js';
 
 // DB reference — set during init
@@ -393,7 +394,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
 
         if (input.reply_to_id) {
           // Reply to existing message
-          const res = await fetch(`https://graph.microsoft.com/v1.0/users/${input.account}/messages/${input.reply_to_id}/reply`, {
+          const res = await fetch(`https://graph.microsoft.com/v1.0/users/${graphSegment(input.account)}/messages/${graphSegment(input.reply_to_id)}/reply`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${token}`,
@@ -411,7 +412,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
         }
 
         // New email
-        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${input.account}/sendMail`, {
+        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${graphSegment(input.account)}/sendMail`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -445,9 +446,9 @@ export async function executeTool(name: string, input: Record<string, any>, user
         let url: string;
         if (input.search) {
           const q = encodeURIComponent(input.search);
-          url = `https://graph.microsoft.com/v1.0/users/${email}/contacts?$filter=contains(displayName,'${q}') or contains(emailAddresses/any(e:e/address),'${q}')&$top=${limit}&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
+          url = `https://graph.microsoft.com/v1.0/users/${graphSegment(email)}/contacts?$filter=contains(displayName,'${q}') or contains(emailAddresses/any(e:e/address),'${q}')&$top=${limit}&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
         } else {
-          url = `https://graph.microsoft.com/v1.0/users/${email}/contacts?$top=${limit}&$orderby=displayName&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
+          url = `https://graph.microsoft.com/v1.0/users/${graphSegment(email)}/contacts?$top=${limit}&$orderby=displayName&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
         }
 
         const res = await fetch(url, {
@@ -457,7 +458,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
         if (!res.ok) {
           // Filter on contacts can be tricky — try simpler approach
           if (input.search) {
-            const simpleUrl = `https://graph.microsoft.com/v1.0/users/${email}/contacts?$search="${encodeURIComponent(input.search)}"&$top=${limit}&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
+            const simpleUrl = `https://graph.microsoft.com/v1.0/users/${graphSegment(email)}/contacts?$search="${encodeURIComponent(input.search)}"&$top=${limit}&$select=displayName,emailAddresses,companyName,jobTitle,mobilePhone,businessPhones`;
             const res2 = await fetch(simpleUrl, {
               headers: {
                 Authorization: `Bearer ${token}`,
@@ -571,7 +572,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
           const requests = batch.map((id, i) => ({
             id: String(i + 1),
             method: 'POST',
-            url: `/users/${input.account}/messages/${id}/move`,
+            url: `/users/${graphSegment(input.account)}/messages/${graphSegment(id)}/move`,
             headers: { 'Content-Type': 'application/json' },
             body: { destinationId: 'archive' },
           }));
@@ -625,7 +626,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
           const requests = batch.map((id, i) => ({
             id: String(i + 1),
             method: 'PATCH',
-            url: `/users/${input.account}/messages/${id}`,
+            url: `/users/${graphSegment(input.account)}/messages/${graphSegment(id)}`,
             headers: { 'Content-Type': 'application/json' },
             body: { categories: [input.category] },
           }));
@@ -671,7 +672,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
 
         for (const acct of accounts) {
           // Find all emails with this category
-          const filterUrl = `https://graph.microsoft.com/v1.0/users/${acct}/messages?$filter=${encodeURIComponent(`categories/any(c:c eq '${input.category}')`)}&$top=100&$select=id,subject`;
+          const filterUrl = `https://graph.microsoft.com/v1.0/users/${graphSegment(acct)}/messages?$filter=${encodeURIComponent(`categories/any(c:c eq '${input.category}')`)}&$top=100&$select=id,subject`;
           const listRes = await fetch(filterUrl, {
             headers: { Authorization: `Bearer ${token}` },
           });
@@ -709,7 +710,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
         const email = resolveDefaultAccount(input.account, userId);
         if (!email) return 'No email account available. Specify an account or ensure user has email accounts configured.';
 
-        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${email}/outlook/masterCategories`, {
+        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${graphSegment(email)}/outlook/masterCategories`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) {
@@ -727,7 +728,7 @@ export async function executeTool(name: string, input: Record<string, any>, user
         const email = resolveDefaultAccount(input.account, userId);
         if (!email) return 'No email account available. Specify an account or ensure user has email accounts configured.';
 
-        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${email}/outlook/masterCategories`, {
+        const res = await fetch(`https://graph.microsoft.com/v1.0/users/${graphSegment(email)}/outlook/masterCategories`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,

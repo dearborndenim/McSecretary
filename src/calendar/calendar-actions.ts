@@ -3,7 +3,7 @@
  * Create, modify, and delete Outlook calendar events.
  */
 
-import { GRAPH_BASE, lazyGraphToken, defaultOutlookMailbox } from '../auth/graph-base.js';
+import { GRAPH_BASE, lazyGraphToken, defaultOutlookMailbox, graphSegment } from '../auth/graph-base.js';
 
 export async function createCalendarEvent(
   userEmail: string | undefined,
@@ -46,7 +46,7 @@ export async function createCalendarEvent(
     eventBody.onlineMeetingProvider = 'teamsForBusiness';
   }
 
-  const response = await fetch(`${GRAPH_BASE}/users/${email}/events`, {
+  const response = await fetch(`${GRAPH_BASE}/users/${graphSegment(email)}/events`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -86,7 +86,7 @@ export async function updateCalendarEvent(
   if (updates.location) updateBody.location = { displayName: updates.location };
   if (updates.body) updateBody.body = { contentType: 'text', content: updates.body };
 
-  const response = await fetch(`${GRAPH_BASE}/users/${email}/events/${eventId}`, {
+  const response = await fetch(`${GRAPH_BASE}/users/${graphSegment(email)}/events/${graphSegment(eventId)}`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -108,7 +108,7 @@ export async function deleteCalendarEvent(
   const token = await lazyGraphToken();
   const email = userEmail ?? await defaultOutlookMailbox();
 
-  const response = await fetch(`${GRAPH_BASE}/users/${email}/events/${eventId}`, {
+  const response = await fetch(`${GRAPH_BASE}/users/${graphSegment(email)}/events/${graphSegment(eventId)}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });

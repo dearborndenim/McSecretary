@@ -72,6 +72,11 @@ export interface PublicBrandEntry {
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/** The brand config directory: SPINE_BRANDS_DIR, default `config/brands`. Shared by config.ts and the admin CLI (which must not load config.ts). */
+export function brandsDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SPINE_BRANDS_DIR ?? 'config/brands';
+}
+
 export function listBrandIds(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();

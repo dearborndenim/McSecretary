@@ -62,6 +62,8 @@ describe('buildSystemPromptBase (MCS-7 per-user)', () => {
   it('says so when no accounts are linked', () => {
     const text = buildSystemPromptBase({ ...olivier, accounts: [] });
     expect(text).toContain("Olivier's email accounts: (none linked yet).");
+    expect(text).toContain('Olivier has no email account linked yet, so you have no email or calendar tools.');
+    expect(text).not.toContain("Olivier's own Outlook email");
   });
 
   it('MCS-3: drops the prose tool catalog but keeps the SMS context block (admin)', () => {

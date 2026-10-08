@@ -1,5 +1,5 @@
 import type { ClassifiedEmail } from './types.js';
-import { GRAPH_BASE, lazyGraphToken } from '../auth/graph-base.js';
+import { GRAPH_BASE, lazyGraphToken, graphSegment } from '../auth/graph-base.js';
 
 export interface EmailAction {
   type: 'archive' | 'mark_read' | 'flag_for_review' | 'no_action';
@@ -31,7 +31,7 @@ export function determineAction(email: ClassifiedEmail): EmailAction {
 export async function archiveOutlookEmail(userEmail: string, messageId: string): Promise<void> {
   const token = await lazyGraphToken();
 
-  const response = await fetch(`${GRAPH_BASE}/users/${userEmail}/messages/${messageId}/move`, {
+  const response = await fetch(`${GRAPH_BASE}/users/${graphSegment(userEmail)}/messages/${graphSegment(messageId)}/move`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -49,7 +49,7 @@ export async function archiveOutlookEmail(userEmail: string, messageId: string):
 export async function markOutlookAsRead(userEmail: string, messageId: string): Promise<void> {
   const token = await lazyGraphToken();
 
-  const response = await fetch(`${GRAPH_BASE}/users/${userEmail}/messages/${messageId}`, {
+  const response = await fetch(`${GRAPH_BASE}/users/${graphSegment(userEmail)}/messages/${graphSegment(messageId)}`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -71,7 +71,7 @@ export async function categorizeOutlookEmail(
 ): Promise<void> {
   const token = await lazyGraphToken();
 
-  const response = await fetch(`${GRAPH_BASE}/users/${userEmail}/messages/${messageId}`, {
+  const response = await fetch(`${GRAPH_BASE}/users/${graphSegment(userEmail)}/messages/${graphSegment(messageId)}`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,

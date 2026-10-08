@@ -9,9 +9,12 @@ import type Database from 'better-sqlite3';
 import {
   getAllUsers,
   getUserByEmail,
+  getUserById,
   getUserGrants,
   setUserGrants,
   setUserLocation,
+  setUserLanguage,
+  LANGUAGE_TAG_RE,
   type User,
 } from '../db/user-queries.js';
 import { loadBrandConfig } from '../spine/brand-config.js';
@@ -23,7 +26,7 @@ type Result = { ok: true; message: string } | { ok: false; message: string };
 
 function describeUser(u: User): string {
   const groups = getUserGrants(u);
-  return `${u.name} <${u.email}> — groups: ${groups.length > 0 ? groups.join(', ') : '(none)'}; location: ${u.location_id ?? '(none)'}`;
+  return `${u.name} <${u.email}> — groups: ${groups.length > 0 ? groups.join(', ') : '(none)'}; location: ${u.location_id ?? '(none)'}; language: ${u.language ?? '(as written)'}`;
 }
 
 /** Replaces the user's groups. Every group must be in KNOWN_GROUPS; nothing is written otherwise. */
@@ -36,7 +39,7 @@ export function grantGroups(db: Database.Database, email: string, groups: string
     return { ok: false, message: `Unknown group(s): ${bad.join(', ')}. Known groups: ${KNOWN_GROUPS.join(', ')}` };
   }
   setUserGrants(db, user.id, groups);
-  const updated = getUserByEmail(db, user.email)!;
+  const updated = getUserById(db, user.id)!;
   return { ok: true, message: `Groups set. ${describeUser(updated)}` };
 }
 
@@ -82,13 +85,31 @@ export function setLocationByEmail(db: Database.Database, email: string, where: 
     return { ok: false, message: 'Location must be store, factory, none, or a gid like gid://shopify/Location/123.' };
   }
   setUserLocation(db, user.id, locationId);
-  const updated = getUserByEmail(db, user.email)!;
+  const updated = getUserById(db, user.id)!;
   return { ok: true, message: `Location set. ${describeUser(updated)}` };
 }
 
+/** Sets users.language to a BCP-47 tag, or clears it with `none` (reply in the language written in). */
+export function setLanguageByEmail(db: Database.Database, email: string, tag: string): Result {
+  const user = getUserByEmail(db, email.trim().toLowerCase());
+  if (!user) return { ok: false, message: `No user found with email: ${email}` };
+  const arg = tag.trim();
+  let language: string | null;
+  if (arg.toLowerCase() === 'none') {
+    language = null;
+  } else if (LANGUAGE_TAG_RE.test(arg)) {
+    language = arg;
+  } else {
+    return { ok: false, message: 'Language must be a BCP-47 tag like es or pt-BR, or none.' };
+  }
+  setUserLanguage(db, user.id, language);
+  const updated = getUserById(db, user.id)!;
+  return { ok: true, message: `Language set. ${describeUser(updated)}` };
+}
+
 /**
- * Telegram entry point. Returns the reply for `/grant`, `/grants` or
- * `/setlocation`, or null when `text` is none of them. Admin-only: the
+ * Telegram entry point. Returns the reply for `/grant`, `/grants`,
+ * `/setlocation` or `/setlanguage`, or null when `text` is none of them. Admin-only: the
  * caller checks the role before calling.
  */
 export function handleStaffAdminCommand(db: Database.Database, text: string, brandsDir: string): string | null {
@@ -104,6 +125,10 @@ export function handleStaffAdminCommand(db: Database.Database, text: string, bra
   if (cmd === '/setlocation') {
     if (parts.length !== 3) return 'Usage: /setlocation <email> <location gid|store|factory|none>';
     return setLocationByEmail(db, parts[1]!, parts[2]!, brandsDir).message;
+  }
+  if (cmd === '/setlanguage') {
+    if (parts.length !== 3) return 'Usage: /setlanguage <email> <bcp47 tag|none>';
+    return setLanguageByEmail(db, parts[1]!, parts[2]!).message;
   }
   return null;
 }

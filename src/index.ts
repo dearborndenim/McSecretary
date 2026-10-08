@@ -102,7 +102,8 @@ import {
 
 let db: Database.Database;
 let anthropic: Anthropic;
-let awaitingCheckInResponse = false;
+// Per-user: users whose hourly check-in is waiting for a reply (logged as time).
+const awaitingCheckInResponse = new Set<string>();
 // Per-user flag: expecting Rob/member's reply to the EOD reflection prompt.
 // Cleared when they respond (which is saved as a journal entry).
 const awaitingReflectionFromUser = new Set<string>();
@@ -231,7 +232,6 @@ async function handleMorningBriefing(): Promise<void> {
 async function handleHourlyCheckIn(): Promise<void> {
   const users = getActiveUsers(db);
   const now = new Date();
-  let anySent = false;
   for (const user of users) {
     // Each user has their own schedule window; skip if this isn't their slot.
     if (!shouldUserCheckInNow(db, user.id, now)) continue;
@@ -240,12 +240,11 @@ async function handleHourlyCheckIn(): Promise<void> {
       await sendCheckInToUser(user.id);
       const today = getChicagoDate();
       insertConversationMessage(db, user.id, today, 'secretary', 'Quick check — what did you work on this past hour?');
-      anySent = true;
+      awaitingCheckInResponse.add(user.id);
     } catch (err) {
       console.error(`Check-in failed for ${user.name}: ${(err as Error).message}`);
     }
   }
-  if (anySent) awaitingCheckInResponse = true;
 }
 
 async function handleWeeklySynthesis(): Promise<void> {
@@ -586,10 +585,14 @@ async function handleEveningSummary(): Promise<void> {
         preview = 'No events scheduled for tomorrow.';
       }
 
-      const fullMsg = `End of Day Summary\n\n${summary}\n\n${preview}\n\nHow was your day? Anything you want to reflect on?`;
+      // Only the admin is asked to reflect: the reply goes into the shared
+      // "Rob" journal, which feeds the master learnings.
+      const isAdmin = user.role === 'admin';
+      const reflectionAsk = isAdmin ? '\n\nHow was your day? Anything you want to reflect on?' : '';
+      const fullMsg = `End of Day Summary\n\n${summary}\n\n${preview}${reflectionAsk}`;
       await sendMessageToUser(user.id, fullMsg, false);
       insertConversationMessage(db, user.id, today, 'secretary', fullMsg);
-      awaitingReflectionFromUser.add(user.id);
+      if (isAdmin) awaitingReflectionFromUser.add(user.id);
     } catch (err) {
       console.error(`Evening summary failed for ${user.name}: ${(err as Error).message}`);
     }
@@ -840,8 +843,8 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     return `Invite code for ${targetUser.name} (${email}):\n\n\`${code}\`\n\nExpires in 7 days. They send /start ${code} to the bot.`;
   }
 
-  // Admin-only: /grant, /grants, /setlocation — staff access (spec §7.5).
-  if (user.role === 'admin' && /^\/(grant|grants|setlocation)(\s|$)/.test(lowerText)) {
+  // Admin-only: /grant, /grants, /setlocation, /setlanguage — staff access (spec §7.5).
+  if (user.role === 'admin' && /^\/(grant|grants|setlocation|setlanguage)(\s|$)/.test(lowerText)) {
     const reply = handleStaffAdminCommand(db, text, config.spine.brandsDir);
     if (reply !== null) return reply;
   }
@@ -1498,8 +1501,8 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
   }
 
   // Check-in response
-  if (awaitingCheckInResponse && text.length < 300 && !text.includes('?')) {
-    awaitingCheckInResponse = false;
+  if (awaitingCheckInResponse.has(user.id) && text.length < 300 && !text.includes('?')) {
+    awaitingCheckInResponse.delete(user.id);
     insertTimeLog(db, user.id, { date: today, hour: hour - 1, activity: text.trim() });
     const response = `Logged for ${hour - 1}:00: ${text.trim()}`;
     insertConversationMessage(db, user.id, today, 'secretary', response);
@@ -1533,7 +1536,7 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     const smsContext = isAdmin ? getRecentSmsMessages(db, 24, 30) : '';
     const dailyContext = isAdmin ? buildDailyContext() : '';
     const conversationHistory = buildConversationHistory(user.id, today);
-    const userTools = toolsForUser(user, TOOL_DEFINITIONS);
+    const userTools = toolsForUser(user, TOOL_DEFINITIONS, ownAccounts);
 
     const prefs = getUserPreferences(db, user.id);
     const systemBlocks = buildChatSystemBlocks(
