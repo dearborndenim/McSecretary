@@ -4,6 +4,7 @@ import path from 'node:path';
 import { initializeSchema } from '../../src/db/schema.js';
 import { createUser, getUserById, setUserGrants, type User } from '../../src/db/user-queries.js';
 import { getProposalById } from '../../src/db/proposal-queries.js';
+import { ensureInitialTrust } from '../../src/db/trust-queries.js';
 import { buildSpine } from '../../src/spine/wiring.js';
 import { runExpirySweep } from '../../src/spine/jobs.js';
 import { loadBrandConfig } from '../../src/spine/brand-config.js';
@@ -152,6 +153,9 @@ describe('staff-action execution', () => {
     const run = (id: string, input: unknown, text = 'msg') => executeStaffAction(d, cat, getUserById(db, 'kristina')!, id, input, text);
     return { spine, run };
   }
+  /** An existing level-1 row: initial_level never touches it, so these filings take the card path. */
+  const atLevel1 = (actionType: string) =>
+    db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('kristina','dearborn-denim',?,1)").run(actionType);
 
   it('a read can never be templated out of /api/integration/', async () => {
     const { run } = setup();
@@ -173,6 +177,7 @@ describe('staff-action execution', () => {
 
   it('ops_note goes end to end through spine.file on the built-in notes hand', async () => {
     const { run } = setup();
+    atLevel1('ops_note');
     const reply = await run('ops_note', { text: 'machine 3 is down', urgency: 'now' }, 'machine 3 is down!!');
     expect(reply).toMatch(/^Filed #\d+ for Robert's approval/);
     const id = Number(/#(\d+)/.exec(reply)![1]);
@@ -187,7 +192,7 @@ describe('staff-action execution', () => {
     expect(card.text.split('\n')[1]).toBe('Requested by Kristina on Telegram: "machine 3 is down!!"');
 
     // Promoted to level 2: it posts and reports, no card, no HTTP call.
-    db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('kristina','dearborn-denim','ops_note',2)").run();
+    db.prepare("UPDATE trust_ledger SET level = 2 WHERE agent = 'kristina' AND action_type = 'ops_note'").run();
     const done = await run('ops_note', { text: 'delivery came early' });
     expect(done).toBe('Done: Note from Kristina (fyi): delivery came early');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -212,12 +217,14 @@ describe('staff-action execution', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
 
     // A still-pending identical request is the duplicate.
+    atLevel1('ops_note');
     expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/^Filed #/);
     expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/^That's already filed as #\d+ and waiting for Robert/);
   });
 
   it('tells the requester how each proposal ended, and never the admin about their own', async () => {
     const { spine, run } = setup();
+    atLevel1('store_inventory_set');
     const file = async (qty: number) => Number(/#(\d+)/.exec(await run('store_inventory_set', { sku: 'H201-M', quantity: qty, reason: 'recount' }))![1]);
     const toKristina = () => sent.filter((s) => s.chatId === '777').map((s) => s.text);
 
@@ -253,5 +260,29 @@ describe('staff-action execution', () => {
     const before = sent.length;
     await spine.onCallback(`prop:reject:${own.id}`, '555', 'robert-mcmillan');
     expect(sent.slice(before).map((s) => s.text)).toEqual([`Rejected #${own.id}.`]);
+  });
+
+  it('the first filing starts the ledger row at the catalogue initial_level; an existing row and a pinned type are never raised', async () => {
+    const { run } = setup();
+    const level = (t: string) => (db.prepare("SELECT level FROM trust_ledger WHERE agent = 'kristina' AND action_type = ?").get(t) as { level: number } | undefined)?.level;
+    expect(level('ops_note')).toBeUndefined();
+    // initial_level 2: the first request runs and reports, no card.
+    expect(await run('ops_note', { text: 'first note' })).toBe('Done: Note from Kristina (fyi): first note');
+    expect(level('ops_note')).toBe(2);
+    expect(sent.some((s) => s.card)).toBe(false);
+    // Robert set it back to 1: the next filing leaves it there and carded.
+    db.prepare("UPDATE trust_ledger SET level = 1 WHERE agent = 'kristina' AND action_type = 'ops_note'").run();
+    expect(await run('ops_note', { text: 'second note' })).toMatch(/^Filed #\d+ for Robert's approval/);
+    expect(level('ops_note')).toBe(1);
+
+    // A pinned type never starts above 1, whatever level is asked for.
+    expect(ensureInitialTrust(db, { agent: 'kristina', brand_id: 'dearborn-denim', action_type: 'price_change' }, 3, NOW)).toBe(true);
+    expect(level('price_change')).toBe(1);
+    // And the validator refuses initial_level on a read or out of range.
+    const c = base(); c.actions.set.initial_level = 4;
+    expect(() => parseCatalogue(c)).toThrow(/initial_level must be 1, 2 or 3/);
+    const r = base(); r.actions.look.initial_level = 2;
+    expect(() => parseCatalogue(r)).toThrow(/initial_level is for writes only/);
+    expect(cat.actions.vendor_po_receive!.initial_level).toBeUndefined();
   });
 });

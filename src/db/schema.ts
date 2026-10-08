@@ -3,6 +3,7 @@ import { initializeCalendarSchema } from './calendar-schema.js';
 import { initializeUserSchema } from './user-schema.js';
 import { initializeSpineSchema } from './spine-schema.js';
 import { initializeLionsSchema } from '../lions/store.js';
+import { initializeStaffUiSchema } from './staff-ui-queries.js';
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
@@ -65,4 +66,5 @@ export function initializeSchema(db: Database.Database): void {
   initializeUserSchema(db);
   initializeSpineSchema(db);
   initializeLionsSchema(db);
+  initializeStaffUiSchema(db);
 }

@@ -57,36 +57,39 @@ export function describeGrants(db: Database.Database, email?: string): string {
 }
 
 /**
- * Sets users.location_id. `where` is a Shopify location gid, `store` (brand
- * config store_location_id), `factory` (brand config location_id), or `none`
- * to clear it. The aliases resolve against the user's own brand.
+ * A location argument to the gid it stands for: a Shopify location gid,
+ * `store` (brand config store_location_id), `factory` (brand config
+ * location_id), or `none` (null). Aliases resolve against `brandId`.
  */
+export function resolveLocationArg(
+  where: string, brandId: string, brandsDir: string,
+): { ok: true; locationId: string | null } | { ok: false; message: string } {
+  const arg = where.trim();
+  const lower = arg.toLowerCase();
+  if (lower === 'none') return { ok: true, locationId: null };
+  if (lower === 'store' || lower === 'factory') {
+    let brand;
+    try {
+      brand = loadBrandConfig(brandsDir, brandId);
+    } catch (err) {
+      return { ok: false, message: `Cannot load brand ${brandId}: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const field = lower === 'store' ? 'store_location_id' : 'location_id';
+    const value = brand[field];
+    if (!value) return { ok: false, message: `Brand ${brandId} has no ${field} set; pass the full location gid instead.` };
+    return { ok: true, locationId: value };
+  }
+  if (LOCATION_GID_RE.test(arg)) return { ok: true, locationId: arg };
+  return { ok: false, message: 'Location must be store, factory, none, or a gid like gid://shopify/Location/123.' };
+}
+
+/** Sets users.location_id from a location argument (see resolveLocationArg), against the user's own brand. */
 export function setLocationByEmail(db: Database.Database, email: string, where: string, brandsDir: string): Result {
   const user = getUserByEmail(db, email.trim().toLowerCase());
   if (!user) return { ok: false, message: `No user found with email: ${email}` };
-  const arg = where.trim();
-  let locationId: string | null;
-  if (arg.toLowerCase() === 'none') {
-    locationId = null;
-  } else if (arg.toLowerCase() === 'store' || arg.toLowerCase() === 'factory') {
-    let brand;
-    try {
-      brand = loadBrandConfig(brandsDir, user.brand_id);
-    } catch (err) {
-      return { ok: false, message: `Cannot load brand ${user.brand_id}: ${err instanceof Error ? err.message : String(err)}` };
-    }
-    const field = arg.toLowerCase() === 'store' ? 'store_location_id' : 'location_id';
-    const value = brand[field];
-    if (!value) {
-      return { ok: false, message: `Brand ${user.brand_id} has no ${field} set; pass the full location gid instead.` };
-    }
-    locationId = value;
-  } else if (LOCATION_GID_RE.test(arg)) {
-    locationId = arg;
-  } else {
-    return { ok: false, message: 'Location must be store, factory, none, or a gid like gid://shopify/Location/123.' };
-  }
-  setUserLocation(db, user.id, locationId);
+  const r = resolveLocationArg(where, user.brand_id, brandsDir);
+  if (!r.ok) return r;
+  setUserLocation(db, user.id, r.locationId);
   const updated = getUserById(db, user.id)!;
   return { ok: true, message: `Location set. ${describeUser(updated)}` };
 }

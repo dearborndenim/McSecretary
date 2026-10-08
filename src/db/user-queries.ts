@@ -240,6 +240,20 @@ export function createInvite(db: Database.Database, userId: string, expiresIn: s
   return code;
 }
 
+/**
+ * Create a user with a fresh UUID id and a 7-day invite code, in one
+ * transaction. The one path for `admin.ts add-user` and the staff UI.
+ */
+export function createUserWithInvite(
+  db: Database.Database, input: Omit<CreateUserInput, 'id'>,
+): { id: string; code: string } {
+  return db.transaction(() => {
+    const id = crypto.randomUUID();
+    createUser(db, { ...input, id });
+    return { id, code: createInvite(db, id) };
+  })();
+}
+
 export function consumeInvite(db: Database.Database, code: string): string | undefined {
   const invite = db.prepare(`
     SELECT user_id FROM user_invites

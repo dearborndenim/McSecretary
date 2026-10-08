@@ -22,6 +22,21 @@ function ensureRow(db: Database.Database, k: TrustKey): void {
 }
 
 /**
+ * Create the ledger row at `level` when none exists yet (a staff user's first
+ * filing of an action type, catalogue `initial_level`; staff admin UI spec §4).
+ * An existing row is never touched. A pinned type always starts at 1.
+ * Returns whether a row was created.
+ */
+export function ensureInitialTrust(db: Database.Database, k: TrustKey, level: 1 | 2 | 3, nowIso: string): boolean {
+  const start = isPinned(k.action_type) ? 1 : level;
+  const r = db.prepare(`
+    INSERT OR IGNORE INTO trust_ledger (agent, brand_id, action_type, level, last_change_at, last_change_by)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(k.agent, k.brand_id, k.action_type, start, start > 1 ? nowIso : null, start > 1 ? 'catalogue' : null);
+  return r.changes === 1;
+}
+
+/**
  * Count a human decision. A rejection at level >= 2 demotes to 1 (automatic,
  * spec §4.4). Returns whether that happened.
  */

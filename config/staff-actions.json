@@ -44,6 +44,7 @@
       "reversible": true,
       "cost_usd": 0,
       "level_required": 1,
+      "initial_level": 2,
       "expires_hours": 24,
       "summary": "Set {sku} to {quantity} at the store"
     },
@@ -78,6 +79,7 @@
       "reversible": true,
       "cost_usd": 0,
       "level_required": 1,
+      "initial_level": 2,
       "expires_hours": 24,
       "summary": "Move {quantity} × {sku} ({direction})"
     },
@@ -155,6 +157,7 @@
       "reversible": true,
       "cost_usd": 0,
       "level_required": 1,
+      "initial_level": 2,
       "expires_hours": 24,
       "summary": "Request {quantity} {unit} of {material}"
     },
@@ -190,6 +193,7 @@
       "reversible": true,
       "cost_usd": 0,
       "level_required": 1,
+      "initial_level": 2,
       "expires_hours": 72,
       "summary": "Note to Robert ({urgency}): {text}"
     }

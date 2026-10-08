@@ -4,8 +4,10 @@ import { initializeSchema } from '../../src/db/schema.js';
 import {
   insertProposal, getProposalById, listPendingProposals, decideProposal,
   recordExecution, expireProposals, setTelegramRef, appendEdit, setEditRequested,
-  findEditRequestedForChat, updateActionPayload, listProposalsByAgent,
+  findEditRequestedForChat, updateActionPayload, listProposalsByAgent, listStaffProposals,
 } from '../../src/db/proposal-queries.js';
+import { createUser } from '../../src/db/user-queries.js';
+import { parseActivityQuery } from '../../src/staff/ui/pages/activity.js';
 import type { ProposalInput } from '../../src/spine/types.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
@@ -180,5 +182,41 @@ describe('listProposalsByAgent', () => {
 
   it('returns an empty array for an agent that has never filed', () => {
     expect(listProposalsByAgent(db, 'nobody', 'dearborn-denim', 5)).toEqual([]);
+  });
+});
+
+describe('listStaffProposals (staff admin UI activity page)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  it('returns only proposals filed by a person, newest first, inside the Chicago date window', () => {
+    createUser(db, { id: 'kristina', name: 'Kristina', email: 'k@dd.com', role: 'member' });
+    const file = (agent: string, at: string, n: number) =>
+      insertProposal(db, input({ agent, action_type: 'ops_note', action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { n } } }), at).id;
+    // Oct 7 23:30 Chicago (CDT, UTC-5) is Oct 8 04:30 UTC: outside an Oct 8 Chicago window.
+    file('kristina', '2026-10-08T04:30:00.000Z', 1);
+    const a = file('kristina', '2026-10-08T05:00:00.000Z', 2); // Oct 8 00:00 Chicago
+    const b = file('kristina', '2026-10-09T04:59:59.000Z', 3); // Oct 8 23:59:59 Chicago
+    file('kristina', '2026-10-09T05:00:00.000Z', 4); // Oct 9 00:00 Chicago
+    file('marketing-manager', '2026-10-08T15:00:00.000Z', 5);
+    file('mcsecretary', '2026-10-08T15:00:00.000Z', 6);
+
+    const all = listStaffProposals(db, {}, 1);
+    expect(all.total).toBe(4);
+    expect(new Set(all.rows.map((r) => r.agent))).toEqual(new Set(['kristina']));
+
+    const { filter } = parseActivityQuery(new URLSearchParams('from=2026-10-08&to=2026-10-08'));
+    const day = listStaffProposals(db, filter, 1);
+    expect(day.rows.map((r) => r.id)).toEqual([b, a]);
+    expect(day.total).toBe(2);
+
+    // Not a real calendar day: ignored, never rolled forward into March.
+    expect(parseActivityQuery(new URLSearchParams('from=2026-02-30&to=2026-13-01')).filter).toEqual({});
+
+    // A business agent named in the filter still returns nothing.
+    expect(listStaffProposals(db, { agent: 'marketing-manager' }, 1).total).toBe(0);
+    // Paging: 1 a page, second page is the next-newest.
+    expect(listStaffProposals(db, filter, 2, 1).rows.map((r) => r.id)).toEqual([a]);
   });
 });

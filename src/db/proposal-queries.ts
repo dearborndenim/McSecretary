@@ -232,3 +232,36 @@ export function updateActionPayload(db: Database.Database, id: number, payload: 
   ).run(JSON.stringify(payload), hashPayload(payload), id);
   return result.changes === 1;
 }
+
+/** Filter for the staff activity page (staff admin UI spec §3.2). Bounds are ISO instants; `toIso` is exclusive. */
+export interface StaffProposalFilter {
+  agent?: string;
+  actionType?: string;
+  status?: ProposalStatus;
+  fromIso?: string;
+  toIso?: string;
+}
+
+export const STAFF_PAGE_SIZE = 50;
+
+/**
+ * Proposals filed by a person (agent = a users.id), newest first, one page of
+ * `pageSize`. Business-agent and system filings are never included.
+ */
+export function listStaffProposals(
+  db: Database.Database, filter: StaffProposalFilter, page: number, pageSize = STAFF_PAGE_SIZE,
+): { rows: ProposalRow[]; total: number } {
+  const where = ['agent IN (SELECT id FROM users)'];
+  const args: (string | number)[] = [];
+  if (filter.agent) { where.push('agent = ?'); args.push(filter.agent); }
+  if (filter.actionType) { where.push('action_type = ?'); args.push(filter.actionType); }
+  if (filter.status) { where.push('status = ?'); args.push(filter.status); }
+  if (filter.fromIso) { where.push('created_at >= ?'); args.push(filter.fromIso); }
+  if (filter.toIso) { where.push('created_at < ?'); args.push(filter.toIso); }
+  const sql = where.join(' AND ');
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM proposals WHERE ${sql}`).get(...args) as { n: number }).n;
+  const p = Math.max(1, Math.floor(page));
+  const rows = db.prepare(`SELECT * FROM proposals WHERE ${sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+    .all(...args, pageSize, (p - 1) * pageSize) as ProposalRow[];
+  return { rows, total };
+}
