@@ -1,5 +1,5 @@
 import type { UnifiedEvent } from './types.js';
-import { GRAPH_BASE } from '../auth/graph-base.js';
+import { GRAPH_BASE, graphSegment } from '../auth/graph-base.js';
 
 interface GraphCalendarEvent {
   id: string;
@@ -26,7 +26,7 @@ export async function fetchOutlookCalendarEvents(
   const { getGraphToken } = await import('../auth/graph.js');
   const token = await getGraphToken();
 
-  const url = `${GRAPH_BASE}/users/${userEmail}/calendarview?startDateTime=${startDate}&endDateTime=${endDate}&$top=100&$select=id,subject,start,end,location,isAllDay,showAs,isCancelled,responseStatus,attendees`;
+  const url = `${GRAPH_BASE}/users/${graphSegment(userEmail)}/calendarview?startDateTime=${startDate}&endDateTime=${endDate}&$top=100&$select=id,subject,start,end,location,isAllDay,showAs,isCancelled,responseStatus,attendees`;
 
   const response = await fetch(url, {
     headers: {

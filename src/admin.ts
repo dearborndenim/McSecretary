@@ -9,6 +9,9 @@
  *   list-users
  *   generate-invite --user-id <id>
  *   promote         --agent <agent> --action <action_type> --level <0-3> [--brand dearborn-denim]
+ *   set-grants      --email <email> --groups <group,group>
+ *   set-location    --email <email> --location <gid|store|factory|none>
+ *   set-language    --email <email> --language <bcp47|none>
  */
 
 import type Database from 'better-sqlite3';
@@ -23,6 +26,9 @@ import {
 } from './db/user-queries.js';
 import { promoteTrust, getTrustRow } from './db/trust-queries.js';
 import type { TrustLevel } from './spine/types.js';
+import { grantGroups, setLocationByEmail, setLanguageByEmail } from './staff/admin-commands.js';
+// Not config.ts: the CLI must run without the Azure/Telegram env vars config.ts requires.
+import { brandsDirFromEnv } from './spine/brand-config.js';
 
 const DEFAULT_BRAND_ID = 'dearborn-denim';
 
@@ -116,8 +122,24 @@ export async function executeAdminCommand(db: Database.Database, cmd: AdminComma
       return JSON.stringify(getTrustRow(db, key), null, 2);
     }
 
+    case 'set-grants': {
+      if (!cmd.args.email || !cmd.args.groups) return 'Usage: set-grants --email <email> --groups <group,group>';
+      const groups = cmd.args.groups.split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
+      return grantGroups(db, cmd.args.email, groups).message;
+    }
+
+    case 'set-location': {
+      if (!cmd.args.email || !cmd.args.location) return 'Usage: set-location --email <email> --location <gid|store|factory|none>';
+      return setLocationByEmail(db, cmd.args.email, cmd.args.location, brandsDirFromEnv()).message;
+    }
+
+    case 'set-language': {
+      if (!cmd.args.email || !cmd.args.language) return 'Usage: set-language --email <email> --language <bcp47|none>';
+      return setLanguageByEmail(db, cmd.args.email, cmd.args.language).message;
+    }
+
     default:
-      return `Unknown command: ${cmd.action}. Available: add-user, add-email, set-preferences, list-users, generate-invite, promote`;
+      return `Unknown command: ${cmd.action}. Available: add-user, add-email, set-preferences, list-users, generate-invite, promote, set-grants, set-location, set-language`;
   }
 }
 

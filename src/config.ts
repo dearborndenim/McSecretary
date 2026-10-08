@@ -1,3 +1,5 @@
+import { brandsDirFromEnv } from './spine/brand-config.js';
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -48,7 +50,7 @@ export const config = {
     apiKey: optional('PO_RECEIVER_API_KEY', ''),
   },
   spine: {
-    brandsDir: optional('SPINE_BRANDS_DIR', 'config/brands'),
+    brandsDir: brandsDirFromEnv(),
     agentKeys: optional('AGENT_KEYS', ''),
     agentPolicy: optional('AGENT_POLICY', ''),
     monthlySummaryUserId: optional('SPINE_SUMMARY_USER_ID', 'robert-mcmillan'),

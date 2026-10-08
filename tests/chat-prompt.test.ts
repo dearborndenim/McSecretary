@@ -62,10 +62,12 @@ describe('buildSystemPromptBase (MCS-7 per-user)', () => {
   it('says so when no accounts are linked', () => {
     const text = buildSystemPromptBase({ ...olivier, accounts: [] });
     expect(text).toContain("Olivier's email accounts: (none linked yet).");
+    expect(text).toContain('Olivier has no email account linked yet, so you have no email or calendar tools.');
+    expect(text).not.toContain("Olivier's own Outlook email");
   });
 
-  it('MCS-3: drops the prose tool catalog but keeps the SMS context block', () => {
-    const text = buildSystemPromptBase(olivier);
+  it('MCS-3: drops the prose tool catalog but keeps the SMS context block (admin)', () => {
+    const text = buildSystemPromptBase(robert);
     expect(text).not.toContain('=== YOUR TOOLS');
     expect(text).not.toContain('bulk_categorize_emails');
     expect(text).not.toContain('BULK OPERATION RULES');
@@ -83,8 +85,8 @@ describe('buildSystemPromptBase (MCS-7 per-user)', () => {
     expect(text).toContain('say so plainly and offer the closest thing you can do');
   });
 
-  it('MCS-10: no hardcoded job times; points at the schedule tools', () => {
-    const text = buildSystemPromptBase(olivier);
+  it('MCS-10: no hardcoded job times; points at the schedule tools (admin)', () => {
+    const text = buildSystemPromptBase(robert);
     expect(text).toContain('=== YOUR SCHEDULED JOBS ===');
     expect(text).not.toContain('=== YOUR SCHEDULED TASKS ===');
     expect(text).not.toMatch(/\b4 AM\b/);
@@ -105,7 +107,29 @@ describe('buildSystemPromptBase (MCS-7 per-user)', () => {
     // Kept on purpose (reasoned rules).
     expect(text).toContain('No emoji');
     expect(text).toContain('Central Time');
-    expect(text).toContain('Apollo cold outreach');
+    expect(buildSystemPromptBase(robert)).toContain('Apollo cold outreach');
+  });
+
+  it('staff access: a member prompt describes only their own email and calendar', () => {
+    const text = buildSystemPromptBase(olivier);
+    expect(text).toContain("Olivier's own Outlook email");
+    expect(text).toContain("Olivier's own Outlook calendar");
+    for (const absent of [
+      'SMS', 'TEXT MESSAGES', 'schedule tools', 'SCHEDULED JOBS', 'journal', 'JOURNAL',
+      'master-learnings', 'MASTER KNOWLEDGE', 'GitHub org', 'read_project_status', 'To Do', 'GRAPH ROUTING',
+    ]) {
+      expect(text, absent).not.toContain(absent);
+    }
+  });
+
+  it('staff access: reply language follows the user, or users.language when set', () => {
+    expect(buildSystemPromptBase(olivier)).toContain('- Reply in the language Olivier writes in.');
+    const es = buildSystemPromptBase({ ...olivier, language: 'es' });
+    expect(es).toContain('Always reply in the language with BCP-47 tag "es"');
+    expect(es).not.toContain('Reply in the language Olivier writes in');
+    // The admin prompt only changes when a language is set.
+    expect(buildSystemPromptBase({ ...robert, language: null })).toBe(buildSystemPromptBase(robert));
+    expect(buildSystemPromptBase({ ...robert, language: 'en' })).toContain('BCP-47 tag "en"');
   });
 });
 
@@ -130,7 +154,7 @@ describe('buildChatSystemBlocks (MCS-9 cache layout)', () => {
     expect(blocks[0]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
     expect(blocks[1]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
     expect(blocks[0]!.text).toBe(buildStableSystemText(olivier));
-    expect(blocks[1]!.text).toBe(buildVolatileSystemText(ctx));
+    expect(blocks[1]!.text).toBe(buildVolatileSystemText(ctx, false));
     expect(blocks.some((b) => b.text.includes('=== GRAPH ROUTING ==='))).toBe(false);
     expect(blocks.some((b) => b.text.includes('propose_graph_dispatch'))).toBe(false);
   });
@@ -163,8 +187,22 @@ describe('buildChatSystemBlocks (MCS-9 cache layout)', () => {
     expect(a).toBe(b);
   });
 
-  it('volatile block carries the four context sections in the original order', () => {
-    const [, volatile] = buildChatSystemBlocks(olivier, ctx);
+  it('staff access: a member volatile block holds their emails and no SMS, journal or To Do text', () => {
+    const leaky: ChatContext = {
+      dailyContext: '\n\n=== WHAT I KNOW ABOUT ROB AND THE BUSINESSES ===\nsecret learnings\n=== WHAT HAPPENED YESTERDAY ===\njournal reflection',
+      taskContext: '- Tasks: call the bank',
+      smsContext: '[iMessage] Mom: dinner at 7',
+      emailContext: '1. ID: abc | Account: olivier@dearborndenim.com | Subject: Hi',
+    };
+    const all = buildChatSystemBlocks(olivier, leaky).map((b) => b.text).join('\n');
+    expect(all).toContain('RECENT EMAILS (last 48 hours):\n1. ID: abc');
+    for (const absent of ['secret learnings', 'journal reflection', 'WHAT I KNOW', 'call the bank', 'MICROSOFT TO DO', 'dinner at 7', 'RECENT TEXT MESSAGES']) {
+      expect(all, absent).not.toContain(absent);
+    }
+  });
+
+  it('volatile block carries the four context sections in the original order (admin)', () => {
+    const [, volatile] = buildChatSystemBlocks(robert, ctx);
     const t = volatile!.text;
     const iDaily = t.indexOf('WHAT I KNOW');
     const iTasks = t.indexOf('MICROSOFT TO DO TASKS:\n- Tasks: buy thread');

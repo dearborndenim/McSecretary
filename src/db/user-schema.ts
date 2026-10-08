@@ -75,6 +75,22 @@ export function initializeUserSchema(db: Database.Database): void {
   if (!userColNames.has('briefing_sections_json')) {
     db.exec('ALTER TABLE users ADD COLUMN briefing_sections_json TEXT');
   }
+  // Staff access (spec 2026-10-08 §4). brand_id picks the brand config a user
+  // files under; grants_json is a JSON array of staff group names; location_id
+  // is the Shopify location gid the user works at (null = none); language is a
+  // BCP-47 tag (null = reply in the language the user writes in).
+  if (!userColNames.has('brand_id')) {
+    db.exec("ALTER TABLE users ADD COLUMN brand_id TEXT NOT NULL DEFAULT 'dearborn-denim'");
+  }
+  if (!userColNames.has('grants_json')) {
+    db.exec("ALTER TABLE users ADD COLUMN grants_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!userColNames.has('location_id')) {
+    db.exec('ALTER TABLE users ADD COLUMN location_id TEXT');
+  }
+  if (!userColNames.has('language')) {
+    db.exec('ALTER TABLE users ADD COLUMN language TEXT');
+  }
 
   // Briefing-sections audit log (2026-04-25, Task 6 — UX polish 3).
   // Every successful write to `users.briefing_sections_json` writes a row

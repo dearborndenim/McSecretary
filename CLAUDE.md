@@ -52,6 +52,8 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `src/db/rfq-queries.ts` — `rfq_messages` writes and the two reply lookups, plus `rfq_replies` (cross-scan intake idempotency, keyed on the inbound message id)
 - `src/lions/` — South Loop Lions schedule checker (CPS SCORE! sheet → diff → Telegram alert → public team page)
 - `src/index.ts` — main entry, Telegram routing, scheduler
+- `src/staff/` — staff access (spec `docs/superpowers/specs/2026-10-08-staff-access-design.md`, Build 1): `tool-policy.ts` (`toolsForUser` / `isToolAllowed` / `checkToolCall`: an admin gets every tool; a member gets only their own email + calendar tools, every other name — schedule, journal, To Do, empire, graph, anything unclassified — is admin-only; a member's `account` must be one of their linked addresses, every `account`/`*_id`/`*_ids` value must match `^[A-Za-z0-9_=@.+-]+$`, and a member with no linked account gets no tools at all), `groups.ts` (`KNOWN_GROUPS`, replaced by the catalogue in Build 2), `admin-commands.ts` (`/grant`, `/grants`, `/setlocation`, `/setlanguage` and the CLI twins). Every Graph URL path segment built from a value goes through `graphSegment` (`src/auth/graph-base.ts`), so an id can never add a segment or a `..`. Check-ins wait per user; only the admin gets the EOD reflection question. A member's chat context is their emails only: no SMS, To Do, master knowledge, journal or yesterday's reflection (`buildVolatileSystemText(ctx, isAdmin)`), and a member-only base prompt (`buildSystemPromptBase`). To Do stays admin-only because `src/tasks/todo.ts` reads Robert's mailbox and takes no user.
+- `users` staff columns (PRAGMA-gated): `brand_id` (default `dearborn-denim`), `grants_json` (default `[]`, read with `getUserGrants`), `location_id`, `language` (BCP-47; null = reply in the language the user writes in). Namespace rule: `mcsecretary` and every `AGENT_KEYS` agent name are reserved, case-insensitively; boot throws if one equals a `users.id` (`assertNoAgentUserCollision`), and `createUser` / `/invite` refuse one (`setKeyedAgentNames` at boot).
 
 ## Commands
 - `node --import tsx src/index.ts` — run the service (Telegram bot + scheduler); same as `npm start` and Railway's `startCommand`. Node is the container's main process so Railway's SIGTERM reaches `createShutdown` (`src/shutdown.ts`); never put `npx`/`npm` back in front of it: npm died on the signal and Railway reported every replaced deployment as failed
@@ -62,6 +64,9 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `npx tsx src/admin.ts set-preferences --user-id X --business-context "..."` — set context
 - `npx tsx src/admin.ts list-users` — show all users
 - `npx tsx src/admin.ts generate-invite --user-id X` — new invite code
+- `npx tsx src/admin.ts set-grants --email X --groups store,office` — replace a user's staff groups (validated against `KNOWN_GROUPS`)
+- `npx tsx src/admin.ts set-location --email X --location <gid|store|factory|none>` — set `users.location_id`; `store` = brand `store_location_id`, `factory` = brand `location_id`
+- `npx tsx src/admin.ts set-language --email X --language <bcp47|none>` — set `users.language` (validated `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 - `npx tsx src/admin.ts promote --agent X --action Y --level N [--brand dearborn-denim]` — set a trust-ledger level outside Telegram (prints the resulting row); refuses a §6 pinned action type above level 1 and an out-of-range level, same wording as the Telegram `promote` command
 
 ## Users
@@ -82,6 +87,7 @@ AI secretary for Dearborn Denim team — multi-user email triage, daily briefing
 - `/approve <id> [refined description]` — approve request
 - `/reject <id> <reason>` — reject request
 - `/invite <user-email>` — generate a 7-day invite code for an existing user row
+- `/grant <email> <group> [group…]` — replace a user's staff groups (`store`, `receiving`, `floor-lead`, `office`); `/grants [<email>]` — one user's or every member's groups and location; `/setlocation <email> <gid|store|factory|none>` and `/setlanguage <email> <bcp47|none>` — same as the CLI twins
 - `/onboard-all-pending` — bulk-mint + email invites for every entry in `pending_invites.json` (see ONBOARDING.md)
 - `/onboarding-status [--pending-only]` — show pending vs onboarded invitees from `pending_invites.json` (20-per-section cap). `--pending-only` suppresses the Onboarded section.
 - `/briefing-preview [--user=<name>] [--sections=<csv>]` — render tomorrow's 5 AM morning briefing immediately for QA (re-uses `runTriage` — no duplicate render path). `--user=<name>` previews the briefing as if for a named user (case-insensitive first-name match). `--sections=<csv>` renders only those sections (valid names: `overnight_dev`, `agent_actions`, `grok_bots`, `production`, `admin_ops`, `calendar`, `dev_requests`, `emails`, `stats`, `cash`) — order in csv is honored. When **both** flags are present, `--sections` overrides the user's saved `briefing_sections_json` preference for the preview only (does NOT persist). Invalid section names return an error listing the valid set.

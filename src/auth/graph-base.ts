@@ -19,3 +19,15 @@ export async function defaultOutlookMailbox(): Promise<string> {
   const { config } = await import('../config.js');
   return config.outlook.email1;
 }
+
+/**
+ * One Graph URL path segment, percent-encoded so a value can never add a
+ * segment (`/`), a query (`?`) or a dot-segment (`..`): an id like
+ * `../../rob@.../messages/x` must not walk into another mailbox. `@`, `=` and
+ * `+` stay literal (legal in a path segment; mailbox UPNs and base64 ids use
+ * them, and Graph has always received them raw).
+ */
+export function graphSegment(value: string): string {
+  if (value === '.' || value === '..') return value.replace(/\./g, '%2E');
+  return encodeURIComponent(value).replace(/%40/g, '@').replace(/%3D/g, '=').replace(/%2B/g, '+');
+}

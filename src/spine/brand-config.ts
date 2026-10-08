@@ -34,6 +34,8 @@ export interface BrandConfig {
   primary_domain?: string;
   /** Shopify location the brand fulfils from (a gid). */
   location_id?: string;
+  /** Shopify location gid of the retail store (staff `/setlocation <email> store`). Internal; not served by publicBrandEntry. */
+  store_location_id?: string;
   /** ISO 4217, e.g. USD. */
   currency?: string;
   /** IANA zone, e.g. America/Chicago. */
@@ -70,6 +72,11 @@ export interface PublicBrandEntry {
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/** The brand config directory: SPINE_BRANDS_DIR, default `config/brands`. Shared by config.ts and the admin CLI (which must not load config.ts). */
+export function brandsDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SPINE_BRANDS_DIR ?? 'config/brands';
+}
+
 export function listBrandIds(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
@@ -104,6 +111,7 @@ function validateIdentity(parsed: BrandConfig, file: string): void {
   if (p.active !== undefined && typeof p.active !== 'boolean') fail('active', 'true or false');
   if (p.primary_domain !== undefined && !(typeof p.primary_domain === 'string' && DOMAIN_RE.test(p.primary_domain))) fail('primary_domain', 'a lowercase domain name');
   if (p.location_id !== undefined && !nonEmpty(p.location_id)) fail('location_id', 'a non-empty string');
+  if (p.store_location_id !== undefined && !nonEmpty(p.store_location_id)) fail('store_location_id', 'a non-empty string');
   if (p.currency !== undefined && !(typeof p.currency === 'string' && CURRENCY_RE.test(p.currency))) fail('currency', 'a 3-letter ISO 4217 code');
   if (p.timezone !== undefined && !(typeof p.timezone === 'string' && isTimeZone(p.timezone))) fail('timezone', 'an IANA time zone');
   if (p.quickbooks_class !== undefined && !nonEmpty(p.quickbooks_class)) fail('quickbooks_class', 'a non-empty string');

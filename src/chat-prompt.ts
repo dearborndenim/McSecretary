@@ -24,9 +24,24 @@ export interface ChatPromptUser {
   accounts: string[];
   /** users.role === 'admin'. Only an admin sees the GRAPH ROUTING block. */
   is_admin: boolean;
+  /** users.language (BCP-47); null/absent = reply in the language the user writes in. */
+  language?: string | null;
+}
+
+/**
+ * The reply-language rule. A member always gets one; an admin only when
+ * users.language is set, so the admin prompt stays byte-identical otherwise.
+ */
+export function buildLanguageRule(name: string, language: string | null | undefined): string {
+  const lang = language?.trim();
+  return lang
+    ? `- Always reply in the language with BCP-47 tag "${lang}", whatever language ${name} writes in.`
+    : `- Reply in the language ${name} writes in.`;
 }
 
 export function buildSystemPromptBase(user: ChatPromptUser): string {
+  if (!user.is_admin) return buildMemberPromptBase(user);
+  const languageRule = user.language?.trim() ? `\n${buildLanguageRule(user.name, user.language)}` : '';
   const name = user.name;
   const accounts = user.accounts.length > 0
     ? user.accounts.join(', ')
@@ -97,7 +112,65 @@ You never run code and never write to GitHub. You have no tool that executes com
 - Remember everything from today's conversation.
 - When ${name} corrects you, acknowledge it and apply the correction immediately. These corrections feed into your daily learnings.
 - Answer email questions from the RECENT EMAILS data below; if an email isn't there, say so instead of guessing.
-- "New customer emails" = responses to Apollo cold outreach campaigns.`;
+- "New customer emails" = responses to Apollo cold outreach campaigns.${languageRule}`;
+}
+
+/**
+ * The base prompt for a non-admin (staff access spec §7.1). It describes only
+ * what a member actually has: their own Outlook email and calendar tools, the
+ * conversation log and time tracking. No SMS, schedule, journal, master
+ * knowledge, To Do or GitHub text: those are Robert's and the member has no
+ * tool for them.
+ */
+function buildMemberPromptBase(user: ChatPromptUser): string {
+  const name = user.name;
+  const accounts = user.accounts.length > 0
+    ? user.accounts.join(', ')
+    : '(none linked yet)';
+  const businessContext = user.business_context?.trim()
+    ? user.business_context.trim()
+    : `${name} is on the Dearborn Denim team.`;
+  // No linked account means no tools at all (toolsForUser returns []).
+  const capabilities = user.accounts.length > 0
+    ? `Your tools cover ${name}'s own Outlook email (archive, tag, mark read, send, contacts, categories) and ${name}'s own Outlook calendar, on the accounts listed above and no others. Bulk email tools exist for multi-email operations.`
+    : `${name} has no email account linked yet, so you have no email or calendar tools. Robert can link one.`;
+
+  return `You are McSecretary, ${name}'s AI chief of staff at Dearborn Denim. You help ${name} with their own email and calendar.
+
+${businessContext}
+${name}'s email accounts: ${accounts}.
+
+=== CAPABILITIES ===
+${capabilities}
+
+If a request is outside what your tools can do, say so plainly and offer the closest thing you can do; Robert can help with anything else.
+
+=== YOUR MEMORY ===
+You remember everything from today's conversation with ${name}. Every message (${name}'s and yours) is stored in a conversation log, and you see today's history when a new message arrives.
+
+TIME TRACKING:
+When you send an hourly check-in and ${name} responds, the response is automatically logged as a time entry. ${name} can also say "/log [activity]" to manually log time. Say "status" to see today's time log.
+
+=== COMMANDS ${name.toUpperCase()} CAN USE ===
+- "briefing" — full email/calendar briefing
+- "clean up email" / "archive junk" — scan and present emails to archive
+- "archive all [category]" — bulk archive all emails with a tag
+- "/log [activity]" — log time manually
+- "status" — see today's time log
+- "/request [description]" — send a request to Robert
+- "/myrequests" — see your submitted requests
+
+=== WHAT YOU DO NOT DO (HARD LIMITS) ===
+You never run code and never write to GitHub. You have no tool that executes commands, edits a repository, or starts a build, and you must not claim otherwise or pretend a tool call happened. You only act on ${name}'s own email accounts and calendar. When ${name} asks for something else, say that Robert can help and suggest "/request [description]".
+
+=== RULES ===
+- Be direct, specific, and concise. No emoji.
+- Use Central Time (Chicago) for all times.
+- Reference actual data (email subjects, sender names, IDs) when answering.
+- Remember everything from today's conversation.
+- When ${name} corrects you, acknowledge it and apply the correction immediately.
+- Answer email questions from the RECENT EMAILS data below; if an email isn't there, say so instead of guessing.
+${buildLanguageRule(name, user.language)}`;
 }
 
 /** MCS-1: the single tool-use contract, replacing "CRITICAL INSTRUCTIONS FOR TOOL USE". */
@@ -119,8 +192,17 @@ export function buildStableSystemText(user: ChatPromptUser): string {
   return `${buildSystemPromptBase(user)}\n\n${buildActingOnRequests(user.name)}`;
 }
 
-/** The volatile block: everything that changes between messages. */
-export function buildVolatileSystemText(ctx: ChatContext): string {
+/**
+ * The volatile block: everything that changes between messages. A non-admin
+ * gets their own emails only: the daily context (master knowledge, journal,
+ * yesterday's reflection), Microsoft To Do (Robert's mailbox) and the texts
+ * (Robert's phone) are dropped here even if the caller passed them.
+ */
+export function buildVolatileSystemText(ctx: ChatContext, isAdmin: boolean): string {
+  if (!isAdmin) {
+    return `RECENT EMAILS (last 48 hours):
+${ctx.emailContext}`;
+  }
   return `${ctx.dailyContext}
 
 MICROSOFT TO DO TASKS:
@@ -182,7 +264,7 @@ Code, builds, GitHub writes, and anything that edits a repository.`;
 export function buildChatSystemBlocks(user: ChatPromptUser, ctx: ChatContext): Anthropic.TextBlockParam[] {
   const blocks: Anthropic.TextBlockParam[] = [
     { type: 'text', text: buildStableSystemText(user), cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: buildVolatileSystemText(ctx), cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: buildVolatileSystemText(ctx, user.is_admin), cache_control: { type: 'ephemeral' } },
   ];
   // The graph tools are admin-only, so a non-admin never sees the routing
   // rules for tools they cannot call.
