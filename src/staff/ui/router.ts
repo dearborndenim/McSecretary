@@ -76,16 +76,16 @@ function redirect(res: http.ServerResponse, to: string, headers: Record<string, 
 }
 
 /**
- * The client address for the login limiter. Assumption: McSecretary is only
- * reachable through Railway's edge proxy, which puts the connecting client's
- * address first in X-Forwarded-For, so the first entry is the client; with no
- * header (a direct connection, tests) it is the socket address.
+ * The client address for the login limiter: the LAST X-Forwarded-For entry,
+ * the one Railway's edge proxy writes (there is no CDN in front). Earlier
+ * entries come from the client and are spoofable, so they are never used.
+ * With no header (a direct connection, tests) it is the socket address.
  */
 export function clientIp(req: http.IncomingMessage): string {
   const xff = req.headers['x-forwarded-for'];
   const raw = Array.isArray(xff) ? xff.join(',') : xff;
-  const first = raw?.split(',').map((s) => s.trim()).filter(Boolean)[0];
-  return first || req.socket.remoteAddress || 'unknown';
+  const last = raw?.split(',').map((s) => s.trim()).filter(Boolean).at(-1);
+  return last || req.socket.remoteAddress || 'unknown';
 }
 
 function readForm(req: http.IncomingMessage): Promise<URLSearchParams | null> {
