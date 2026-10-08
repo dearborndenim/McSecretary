@@ -66,6 +66,11 @@ describe('toolsForUser (staff access spec §7.1)', () => {
     expect(checkToolCall(member, 'archive_email', null, own)).toBeNull();
     expect(checkToolCall(admin, 'send_email', { account: 'anyone@x.com' }, [])).toBeNull();
   });
+
+  it('a member with no linked account is refused every personal tool (the calendar would fall back to Robert)', () => {
+    expect(checkToolCall(member, 'create_calendar_event', { subject: 's', start: 'a', end: 'b' }, []))
+      .toBe('You have no linked email account yet, so email and calendar tools are off; ask Robert to link one.');
+  });
 });
 
 describe('/grant (staff access spec §7.5)', () => {

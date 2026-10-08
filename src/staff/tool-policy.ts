@@ -106,6 +106,12 @@ export function checkToolCall(
   if (!isToolAllowed(user, name)) {
     return `The tool ${name} is not available to you. Nothing was done; ask Robert if you need it.`;
   }
+  // The calendar actions (and other Graph helpers) fall back to the default
+  // mailbox, Robert's, when no account resolves; a member with no linked
+  // account must never reach them.
+  if (ownAccounts.length === 0) {
+    return 'You have no linked email account yet, so email and calendar tools are off; ask Robert to link one.';
+  }
   const account = input && typeof input === 'object' ? (input as Record<string, unknown>).account : undefined;
   if (account !== undefined && account !== null) {
     const own = new Set(ownAccounts.map((a) => a.toLowerCase()));
