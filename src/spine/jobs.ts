@@ -67,9 +67,17 @@ export function buildTrustMonthlySummary(db: Database.Database, sinceIso: string
 export const AGENT_REVIEW_DEFAULT_DAYS = 30;
 export const AGENT_REVIEW_MAX_DAYS = 90;
 
-/** The monthly agent review message for the trailing `days` days. */
-export function buildAgentReview(db: Database.Database, nowIso: string, days = AGENT_REVIEW_DEFAULT_DAYS): string {
-  const sinceIso = new Date(Date.parse(nowIso) - days * 24 * 60 * 60 * 1000).toISOString();
+/** Start of the trailing `days` days before `nowIso` — the `/agentreview [days]` window. */
+export function trailingDaysSince(nowIso: string, days: number): string {
+  return new Date(Date.parse(nowIso) - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
+ * The agent review message for [sinceIso, nowIso]. The monthly job passes the
+ * same `since` as the trust summary (one calendar month back); `/agentreview`
+ * passes `trailingDaysSince`.
+ */
+export function buildAgentReview(db: Database.Database, sinceIso: string, nowIso: string): string {
   return formatAgentReview(computeAgentReview({
     proposals: listReviewProposals(db, sinceIso),
     runs: listReviewRuns(db, sinceIso),

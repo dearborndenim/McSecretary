@@ -16,9 +16,9 @@ import { isPinned } from './gates.js';
 import { TIMEZONE } from '../calendar/types.js';
 
 // ── Flag thresholds (spec §3) ───────────────────────────────────────────────
-/** IGNORED when cards >= this and none was decided… */
+/** IGNORED needs at least this many cards, and then none decided… */
 export const IGNORED_MIN_CARDS = 10;
-/** …or when expired cards ÷ cards reaches this share. */
+/** …or expired cards ÷ cards at least this share. */
 export const IGNORED_EXPIRED_SHARE = 0.5;
 /** IDLE: at least this many runs… */
 export const IDLE_MIN_RUNS = 10;
@@ -28,6 +28,8 @@ export const IDLE_SHARE = 0.8;
 export const BROKEN_MIN_RUNS = 4;
 /** …and failed ÷ runs at least this share. */
 export const BROKEN_SHARE = 0.5;
+/** BROKEN also fires on this many failed auto-executions, when they are at least the successful ones. */
+export const BROKEN_MIN_AUTO_FAILED = 5;
 /** NOISY: this many cards or more. */
 export const NOISY_MIN_CARDS = 20;
 /** SILENT ONLY: this many auto-executions or more with zero cards. */
@@ -86,12 +88,14 @@ export interface AgentStats {
   failed: number;
   /** Proposals that reached Robert as a Telegram card, created in the window. */
   cards: number;
-  /** Cards decided (approve / edit / reject) in the window. */
+  /** Cards created in the window and decided (approve / edit / reject) in it — a subset of `cards`. */
   decided: number;
   /** Cards created in the window that expired undecided. */
   ignored: number;
   /** Executed with no card (level 2/3 auto-execution), created in the window. */
   auto: number;
+  /** Auto-executions (no card) that failed, created in the window. */
+  autoFailed: number;
   /** Action types with >= REJECTED_TYPE_MIN rejections in the window. */
   rejectedTypes: Array<{ action_type: string; count: number }>;
   /** Σ run cost_usd; null when no run in the window reported one. */
@@ -119,18 +123,27 @@ export interface AgentReview {
   totalCostUsd: number | null;
 }
 
-/** SQLite `datetime('now')` text ("YYYY-MM-DD HH:MM:SS", UTC) or ISO → ms. */
-function toMs(ts: string | null): number {
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_LIKE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/;
+const HAS_ZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+
+/**
+ * Timestamp → ms. A date-only value is midnight UTC; an ISO-like value with no
+ * zone (SQLite `datetime('now')` text, "YYYY-MM-DD HH:MM:SS") is UTC; anything
+ * else goes to Date.parse as-is (what `POST /spine/runs` accepts).
+ */
+export function toMs(ts: string | null): number {
   if (!ts) return NaN;
-  const iso = ts.includes('T') ? ts : ts.replace(' ', 'T');
-  return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+  if (DATE_ONLY.test(ts)) return Date.parse(`${ts}T00:00:00Z`);
+  if (ISO_LIKE.test(ts) && !HAS_ZONE.test(ts)) return Date.parse(`${ts.replace(' ', 'T')}Z`);
+  return Date.parse(ts);
 }
 
 const DECIDED_STATUSES = new Set(['approved', 'approved_with_edit', 'rejected', 'executed', 'failed']);
 
 function emptyStats(agent: string): AgentStats {
   return {
-    agent, runs: 0, ok: 0, nothing: 0, failed: 0, cards: 0, decided: 0, ignored: 0, auto: 0,
+    agent, runs: 0, ok: 0, nothing: 0, failed: 0, cards: 0, decided: 0, ignored: 0, auto: 0, autoFailed: 0,
     rejectedTypes: [], costUsd: null, costPerDecision: null, brokenNote: null, flags: [],
   };
 }
@@ -176,16 +189,16 @@ export function computeAgentReview(input: {
   }
 
   for (const p of input.proposals) {
+    // Every count is over proposals created in the window, so decided ≤ cards.
+    if (!inWindow(p.created_at)) continue;
     const hasCard = p.telegram_message_id !== null;
-    const created = inWindow(p.created_at);
-    if (!hasCard && !created) continue;
-    const decidedInWindow = hasCard && DECIDED_STATUSES.has(p.status) && inWindow(p.decided_at);
-    if (!created && !decidedInWindow) continue;
     const s = stats(p.agent);
-    if (hasCard && created) s.cards++;
-    if (hasCard && created && p.status === 'expired') s.ignored++;
-    if (decidedInWindow) s.decided++;
-    if (!hasCard && created && p.status === 'executed') s.auto++;
+    if (hasCard) {
+      s.cards++;
+      if (p.status === 'expired') s.ignored++;
+      if (DECIDED_STATUSES.has(p.status) && inWindow(p.decided_at)) s.decided++;
+    } else if (p.status === 'executed') s.auto++;
+    else if (p.status === 'failed') s.autoFailed++;
     if (p.status === 'rejected' && inWindow(p.decided_at)) {
       const m = rejections.get(p.agent) ?? new Map<string, number>();
       m.set(p.action_type, (m.get(p.action_type) ?? 0) + 1);
@@ -222,9 +235,11 @@ export function computeAgentReview(input: {
       s.costPerDecision = s.decided > 0 ? s.costUsd / s.decided : Infinity;
     }
 
-    if ((s.cards >= IGNORED_MIN_CARDS && s.decided === 0) || (s.cards > 0 && s.ignored / s.cards >= IGNORED_EXPIRED_SHARE)) s.flags.push('IGNORED');
+    if (s.cards >= IGNORED_MIN_CARDS && (s.decided === 0 || s.ignored / s.cards >= IGNORED_EXPIRED_SHARE)) s.flags.push('IGNORED');
     if (s.runs >= IDLE_MIN_RUNS && (s.nothing + s.failed) / s.runs >= IDLE_SHARE) s.flags.push('IDLE');
-    if (s.runs >= BROKEN_MIN_RUNS && s.failed / s.runs >= BROKEN_SHARE) {
+    const runsBroken = s.runs >= BROKEN_MIN_RUNS && s.failed / s.runs >= BROKEN_SHARE;
+    const autoBroken = s.autoFailed >= BROKEN_MIN_AUTO_FAILED && s.autoFailed >= s.auto;
+    if (runsBroken || autoBroken) {
       s.flags.push('BROKEN');
       s.brokenNote = mostCommon(failedNotes.get(s.agent) ?? []);
     }
@@ -289,13 +304,18 @@ function render(review: AgentReview, maxNames: number, allNotes: boolean): strin
   section('Noisy', byDesc(a.filter((s) => has(s, 'NOISY') && !has(s, 'IGNORED')), (s) => s.cards, name)
     .map((s, i) => `${s.agent} ${s.cards}${i === 0 ? ' cards' : ''}`));
 
-  section('Broken', byDesc(a.filter((s) => has(s, 'BROKEN')), (s) => s.failed, name)
-    .map((s, i) => `${s.agent} ${s.failed}/${s.runs}${i === 0 ? ' runs failed' : ''}`
-      + (s.brokenNote && (allNotes || i === 0) ? ` — "${s.brokenNote}"` : '')));
+  section('Broken', byDesc(a.filter((s) => has(s, 'BROKEN')), (s) => s.failed + s.autoFailed, name)
+    .map((s, i) => {
+      const parts: string[] = [];
+      if (s.failed > 0) parts.push(`${s.failed}/${s.runs} runs failed`);
+      if (s.autoFailed > 0) parts.push(`${s.autoFailed} auto failed`);
+      const note = s.brokenNote && (allNotes || i === 0) ? ` — "${s.brokenNote}"` : '';
+      return `${s.agent} ${parts.join(', ')}${note}`;
+    }));
 
   section('Idle', byDesc(a.filter((s) => has(s, 'IDLE')), (s) => s.nothing + s.failed, name)
-    .map((s, i) => has(s, 'BROKEN') ? s.agent
-      : `${s.agent} ${s.nothing + s.failed}/${s.runs}${i === 0 ? ' runs nothing or failed' : ''}`));
+    .map((s) => has(s, 'BROKEN') ? s.agent
+      : `${s.agent} ${s.nothing + s.failed}/${s.runs} runs nothing or failed`));
 
   section('Silent only', byDesc(a.filter((s) => has(s, 'SILENT ONLY')), (s) => s.auto, name)
     .map((s, i) => `${s.agent} ${s.auto} auto${i === 0 ? ', 0 cards' : ''}`));
@@ -312,7 +332,8 @@ function render(review: AgentReview, maxNames: number, allNotes: boolean): strin
       lines.push('Cost: n/a');
     } else {
       const top = byDesc(a.filter((s) => s.costUsd !== null), (s) => s.costUsd!, name).slice(0, COST_TOP);
-      const per = top.map((s) => `${s.agent} ${s.costPerDecision === Infinity ? 'no decisions' : money(s.costPerDecision!)}`);
+      const per = top.map((s) => `${s.agent} ${s.decided > 0 ? money(s.costPerDecision!)
+        : s.auto > 0 ? `${money(s.costUsd! / s.auto)} per auto-run` : 'no decisions'}`);
       lines.push(`Cost: ${money(review.totalCostUsd)} (${top.map((s) => `${s.agent} ${money(s.costUsd!)}`).join(' · ')}) — $/decision: ${per.join(', ')}`);
     }
   } else {

@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import Database from 'better-sqlite3';
+import { initializeSchema } from '../../src/db/schema.js';
+import { listReviewProposals, listReviewRuns, listReviewTrust } from '../../src/db/review-queries.js';
 import {
   computeAgentReview, formatAgentReview, MAX_MESSAGE_CHARS,
   type AgentStats, type AgentReview, type ReviewProposalRow, type ReviewRunRow, type ReviewTrustRow,
@@ -46,9 +49,18 @@ const proposals: ReviewProposalRow[] = [
   ...cards('production-planner', 'po_draft', 6, 'pending'),
   // costing: 20 auto, 0 cards → SILENT ONLY
   ...autos('costing', 'cost_update', 20),
+  // finance: 5 failed auto-executions ≥ its 2 successful ones → BROKEN with no failed runs
+  ...autos('finance', 'journal_entry', 2),
+  ...Array.from({ length: 5 }, () => ({ agent: 'finance', action_type: 'journal_entry', status: 'failed', created_at: IN, decided_at: null, telegram_message_id: null })),
+  // one failed auto for marketing-creative: under 5, not BROKEN
+  { agent: 'marketing-creative', action_type: 'creative_pause', status: 'failed', created_at: IN, decided_at: null, telegram_message_id: null },
+  // smoke: 2 cards, both expired — under IGNORED_MIN_CARDS, so not IGNORED
+  ...cards('smoke', 'smoke_note', 2, 'expired'),
   // outside the window: must count nowhere
   { agent: 'sourcing', action_type: 'rfq_send', status: 'expired', created_at: '2026-08-20T12:00:00.000Z', decided_at: null, telegram_message_id: 9 },
   { agent: 'designer', action_type: 'fabric_intent', status: 'rejected', created_at: '2026-08-20T12:00:00.000Z', decided_at: '2026-08-21T12:00:00.000Z', telegram_message_id: 9 },
+  // created before the window, decided inside it: not counted, so decided never exceeds cards
+  { agent: 'design-artist', action_type: 'design_concept', status: 'approved', created_at: '2026-09-01T12:00:00.000Z', decided_at: '2026-09-10T12:00:00.000Z', telegram_message_id: 9 },
 ];
 
 const runRows: ReviewRunRow[] = [
@@ -67,8 +79,15 @@ const runRows: ReviewRunRow[] = [
   ...runs('smoke', 7, 'nothing_to_do', null),
   ...runs('smoke', 2, 'ok', null),
   ...runs('smoke', 1, 'running', null, '', '2026-10-08T11:00:00.000Z'),
-  // outside the window
+  // costing: $10 over 20 auto-runs and no decisions → "$0.50 per auto-run"
+  ...runs('costing', 2, 'ok', 5),
+  // trend-scout: 10/10 nothing, one stamped with an offset (11:30Z, inside the window) → IDLE
+  ...runs('trend-scout', 9, 'nothing_to_do', null),
+  ...runs('trend-scout', 1, 'nothing_to_do', null, '', '2026-10-08T06:30:00-05:00'),
+  // outside the window: before since by text, by date-only (midnight UTC) and by offset (11:00Z)
   ...runs('smoke', 1, 'hand_error', 100, 'old', '2026-09-01T12:00:00.000Z'),
+  ...runs('smoke', 1, 'hand_error', 100, 'old', '2026-09-08'),
+  ...runs('smoke', 1, 'hand_error', 100, 'old', '2026-09-08T13:00:00+02:00'),
 ];
 
 const trustRows: ReviewTrustRow[] = [
@@ -94,18 +113,24 @@ describe('computeAgentReview', () => {
       'costing': ['SILENT ONLY'],
       'design-artist': [],
       'designer': ['NOISY', 'PROMOTE?'],
+      'finance': ['BROKEN'],
       'marketing-creative': ['PROMOTE?'],
       'merchandiser': ['IDLE'],
       'production-planner': ['IGNORED'],
       'purchasing': ['BROKEN'],
       'smoke': [],
       'sourcing': ['IGNORED'],
+      'trend-scout': ['IDLE'],
     });
   });
 
   it('counts cards, decisions, expiries and auto-executions inside the window only', () => {
     expect(agent('designer')).toMatchObject({ cards: 22, decided: 22, ignored: 0, auto: 0 });
-    expect(agent('marketing-creative')).toMatchObject({ cards: 4, decided: 3, auto: 8 });
+    expect(agent('design-artist')).toMatchObject({ cards: 6, decided: 6 });
+    expect(agent('marketing-creative')).toMatchObject({ cards: 4, decided: 3, auto: 8, autoFailed: 1 });
+    expect(agent('finance')).toMatchObject({ runs: 0, auto: 2, autoFailed: 5 });
+    expect(agent('smoke')).toMatchObject({ cards: 2, ignored: 2 });
+    for (const s of review.agents) expect(s.decided).toBeLessThanOrEqual(s.cards);
     expect(agent('sourcing')).toMatchObject({ cards: 12, decided: 2, ignored: 9 });
     expect(agent('production-planner')).toMatchObject({ cards: 10, decided: 0, ignored: 4 });
     expect(agent('costing')).toMatchObject({ cards: 0, auto: 20 });
@@ -115,6 +140,7 @@ describe('computeAgentReview', () => {
   it('counts a run stuck in `running` over 24 h as failed, a fresh one as neither', () => {
     expect(agent('purchasing')).toMatchObject({ runs: 6, ok: 2, failed: 4 });
     expect(agent('smoke')).toMatchObject({ runs: 10, ok: 2, nothing: 7, failed: 0 });
+    expect(agent('trend-scout')).toMatchObject({ runs: 10, nothing: 10 });
     expect(agent('purchasing').brokenNote).toBe(PURCHASING_NOTE.slice(0, 80));
   });
 
@@ -126,7 +152,7 @@ describe('computeAgentReview', () => {
   });
 
   it('computes cost and $/decision, n/a when no run reported cost', () => {
-    expect(review.totalCostUsd).toBeCloseTo(57, 10); // 30 + 9 + 5 + 8 + 5
+    expect(review.totalCostUsd).toBeCloseTo(67, 10); // 30 + 9 + 5 + 8 + 5 + 10
     expect(agent('sourcing').costUsd).toBe(30);
     expect(agent('sourcing').costPerDecision).toBe(15);
     expect(agent('designer').costPerDecision).toBeCloseTo(9 / 22, 10);
@@ -147,12 +173,12 @@ describe('formatAgentReview', () => {
       'Decided on: designer 22/22 cards · design-artist 6/6 · marketing-creative 3/4, 8 auto',
       'Ignored: sourcing 12 cards, 2 decided · production-planner 10 cards, 0 decided',
       'Noisy: designer 22 cards',
-      `Broken: purchasing 4/6 runs failed — "${PURCHASING_NOTE.slice(0, 80)}"`,
-      'Idle: merchandiser 9/10 runs nothing or failed',
+      `Broken: finance 5 auto failed · purchasing 4/6 runs failed — "${PURCHASING_NOTE.slice(0, 80)}"`,
+      'Idle: trend-scout 10/10 runs nothing or failed · merchandiser 9/10 runs nothing or failed',
       'Silent only: costing 20 auto, 0 cards',
       'Rejected: sourcing/rfq_send 2 rejections',
       'Promote?: designer/fabric_intent (25 approved, 0 edits) · marketing-creative/creative_promote (6/0)',
-      'Cost: $57 (sourcing $30 · designer $9 · production-planner $8) — $/decision: sourcing $15, designer $0.41, production-planner no decisions',
+      'Cost: $67 (sourcing $30 · costing $10 · designer $9) — $/decision: sourcing $15, costing $0.50 per auto-run, designer $0.41',
       'Park an agent: launchctl unload on the Mac mini (agents/README.md → Fleet review).',
     ]);
   });
@@ -166,6 +192,8 @@ describe('formatAgentReview', () => {
       'Decided on: designer 3/3 cards',
       'Cost: $2 (designer $2) — $/decision: designer $0.67',
     ]);
+    const idleSpend = computeAgentReview({ proposals: [], runs: runs('smoke', 1, 'nothing_to_do', 3), trust: [], sinceIso: SINCE, nowIso: NOW });
+    expect(formatAgentReview(idleSpend)).toContain('$/decision: smoke no decisions');
   });
 
   it('stays under 1,500 chars with 15 agents carrying every flag, capping names with +N', () => {
@@ -188,5 +216,24 @@ describe('formatAgentReview', () => {
       if (line.startsWith('Cost') || line.startsWith('Park') || line.startsWith('Agent review')) continue;
       expect(line.split(' · ').length).toBeLessThanOrEqual(5);
     }
+  });
+});
+
+describe('review queries', () => {
+  it('keep staff users and the mcsecretary system agent out of all three reads', () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    db.prepare("INSERT INTO users (id, name, email) VALUES ('olivier', 'Olivier', 'olivier@dearborndenim.com')").run();
+    const insP = db.prepare(`INSERT INTO proposals (agent, brand_id, action_type, action_payload, payload_hash, reason, expires_at, status, created_at, telegram_message_id)
+      VALUES (?, 'dearborn-denim', ?, '{}', 'h', 'r', '2026-10-30T00:00:00.000Z', 'pending', '2026-10-01T00:00:00.000Z', 1)`);
+    const insT = db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level, approved_as_proposed) VALUES (?, 'dearborn-denim', ?, 1, 9)");
+    const insR = db.prepare(`INSERT INTO agent_run_index (run_id, agent, brand_id, skill_commit, model, started_at, outcome)
+      VALUES (?, ?, 'dearborn-denim', 'a', 'm', '2026-10-01T00:00:00.000Z', 'ok')`);
+    for (const [agent, type] of [['olivier', 'store_transfer'], ['mcsecretary', 'rfq_reply_unparsed'], ['sourcing', 'rfq_send']] as const) {
+      insP.run(agent, type); insT.run(agent, type); insR.run(`r-${agent}`, agent);
+    }
+    expect(listReviewProposals(db, SINCE).map((r) => r.agent)).toEqual(['sourcing']);
+    expect(listReviewRuns(db, SINCE).map((r) => r.agent)).toEqual(['sourcing']);
+    expect(listReviewTrust(db).map((r) => r.agent)).toEqual(['sourcing']);
   });
 });
