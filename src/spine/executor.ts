@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
+import { getUserById } from '../db/user-queries.js';
 import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
@@ -196,6 +197,10 @@ function emitExecutedEvent(
   deps: ExecutorDeps,
 ): void {
   if (isSuppressedNotesCard(payload.hand, row.action_type)) return;
+  // A person's filing (a staff action: agent = users.id, which the namespace
+  // rule keeps apart from every agent name) wakes no agent, and an undrained
+  // event would sit in the 5 AM health report for ever.
+  if (getUserById(db, row.agent)) return;
   const truncated = truncateResponseForEvent(responseBody);
   const response = payload.hand === 'notes' ? {} : truncated;
   const eventPayload: Record<string, unknown> = {

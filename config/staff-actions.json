@@ -4,7 +4,7 @@
     "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
     "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "ops_note"],
     "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
-    "office": ["vendor_po_lookup", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "purchasing_lookup", "material_request", "ops_note"]
+    "office": ["vendor_po_lookup", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"]
   },
   "actions": {
     "inventory_lookup": {
@@ -173,14 +173,6 @@
           "wip": { "path": "/api/integration/wip-summary" }
         }
       }
-    },
-    "purchasing_lookup": {
-      "kind": "read",
-      "description": "Check whether the purchasing system is healthy: when kanban-purchaser's purchasing bot was last heard from, its open jobs by state and the oldest one, and its last error. Not a list of materials or vendor POs; that is vendor_po_lookup.",
-      "params": {},
-      "hand": "kanban-purchaser",
-      "method": "GET",
-      "path": "/api/integration/purchasing-health"
     },
     "ops_note": {
       "kind": "write",

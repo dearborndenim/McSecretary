@@ -11,6 +11,7 @@ import {
 import { createSpineRouter } from './api-routes.js';
 import { parsePromoteCommand, runPromoteCommand } from './promote-command.js';
 import type { ProposalInput } from './types.js';
+import type { DedupeMode } from '../db/proposal-queries.js';
 import type { AgentPolicy } from './agent-policy.js';
 import { notifyRequester } from '../staff/notify.js';
 
@@ -55,7 +56,7 @@ export function buildSpine(d: SpineBuildDeps) {
   });
   const replyTo = (chatId: string) => async (text: string) => { await d.transport.sendText(chatId, text); };
 
-  const file = (input: ProposalInput) => fileProposal(d.db, input, {
+  const file = (input: ProposalInput, opts: { dedupe?: DedupeMode } = {}) => fileProposal(d.db, input, {
     now: d.now,
     execute,
     silentBudgetUsd: (brandId) => loadBrand(brandId).silent_budget_usd,
@@ -66,7 +67,7 @@ export function buildSpine(d: SpineBuildDeps) {
       const sent = await d.transport.sendCard(chatId, renderProposalCard(p), id);
       return { chatId, messageId: sent.message_id };
     },
-  });
+  }, opts);
 
   /** Staff access §7.3: the staff member who filed a proposal hears how it ended. Never throws. */
   const notifyRequesterOf = (id: number) => notifyRequester(d.db, d.transport, id);

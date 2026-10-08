@@ -14,6 +14,7 @@ import { getProposalById } from '../db/proposal-queries.js';
 import { forwardBrandKey, resolveHand, type BrandConfig } from '../spine/brand-config.js';
 import { extractNotify, resolveHandUrl, withForwardedBrand, PROPOSAL_ID_PLACEHOLDER } from '../spine/executor.js';
 import type { Routed } from '../spine/router.js';
+import type { DedupeMode } from '../db/proposal-queries.js';
 import type { ProposalInput } from '../spine/types.js';
 import {
   BUILT_IN_HANDS, READ_PATH_PREFIX, checkValue, getCatalogue,
@@ -313,7 +314,7 @@ export interface StaffExecDeps {
   loadBrand: (brandId: string) => BrandConfig;
   env: Record<string, string | undefined>;
   handFetch: (url: string, init: RequestInit) => Promise<Response>;
-  file: (input: ProposalInput) => Promise<{ id: number; routed: Routed }>;
+  file: (input: ProposalInput, opts?: { dedupe?: DedupeMode }) => Promise<{ id: number; routed: Routed }>;
   now: () => string;
   limiter: WriteLimiter;
 }
@@ -367,9 +368,7 @@ function replyFor(d: StaffExecDeps, id: number, routed: Routed, summary: string)
     }
     case 'deduped': {
       const row = getProposalById(d.db, id);
-      return row?.status === 'pending'
-        ? `That's already filed as #${id} and waiting for Robert; nothing new was filed.`
-        : `That's already filed as #${id} (${row?.status ?? 'unknown'}); nothing new was filed. If it really needs doing again, tell Robert.`;
+      return `That's already filed as #${id} (${row?.status ?? 'unknown'}) and waiting for Robert; nothing new was filed.`;
     }
   }
 }
@@ -409,7 +408,9 @@ export async function executeStaffAction(
     if (!d.limiter.take(user.id, Date.parse(nowIso))) {
       return `You have filed ${WRITES_PER_HOUR} requests in the last hour, which is the limit; nothing was filed. Try again later or message Robert.`;
     }
-    const { id: proposalId, routed } = await d.file(built.built.input);
+    // Only a still-pending identical request is a duplicate: one that already
+    // ran (or was decided) must not swallow a person's genuine repeat.
+    const { id: proposalId, routed } = await d.file(built.built.input, { dedupe: 'pending_only' });
     return replyFor(d, proposalId, routed, built.built.summary);
   } catch (err) {
     return `Tool error: ${err instanceof Error ? err.message : String(err)}`;

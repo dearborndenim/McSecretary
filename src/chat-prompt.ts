@@ -203,7 +203,12 @@ export interface ChatContext {
 
 /** The stable, cacheable block: identity + behavior. Byte-stable per user across requests. */
 export function buildStableSystemText(user: ChatPromptUser): string {
-  return `${buildSystemPromptBase(user)}\n\n${buildActingOnRequests(user.name)}`;
+  const base = `${buildSystemPromptBase(user)}\n\n${buildActingOnRequests(user.name)}`;
+  // STAFF ACTIONS rides in this block (byte-stable per grant set) so the
+  // request keeps three cached blocks at most.
+  return user.staff_actions && user.staff_actions.length > 0
+    ? `${base}\n\n${buildStaffActions(user.name, user.staff_actions)}`
+    : base;
 }
 
 /**
@@ -313,11 +318,6 @@ export function buildChatSystemBlocks(user: ChatPromptUser, ctx: ChatContext): A
   // rules for tools they cannot call.
   if (user.is_admin) {
     blocks.push({ type: 'text', text: buildGraphRouting(user.name), cache_control: { type: 'ephemeral' } });
-  }
-  // Byte-stable per grant set, so it sits before the volatile block and is
-  // read from cache with the base block. Admin total: 4 breakpoints, the API max.
-  if (user.staff_actions && user.staff_actions.length > 0) {
-    blocks.splice(1, 0, { type: 'text', text: buildStaffActions(user.name, user.staff_actions), cache_control: { type: 'ephemeral' } });
   }
   return blocks;
 }

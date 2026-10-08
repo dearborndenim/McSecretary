@@ -55,7 +55,7 @@ describe('staff-action catalogue validator (spec §5)', () => {
   it('accepts the shipped catalogue with every v1 action', () => {
     expect(Object.keys(cat.actions).sort()).toEqual([
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
-      'pos_status', 'production_lookup', 'purchasing_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive',
+      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive',
     ]);
     expect(cat.actions.customer_order_lookup!.description).toMatch(/^[^.]*customer order/i);
     expect(cat.actions.vendor_po_lookup!.description).toMatch(/^[^.]*vendor PO/);
@@ -191,6 +191,23 @@ describe('staff-action execution', () => {
     const done = await run('ops_note', { text: 'delivery came early' });
     expect(done).toBe('Done: Note from Kristina (fyi): delivery came early');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a repeat of a request that already ran files a new row, and staff executions emit no spine event', async () => {
+    const { run } = setup();
+    db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('kristina','dearborn-denim','inventory_transfer',2)").run();
+    const move = { sku: 'H201-M', quantity: 3, direction: 'to_store', reason: 'weekend' };
+    expect(await run('inventory_transfer', move)).toMatch(/^Done:/);
+    expect(await run('inventory_transfer', move)).toMatch(/^Done:/);
+    const rows = db.prepare("SELECT id, status FROM proposals WHERE agent = 'kristina'").all() as { id: number; status: string }[];
+    expect(rows.map((r) => r.status)).toEqual(['executed', 'executed']);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body).idempotency_key).toBe(String(rows[1]!.id));
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
+
+    // A still-pending identical request is the duplicate.
+    expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/^Filed #/);
+    expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/already filed as #\d+ \(pending\)/);
   });
 
   it('tells the requester how each proposal ended, and never the admin about their own', async () => {

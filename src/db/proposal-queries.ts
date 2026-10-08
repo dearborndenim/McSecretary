@@ -8,6 +8,13 @@ import type { ActionPayload, ProposalInput, ProposalRow, ProposalStatus } from '
 const LIVE_STATUSES = "('pending','approved','approved_with_edit','executed')";
 
 /**
+ * `live` (default): an identical pending, approved or executed proposal
+ * swallows a new one. `pending_only` (staff actions): only a pending one does,
+ * so a person repeating a real request after it ran files a new row.
+ */
+export type DedupeMode = 'live' | 'pending_only';
+
+/**
  * Insert a proposal. If an identical live proposal (same agent, brand,
  * action_type, payload hash; status live; not yet expired) exists, return its
  * id with `deduped: true` and insert nothing.
@@ -16,6 +23,7 @@ export function insertProposal(
   db: Database.Database,
   input: ProposalInput,
   nowIso: string,
+  dedupe: DedupeMode = 'live',
 ): { id: number; deduped: boolean } {
   const expiresMs = Date.parse(input.expires_at);
   if (Number.isNaN(expiresMs)) throw new Error(`Invalid expires_at: ${input.expires_at}`);
@@ -25,7 +33,7 @@ export function insertProposal(
   const existing = db.prepare(`
     SELECT id FROM proposals
     WHERE agent = ? AND brand_id = ? AND action_type = ? AND payload_hash = ?
-      AND status IN ${LIVE_STATUSES} AND expires_at > ?
+      AND status IN ${dedupe === 'pending_only' ? "('pending')" : LIVE_STATUSES} AND expires_at > ?
     ORDER BY id DESC LIMIT 1
   `).get(input.agent, input.brand_id, input.action_type, payload_hash, nowIso) as { id: number } | undefined;
   if (existing) return { id: existing.id, deduped: true };
