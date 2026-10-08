@@ -13,6 +13,14 @@ export interface User {
   check_in_cron: string | null;
   eod_cron: string | null;
   briefing_sections_json: string | null;
+  /** Brand config this user files under (staff access spec §4). */
+  brand_id: string;
+  /** JSON array of staff group names; read it with getUserGrants. */
+  grants_json: string;
+  /** Shopify location gid the user works at; null = none. */
+  location_id: string | null;
+  /** BCP-47 reply language; null = reply in the language the user writes in. */
+  language: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -57,12 +65,50 @@ export interface CreateUserInput {
   telegram_chat_id?: string;
   timezone?: string;
   briefing_cron?: string;
+  brand_id?: string;
+  location_id?: string | null;
+  language?: string | null;
+}
+
+/**
+ * Namespace rule (staff access spec §4): a users.id must never equal an
+ * AGENT_KEYS agent name, because the trust ledger and proposals.agent key on
+ * that string and a bearer could otherwise file "as" a person. The service
+ * registers the keyed agent names here once at boot (src/index.ts, right after
+ * parseAgentKeys); a module-level setter keeps every createUser caller (seeds,
+ * the admin CLI, tests) unchanged. Until it is called the set is empty, which
+ * is the CLI's case: the CLI does not load AGENT_KEYS, and the boot check
+ * (assertNoAgentUserCollision) catches any row it creates on the next start.
+ */
+let _keyedAgentNames: ReadonlySet<string> = new Set();
+
+export function setKeyedAgentNames(names: Iterable<string>): void {
+  _keyedAgentNames = new Set(names);
+}
+
+export function isKeyedAgentName(id: string): boolean {
+  return _keyedAgentNames.has(id);
+}
+
+/** Boot check: throws when any keyed agent name is also a users.id. */
+export function assertNoAgentUserCollision(db: Database.Database, agentNames: Iterable<string>): void {
+  const clash: string[] = [];
+  const has = db.prepare('SELECT 1 FROM users WHERE id = ?');
+  for (const name of new Set(agentNames)) {
+    if (has.get(name)) clash.push(name);
+  }
+  if (clash.length > 0) {
+    throw new Error(`AGENT_KEYS agent name(s) equal a users.id: ${clash.sort().join(', ')} — rename the agent key or the user`);
+  }
 }
 
 export function createUser(db: Database.Database, input: CreateUserInput): void {
+  if (isKeyedAgentName(input.id)) {
+    throw new Error(`User id "${input.id}" is an AGENT_KEYS agent name; pick another id`);
+  }
   db.prepare(`
-    INSERT INTO users (id, name, email, role, telegram_chat_id, timezone, briefing_cron)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, name, email, role, telegram_chat_id, timezone, briefing_cron, brand_id, location_id, language)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.name,
@@ -71,7 +117,33 @@ export function createUser(db: Database.Database, input: CreateUserInput): void 
     input.telegram_chat_id ?? null,
     input.timezone ?? 'America/Chicago',
     input.briefing_cron ?? '0 4 * * 1-5',
+    input.brand_id ?? 'dearborn-denim',
+    input.location_id ?? null,
+    input.language ?? null,
   );
+}
+
+/** The user's staff groups. Garbage or a non-array in grants_json reads as no grants. */
+export function getUserGrants(user: Pick<User, 'grants_json'>): string[] {
+  try {
+    const parsed: unknown = JSON.parse(user.grants_json ?? '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((g): g is string => typeof g === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/** Replaces the user's groups (not an append). Caller validates the names. */
+export function setUserGrants(db: Database.Database, userId: string, groups: string[]): void {
+  const unique = [...new Set(groups)];
+  db.prepare("UPDATE users SET grants_json = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(JSON.stringify(unique), userId);
+}
+
+export function setUserLocation(db: Database.Database, userId: string, locationId: string | null): void {
+  db.prepare("UPDATE users SET location_id = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(locationId, userId);
 }
 
 export function getUserById(db: Database.Database, id: string): User | undefined {

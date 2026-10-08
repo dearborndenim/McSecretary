@@ -69,6 +69,9 @@ import {
   getUserByTelegramChatId,
   getUserById,
   getUserByEmail,
+  isKeyedAgentName,
+  setKeyedAgentNames,
+  assertNoAgentUserCollision,
   getActiveUsers,
   consumeInvite,
   linkTelegramChat,
@@ -77,6 +80,7 @@ import {
   createInvite,
 } from './db/user-queries.js';
 import type { User } from './db/user-queries.js';
+import { handleStaffAdminCommand } from './staff/admin-commands.js';
 import {
   insertDevRequest,
   getDevRequestsByUser,
@@ -103,8 +107,10 @@ let awaitingCheckInResponse = false;
 // Cleared when they respond (which is saved as a journal entry).
 const awaitingReflectionFromUser = new Set<string>();
 
-// Pending archive batch — emails waiting for Rob's approval to archive
-let pendingArchiveBatch: EmailSummary[] = [];
+// Pending archive batches, per user — emails waiting for that user's approval
+// to archive. Keyed by user id so one user's "archive"/"yes" can never act on
+// another user's batch (staff access spec, Build 1).
+const pendingArchiveBatches = new Map<string, EmailSummary[]>();
 
 // Task polling — last known state for change detection
 let lastTaskSnapshot: Map<string, { listName: string; taskId: string; title: string; status: string }> = new Map();
@@ -632,9 +638,10 @@ async function handleEmailCleanup(userId: string): Promise<string> {
   }
 
   // Build the pending batch
-  pendingArchiveBatch = indices
+  const pendingArchiveBatch = indices
     .map((i) => allEmails[i - 1])
     .filter((e): e is EmailSummary => e !== undefined);
+  pendingArchiveBatches.set(userId, pendingArchiveBatch);
 
   const archiveList = pendingArchiveBatch
     .map((e, i) => `${i + 1}. ${e.fromName || e.from} — ${e.subject}`)
@@ -643,7 +650,8 @@ async function handleEmailCleanup(userId: string): Promise<string> {
   return `Found ${pendingArchiveBatch.length} emails to archive:\n\n${archiveList}\n\nReply "archive" to clean these up, or "keep [numbers]" to exclude specific ones (e.g., "keep 3, 5").`;
 }
 
-async function executeArchive(text: string): Promise<string> {
+async function executeArchive(userId: string, text: string): Promise<string> {
+  let pendingArchiveBatch = pendingArchiveBatches.get(userId) ?? [];
   if (pendingArchiveBatch.length === 0) {
     return 'No pending archive batch. Say "clean up email" first.';
   }
@@ -655,6 +663,7 @@ async function executeArchive(text: string): Promise<string> {
     const keepNumbers = lowerText.replace('keep ', '').split(/[,\s]+/).map(Number).filter((n) => !isNaN(n));
     const keepSet = new Set(keepNumbers.map((n) => n - 1)); // Convert to 0-indexed
     pendingArchiveBatch = pendingArchiveBatch.filter((_, i) => !keepSet.has(i));
+    pendingArchiveBatches.set(userId, pendingArchiveBatch);
 
     if (pendingArchiveBatch.length === 0) {
       return 'All emails removed from archive list. Nothing to archive.';
@@ -681,7 +690,7 @@ async function executeArchive(text: string): Promise<string> {
     }
   }
 
-  pendingArchiveBatch = [];
+  pendingArchiveBatches.delete(userId);
 
   let result = `Archived ${archived} emails.`;
   if (failed > 0) {
@@ -701,7 +710,10 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
   // End-of-day reflection capture: if the EOD summary just went out and this is
   // the next user message, save the text as a journal entry and acknowledge.
   // Skip if the reply is itself a command.
+  // Admin only: the reply is written into the shared "Rob" journal, which feeds
+  // the master learnings; a member's reply falls through to normal chat.
   if (
+    user.role === 'admin' &&
     awaitingReflectionFromUser.has(user.id) &&
     text.trim().length > 0 &&
     !text.startsWith('/')
@@ -819,8 +831,19 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     if (!targetUser) {
       return `No user found with email: ${email}`;
     }
+    // Namespace rule (staff access spec §4): never onboard a person whose id
+    // is also an AGENT_KEYS agent name.
+    if (isKeyedAgentName(targetUser.id)) {
+      return `User id "${targetUser.id}" is also an AGENT_KEYS agent name; rename one before inviting.`;
+    }
     const code = createInvite(db, targetUser.id);
     return `Invite code for ${targetUser.name} (${email}):\n\n\`${code}\`\n\nExpires in 7 days. They send /start ${code} to the bot.`;
+  }
+
+  // Admin-only: /grant, /grants, /setlocation — staff access (spec §7.5).
+  if (user.role === 'admin' && /^\/(grant|grants|setlocation)(\s|$)/.test(lowerText)) {
+    const reply = handleStaffAdminCommand(db, text, config.spine.brandsDir);
+    if (reply !== null) return reply;
   }
 
   // Admin-only: /onboard-all-pending — bulk-mint invites + email them for
@@ -1461,9 +1484,9 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
   }
 
   // Archive approval
-  if ((lowerText === 'archive' || lowerText === 'yes' || lowerText.startsWith('keep ')) && pendingArchiveBatch.length > 0) {
+  if ((lowerText === 'archive' || lowerText === 'yes' || lowerText.startsWith('keep ')) && (pendingArchiveBatches.get(user.id)?.length ?? 0) > 0) {
     try {
-      const response = await executeArchive(text);
+      const response = await executeArchive(user.id, text);
       insertConversationMessage(db, user.id, today, 'secretary', response);
       return response;
     } catch (err) {
@@ -1489,21 +1512,28 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
 
     const { getFormattedTaskLists } = await import('./tasks/todo.js');
     const { TOOL_DEFINITIONS, executeTool } = await import('./tools.js');
+    const { toolsForUser, checkToolCall } = await import('./staff/tool-policy.js');
+    const isAdmin = user.role === 'admin';
 
     // Fetch emails from user's accounts
     const accounts = getUserEmailAccounts(db, user.id);
+    const ownAccounts = accounts.map((a) => a.email_address);
     const emailPromises = accounts.map((a) =>
       fetchRecentEmails(a.email_address, 48, 25).catch(() => []),
     );
+    // To Do, the texts and the daily context (master knowledge, journal,
+    // yesterday's reflection) are Robert's; a member's context never loads
+    // them (staff access spec §7.1).
     const [emailResults, taskContext] = await Promise.all([
       Promise.all(emailPromises),
-      getFormattedTaskLists().catch(() => 'Failed to load tasks.'),
+      isAdmin ? getFormattedTaskLists().catch(() => 'Failed to load tasks.') : Promise.resolve(''),
     ]);
 
     const emailContext = formatEmailsForContext(emailResults.flat());
-    const smsContext = getRecentSmsMessages(db, 24, 30);
-    const dailyContext = buildDailyContext();
+    const smsContext = isAdmin ? getRecentSmsMessages(db, 24, 30) : '';
+    const dailyContext = isAdmin ? buildDailyContext() : '';
     const conversationHistory = buildConversationHistory(user.id, today);
+    const userTools = toolsForUser(user, TOOL_DEFINITIONS);
 
     const prefs = getUserPreferences(db, user.id);
     const systemBlocks = buildChatSystemBlocks(
@@ -1511,7 +1541,8 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         name: user.name,
         business_context: prefs?.business_context ?? null,
         accounts: accounts.map((a) => a.email_address),
-        is_admin: user.role === 'admin',
+        is_admin: isAdmin,
+        language: user.language ?? null,
       },
       { dailyContext, taskContext, smsContext, emailContext },
     );
@@ -1555,7 +1586,7 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
         output_config: { effort: 'medium' },
         system: systemBlocks,
         messages: currentMessages,
-        tools: TOOL_DEFINITIONS,
+        tools: userTools,
       });
 
       // Collect text from response
@@ -1578,7 +1609,11 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const toolUse of toolUseBlocks) {
         console.log(`Executing tool: ${toolUse.name}(${JSON.stringify(toolUse.input)})`);
-        const result = await executeTool(toolUse.name, toolUse.input as Record<string, any>, user.id);
+        // Defence in depth: the model only saw this user's tools, but a call
+        // outside them (or on someone else's mailbox) is refused, never run.
+        const refusal = checkToolCall(user, toolUse.name, toolUse.input, ownAccounts);
+        const result = refusal
+          ?? await executeTool(toolUse.name, toolUse.input as Record<string, any>, user.id);
         console.log(`Tool result: ${result}`);
         toolResults.push({
           type: 'tool_result',
@@ -1652,6 +1687,10 @@ async function main() {
   // Parsed once; a bad AGENT_KEYS or AGENT_POLICY throws here and stops the boot.
   const agentKeys = parseAgentKeys(config.spine.agentKeys, { minLength: 16 });
   const agentPolicy = parseAgentPolicy(config.spine.agentPolicy, agentKeys.values());
+  // Namespace rule (staff access spec §4/§7.6): no keyed agent may share a
+  // users.id, and createUser refuses one from here on.
+  assertNoAgentUserCollision(db, agentKeys.values());
+  setKeyedAgentNames(agentKeys.values());
   const spine = buildSpine({
     db,
     transport: createTelegramTransport(bot.api),

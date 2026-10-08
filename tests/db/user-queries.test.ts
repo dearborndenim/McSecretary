@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeSchema } from '../../src/db/schema.js';
 import {
@@ -13,7 +13,12 @@ import {
   createInvite,
   consumeInvite,
   linkTelegramChat,
+  getUserGrants,
+  setUserGrants,
+  setKeyedAgentNames,
+  assertNoAgentUserCollision,
 } from '../../src/db/user-queries.js';
+import { initializeUserSchema } from '../../src/db/user-schema.js';
 import crypto from 'node:crypto';
 
 describe('user schema', () => {
@@ -202,5 +207,76 @@ describe('user CRUD', () => {
     const user = getUserByTelegramChatId(db, '67890');
     expect(user).toBeDefined();
     expect(user!.id).toBe('u1');
+  });
+});
+
+describe('staff access columns (spec 2026-10-08 §4)', () => {
+  it('migration: a users row created before the columns exist gets the defaults', () => {
+    const db = new Database(':memory:');
+    // The pre-staff-access users table, as it stood on 2026-10-07.
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member', telegram_chat_id TEXT UNIQUE,
+        timezone TEXT NOT NULL DEFAULT 'America/Chicago', briefing_enabled INTEGER DEFAULT 1,
+        briefing_cron TEXT DEFAULT '0 4 * * 1-5', check_in_cron TEXT, eod_cron TEXT,
+        briefing_sections_json TEXT,
+        created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO users (id, name, email, role, telegram_chat_id) VALUES ('olivier', 'Olivier', 'olivier@dearborndenim.com', 'member', '111');
+    `);
+    for (const t of ['processed_emails', 'sender_profiles', 'agent_runs', 'audit_log', 'calendar_events', 'weekly_schedule', 'pending_actions', 'time_log', 'conversation_log']) {
+      db.exec(`CREATE TABLE ${t} (id INTEGER PRIMARY KEY)`);
+    }
+    const before = db.prepare('SELECT * FROM users').all();
+
+    initializeUserSchema(db);
+    initializeUserSchema(db); // idempotent
+
+    const after = db.prepare('SELECT * FROM users').all() as Record<string, unknown>[];
+    expect(after).toHaveLength(1);
+    expect(after[0]).toEqual({
+      ...(before[0] as object),
+      brand_id: 'dearborn-denim',
+      grants_json: '[]',
+      location_id: null,
+      language: null,
+    });
+  });
+
+  it('getUserGrants reads garbage as no grants; setUserGrants replaces', () => {
+    const db = new Database(':memory:');
+    initializeSchema(db);
+    createUser(db, { id: 'k', name: 'Kristina', email: 'k@dearborndenim.com', role: 'member' });
+    expect(getUserGrants(getUserById(db, 'k')!)).toEqual([]);
+    setUserGrants(db, 'k', ['store', 'office']);
+    setUserGrants(db, 'k', ['store']);
+    expect(getUserGrants(getUserById(db, 'k')!)).toEqual(['store']);
+    for (const junk of ['not json', '{"a":1}', '"store"', '[1, "store", null]']) {
+      expect(getUserGrants({ grants_json: junk }), junk).toEqual(junk.startsWith('[') ? ['store'] : []);
+    }
+  });
+
+  describe('namespace rule: users.id never equals an AGENT_KEYS agent name', () => {
+    let db: Database.Database;
+    beforeEach(() => {
+      db = new Database(':memory:');
+      initializeSchema(db);
+    });
+    afterEach(() => setKeyedAgentNames([]));
+
+    it('createUser refuses an id in the agent-key set and writes nothing', () => {
+      setKeyedAgentNames(['finance', 'purchasing']);
+      expect(() => createUser(db, { id: 'finance', name: 'F', email: 'f@x.com', role: 'member' })).toThrow(/AGENT_KEYS/);
+      expect(getUserById(db, 'finance')).toBeUndefined();
+      createUser(db, { id: 'kristina', name: 'K', email: 'k@x.com', role: 'member' });
+      expect(getUserById(db, 'kristina')).toBeDefined();
+    });
+
+    it('the boot check throws on an existing collision and passes otherwise', () => {
+      createUser(db, { id: 'purchasing', name: 'P', email: 'p@x.com', role: 'member' });
+      expect(() => assertNoAgentUserCollision(db, ['finance', 'purchasing'])).toThrow(/purchasing/);
+      expect(() => assertNoAgentUserCollision(db, ['finance'])).not.toThrow();
+    });
   });
 });
