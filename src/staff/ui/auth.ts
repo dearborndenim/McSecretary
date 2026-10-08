@@ -4,14 +4,19 @@
  *
  * Session token: `v1.<expiryMs>.<nonce>.<sig>` where sig = HMAC-SHA256 over
  * `v1.<expiryMs>.<nonce>`. The HMAC key is derived from SPINE_ADMIN_TOKEN and
- * the password's digest, so changing either signs everyone out.
+ * the password's digest, so changing either signs everyone out. The nonce
+ * must also have a live `staff_sessions` row: sign-out revokes it.
  */
 
 import crypto from 'node:crypto';
+import type Database from 'better-sqlite3';
+import { insertStaffSession, staffSessionLive } from '../../db/staff-ui-queries.js';
 
 export const SESSION_COOKIE = 'staff_session';
+export const FLASH_COOKIE = 'staff_flash';
+export const FLASH_TTL_MS = 60 * 1000;
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-export const LOGIN_MAX_FAILURES = 5;
+export const LOGIN_MAX_ATTEMPTS = 5;
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
 export interface UiSecrets {
@@ -50,14 +55,17 @@ function safeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(sha256(a), sha256(b));
 }
 
-export function issueSession(s: UiSecrets, nowMs: number): string {
+/** Mint a session: a row in staff_sessions and the signed cookie value. */
+export function issueSession(s: UiSecrets, db: Database.Database, nowMs: number): string {
   const nonce = crypto.randomBytes(16).toString('base64url');
-  const body = `v1.${nowMs + SESSION_TTL_MS}.${nonce}`;
+  const expMs = nowMs + SESSION_TTL_MS;
+  insertStaffSession(db, nonce, new Date(nowMs).toISOString(), new Date(expMs).toISOString());
+  const body = `v1.${expMs}.${nonce}`;
   return `${body}.${mac(s, body)}`;
 }
 
-/** The session's nonce when the token is genuine and unexpired, else null. */
-export function verifySession(s: UiSecrets, token: string | undefined, nowMs: number): string | null {
+/** The session's nonce when the token is genuine, unexpired and its row is live (not signed out), else null. */
+export function verifySession(s: UiSecrets, db: Database.Database, token: string | undefined, nowMs: number): string | null {
   if (!token) return null;
   const parts = token.split('.');
   if (parts.length !== 4 || parts[0] !== 'v1') return null;
@@ -65,7 +73,43 @@ export function verifySession(s: UiSecrets, token: string | undefined, nowMs: nu
   if (!safeEqual(sig, mac(s, `${v}.${exp}.${nonce}`))) return null;
   const expMs = Number(exp);
   if (!Number.isSafeInteger(expMs) || expMs <= nowMs || expMs > nowMs + SESSION_TTL_MS) return null;
-  return nonce;
+  return staffSessionLive(db, nonce, new Date(nowMs).toISOString()) ? nonce : null;
+}
+
+export interface Notice { text: string; error?: boolean }
+
+/**
+ * A one-time notice carried across a POST → 303 → GET (e.g. a freshly minted
+ * invite code): `<base64url json>.<expiryMs>.<sig>`, signed with the session
+ * key and bound to the session nonce, valid 60 s, cleared when read.
+ */
+export function issueFlash(s: UiSecrets, sessionNonce: string, notice: Notice, nowMs: number): string {
+  const payload = Buffer.from(JSON.stringify({ text: notice.text, error: notice.error === true }), 'utf8').toString('base64url');
+  const exp = nowMs + FLASH_TTL_MS;
+  return `${payload}.${exp}.${mac(s, `flash.${sessionNonce}.${payload}.${exp}`)}`;
+}
+
+export function readFlash(s: UiSecrets, sessionNonce: string, token: string | undefined, nowMs: number): Notice | null {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [payload, exp, sig] = parts as [string, string, string];
+  if (!safeEqual(sig, mac(s, `flash.${sessionNonce}.${payload}.${exp}`))) return null;
+  if (!(Number(exp) > nowMs)) return null;
+  try {
+    const v = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { text?: unknown; error?: unknown };
+    return typeof v.text === 'string' ? { text: v.text, error: v.error === true } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function flashCookie(token: string): string {
+  return `${FLASH_COOKIE}=${token}; Path=/staff; HttpOnly; Secure; SameSite=Lax; Max-Age=${FLASH_TTL_MS / 1000}`;
+}
+
+export function clearedFlashCookie(): string {
+  return `${FLASH_COOKIE}=; Path=/staff; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
 }
 
 /** The CSRF token for a session: derived from its nonce, so it is useless with any other session. */
@@ -96,26 +140,28 @@ export function readCookie(header: string | undefined, name: string): string | u
 }
 
 /**
- * Failed logins per IP in a sliding window, in memory per process. Blocked
- * means the next attempt is refused before the password is looked at.
+ * Login attempts per IP in a sliding window, in memory per process. `take`
+ * counts the attempt before anything is awaited, so concurrent requests
+ * cannot all slip past the check; false means refuse without looking at the
+ * password. A successful login clears the IP's bucket.
  */
-export function createLoginLimiter(max = LOGIN_MAX_FAILURES, windowMs = LOGIN_WINDOW_MS) {
-  const fails = new Map<string, number[]>();
+export function createLoginLimiter(max = LOGIN_MAX_ATTEMPTS, windowMs = LOGIN_WINDOW_MS) {
+  const hits = new Map<string, number[]>();
   const recent = (ip: string, nowMs: number): number[] => {
-    const r = (fails.get(ip) ?? []).filter((t) => nowMs - t < windowMs);
-    if (r.length === 0) fails.delete(ip); else fails.set(ip, r);
+    const r = (hits.get(ip) ?? []).filter((t) => nowMs - t < windowMs);
+    if (r.length === 0) hits.delete(ip); else hits.set(ip, r);
     return r;
   };
   return {
-    blocked(ip: string, nowMs: number): boolean {
-      return recent(ip, nowMs).length >= max;
-    },
-    fail(ip: string, nowMs: number): void {
-      if (fails.size > 10_000) for (const k of [...fails.keys()]) recent(k, nowMs);
-      fails.set(ip, [...recent(ip, nowMs), nowMs]);
+    take(ip: string, nowMs: number): boolean {
+      if (hits.size > 10_000) for (const k of [...hits.keys()]) recent(k, nowMs);
+      const r = recent(ip, nowMs);
+      if (r.length >= max) return false;
+      hits.set(ip, [...r, nowMs]);
+      return true;
     },
     succeed(ip: string): void {
-      fails.delete(ip);
+      hits.delete(ip);
     },
   };
 }

@@ -27,16 +27,24 @@ function chicagoOffsetMs(ms: number): number {
   return Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second')) - Math.floor(ms / 1000) * 1000;
 }
 
-/** Midnight at the start of a Chicago calendar day (YYYY-MM-DD), as an ISO instant; null when malformed. */
+/** True for a real calendar day in YYYY-MM-DD form (2026-02-30 is not one). */
+export function isCalendarDay(day: string): boolean {
+  if (!DATE_RE.test(day)) return false;
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+/** Midnight at the start of a Chicago calendar day (YYYY-MM-DD), as an ISO instant; null when not a real day. */
 export function chicagoDayStartIso(day: string): string | null {
-  if (!DATE_RE.test(day)) return null;
+  if (!isCalendarDay(day)) return null;
   const utcMidnight = Date.parse(`${day}T00:00:00Z`);
-  if (Number.isNaN(utcMidnight)) return null;
   let ms = utcMidnight - chicagoOffsetMs(utcMidnight);
   ms = utcMidnight - chicagoOffsetMs(ms); // second pass settles a DST change
   return new Date(ms).toISOString();
 }
 
+/** The following calendar day; callers pass only a day isCalendarDay accepted. */
 function nextDay(day: string): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 }
@@ -60,7 +68,7 @@ export function parseActivityQuery(q: URLSearchParams): ActivityQuery {
   if ((STATUSES as string[]).includes(form.status)) filter.status = form.status as ProposalStatus;
   const from = chicagoDayStartIso(form.from);
   if (from) filter.fromIso = from;
-  const to = DATE_RE.test(form.to) ? chicagoDayStartIso(nextDay(form.to)) : null;
+  const to = isCalendarDay(form.to) ? chicagoDayStartIso(nextDay(form.to)) : null;
   if (to) filter.toIso = to;
   const page = Number.parseInt(q.get('page') ?? '1', 10);
   return { filter, page: Number.isFinite(page) && page > 0 ? page : 1, form };

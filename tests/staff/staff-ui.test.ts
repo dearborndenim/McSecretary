@@ -71,16 +71,26 @@ describe('staff admin UI', () => {
     expect(ok.headers.get('set-cookie')).toMatch(/^staff_session=v1\.[^;]+; Path=\/staff; HttpOnly; Secure; SameSite=Lax; Max-Age=604800$/);
   });
 
+  it('counts concurrent attempts before reading the body: of 6 at once, at most 5 reach the password check', async () => {
+    await start();
+    const statuses = (await Promise.all(Array.from({ length: 6 }, () => login('wrong')))).map((r) => r.status).sort();
+    expect(statuses).toEqual([401, 401, 401, 401, 401, 429]);
+  });
+
   it('refuses a forged, tampered or expired session cookie', async () => {
     await start();
     const { cookie } = await session();
     expect((await fetch(`${base}/staff`, { headers: { cookie } })).status).toBe(200);
 
     const nowMs = Date.parse(clock.now);
-    const forged = issueSession({ password: SECRETS.password, hmacKey: 'some-other-key' }, nowMs);
+    const forged = issueSession({ password: SECRETS.password, hmacKey: 'some-other-key' }, db, nowMs);
+    // Valid HMAC under the real key, but its session row lives in another database.
+    const elsewhere = new Database(':memory:'); initializeSchema(elsewhere);
+    const noRow = issueSession(SECRETS, elsewhere, nowMs);
+    elsewhere.close();
     const [v, exp, nonce, sig] = cookie.slice('staff_session='.length).split('.');
     const extended = `${v}.${Number(exp) + 1000}.${nonce}.${sig}`;
-    for (const bad of [`staff_session=${forged}`, `staff_session=${extended}`, 'staff_session=v1.9999999999999.x.y', 'staff_session=']) {
+    for (const bad of [`staff_session=${forged}`, `staff_session=${noRow}`, `staff_session=${extended}`, 'staff_session=v1.9999999999999.x.y', 'staff_session=']) {
       const r = await fetch(`${base}/staff`, { headers: { cookie: bad }, redirect: 'manual' });
       expect(r.status).toBe(303);
       expect(r.headers.get('location')).toBe('/staff/login');
@@ -104,10 +114,25 @@ describe('staff admin UI', () => {
     expect(getUserById(db, 'kristina')!.grants_json).toBe('[]');
     expect(db.prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE action != 'login'").get()).toEqual({ n: 0 });
 
-    expect((await post({ csrf })).status).toBe(200);
+    const ok = await fetch(`${base}/staff/people/grants`, {
+      method: 'POST', redirect: 'manual', headers: { ...FORM, cookie },
+      body: new URLSearchParams({ user_id: 'kristina', groups: 'store', csrf }).toString(),
+    });
+    expect(ok.status).toBe(303);
+    expect(ok.headers.get('location')).toBe('/staff');
     expect(getUserById(db, 'kristina')!.grants_json).toBe('["store"]');
     expect(db.prepare("SELECT actor, action, target FROM admin_audit WHERE action != 'login'").all())
       .toEqual([{ actor: 'staff-ui', action: 'set_grants', target: 'kristina' }]);
+  });
+
+  it('sign-out revokes the session: the same cookie is refused afterwards', async () => {
+    await start();
+    const { cookie, csrf } = await session();
+    const out = await fetch(`${base}/staff/logout`, { method: 'POST', redirect: 'manual', headers: { ...FORM, cookie }, body: `csrf=${encodeURIComponent(csrf)}` });
+    expect(out.status).toBe(303);
+    const reuse = await fetch(`${base}/staff/people/invite`, { method: 'POST', redirect: 'manual', headers: { ...FORM, cookie }, body: `user_id=kristina&csrf=${encodeURIComponent(csrf)}` });
+    expect(reuse.status).toBe(401);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM user_invites').get()).toEqual({ n: 0 });
   });
 
   it('escapes a proposal reason containing <script> on the activity page', async () => {

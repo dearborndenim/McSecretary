@@ -17,7 +17,7 @@
 import type Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import {
-  createUser,
+  createUserWithInvite,
   getAllUsers,
   addEmailAccount,
   setUserPreferences,
@@ -56,16 +56,13 @@ export function parseAdminCommand(argv: string[]): AdminCommand {
 export async function executeAdminCommand(db: Database.Database, cmd: AdminCommand): Promise<string> {
   switch (cmd.action) {
     case 'add-user': {
-      const id = crypto.randomUUID();
-      createUser(db, {
-        id,
+      const { id, code } = createUserWithInvite(db, {
         name: cmd.args.name!,
         email: cmd.args.email!,
         role: (cmd.args.role as 'admin' | 'member') ?? 'member',
         timezone: cmd.args.timezone,
         briefing_cron: cmd.args['briefing-cron'],
       });
-      const code = createInvite(db, id);
       return `Created user: ${cmd.args.name} (${id})\nInvite code: ${code}\nTell them to message the bot with: /start ${code}`;
     }
 

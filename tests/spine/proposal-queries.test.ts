@@ -211,6 +211,9 @@ describe('listStaffProposals (staff admin UI activity page)', () => {
     expect(day.rows.map((r) => r.id)).toEqual([b, a]);
     expect(day.total).toBe(2);
 
+    // Not a real calendar day: ignored, never rolled forward into March.
+    expect(parseActivityQuery(new URLSearchParams('from=2026-02-30&to=2026-13-01')).filter).toEqual({});
+
     // A business agent named in the filter still returns nothing.
     expect(listStaffProposals(db, { agent: 'marketing-manager' }, 1).total).toBe(0);
     // Paging: 1 a page, second page is the next-newest.

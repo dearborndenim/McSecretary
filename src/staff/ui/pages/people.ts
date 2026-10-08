@@ -4,14 +4,14 @@
  * query helpers the Telegram commands use.
  */
 
-import crypto from 'node:crypto';
 import {
-  createInvite, createUser, getAllUsers, getUserByEmail, getUserById, getUserGrants,
+  createInvite, createUserWithInvite, getAllUsers, getUserByEmail, getUserById, getUserGrants,
   setUserGrants, setUserLanguage, setUserLocation, LANGUAGE_TAG_RE, type User,
 } from '../../../db/user-queries.js';
-import { listTrustRowsForAgent } from '../../../db/trust-queries.js';
+import type { TrustRow } from '../../../spine/types.js';
 import { loadBrandConfig, type BrandConfig } from '../../../spine/brand-config.js';
 import { resolveLocationArg } from '../../admin-commands.js';
+import { unknownGroups } from '../../groups.js';
 import type { StaffCatalogue } from '../../catalogue.js';
 import { LEVEL_LEGEND, chicago, csrfField, flag, html, trustControl, type Safe } from '../render.js';
 import type { PageCtx, PostResult } from '../router.js';
@@ -35,12 +35,18 @@ function locationAlias(u: User, brand: BrandConfig | null): string {
 }
 
 /** action_type → the catalogue description of the write that files it. */
-function writeDescriptions(cat: StaffCatalogue): Map<string, { id: string; description: string; initial: number }> {
-  const m = new Map<string, { id: string; description: string; initial: number }>();
+function writeDescriptions(cat: StaffCatalogue): Map<string, string> {
+  const m = new Map<string, string>();
   for (const a of Object.values(cat.actions)) {
-    if (a.kind === 'write' && a.action_type) m.set(a.action_type, { id: a.id, description: a.description, initial: a.initial_level ?? 1 });
+    if (a.kind === 'write' && a.action_type) m.set(a.action_type, a.description);
   }
   return m;
+}
+
+/** Built once per render: descriptions and every member's trust rows (one query). */
+interface PeopleData {
+  descs: Map<string, string>;
+  trust: Map<string, TrustRow[]>;
 }
 
 function firstSentence(s: string): string {
@@ -48,12 +54,12 @@ function firstSentence(s: string): string {
   return i > 0 ? s.slice(0, i + 1) : s;
 }
 
-function personBlock(ctx: PageCtx, u: User, brand: BrandConfig | null, stats: { n: number; last: string | null } | undefined): Safe {
+function personBlock(ctx: PageCtx, data: PeopleData, u: User, brand: BrandConfig | null, stats: { n: number; last: string | null } | undefined): Safe {
   const cat = ctx.catalogue;
   const groups = new Set(getUserGrants(u));
   const loc = locationAlias(u, brand);
-  const descs = writeDescriptions(cat);
-  const rows = listTrustRowsForAgent(ctx.db, u.id);
+  const descs = data.descs;
+  const rows = data.trust.get(u.id) ?? [];
   const have = new Set(rows.map((r) => `${r.brand_id}/${r.action_type}`));
   // Writes in the person's groups that they have not filed yet: shown so a
   // level can be set before the first request.
@@ -63,7 +69,7 @@ function personBlock(ctx: PageCtx, u: User, brand: BrandConfig | null, stats: { 
     .filter((a) => a.kind === 'write' && a.action_type && !have.has(`${u.brand_id}/${a.action_type}`));
 
   const trustRows = [
-    ...rows.map((r) => html`<tr><td data-k="action"><code>${r.action_type}</code><div class="mute small">${firstSentence(descs.get(r.action_type)?.description ?? '')}</div></td>
+    ...rows.map((r) => html`<tr><td data-k="action"><code>${r.action_type}</code><div class="mute small">${firstSentence(descs.get(r.action_type) ?? '')}</div></td>
 <td data-k="level">${trustControl(r, 'people', ctx.csrf)}</td>
 <td data-k="record" class="small mute">${r.approved_as_proposed} approved · ${r.approved_with_edit} edited · ${r.rejected} rejected${r.last_change_by ? html`<br>last set by ${r.last_change_by} ${chicago(r.last_change_at)}` : ''}</td></tr>`),
     ...unfiled.map((a) => html`<tr><td data-k="action"><code>${a.action_type}</code><div class="mute small">${firstSentence(a.description)}</div></td>
@@ -102,10 +108,19 @@ export function renderPeople(ctx: PageCtx): Safe {
     WHERE agent IN (SELECT id FROM users) GROUP BY agent
   `).all(since) as { agent: string; n: number; last: string | null }[]).map((r) => [r.agent, r]));
   const brands = new Map<string, BrandConfig | null>();
+  const trust = new Map<string, TrustRow[]>();
+  for (const r of ctx.db.prepare(`
+    SELECT t.* FROM trust_ledger t JOIN users u ON u.id = t.agent
+    WHERE u.role = 'member' ORDER BY t.agent, t.brand_id, t.action_type
+  `).all() as TrustRow[]) {
+    const list = trust.get(r.agent);
+    if (list) list.push(r); else trust.set(r.agent, [r]);
+  }
+  const data: PeopleData = { descs: writeDescriptions(ctx.catalogue), trust };
 
   return html`<h1>People</h1>
 <p class="small mute">Levels: ${LEVEL_LEGEND}</p>
-${members.length === 0 ? html`<p class="mute">No staff yet.</p>` : members.map((u) => personBlock(ctx, u, brandOf(ctx, brands, u.brand_id), stats.get(u.id)))}
+${members.length === 0 ? html`<p class="mute">No staff yet.</p>` : members.map((u) => personBlock(ctx, data, u, brandOf(ctx, brands, u.brand_id), stats.get(u.id)))}
 <section class="person"><h2>Add person</h2>
 <form class="row" method="post" action="/staff/people/add">${csrfField(ctx.csrf)}
 <input name="name" placeholder="Name" required maxlength="${NAME_MAX}">
@@ -133,12 +148,10 @@ export function postPeople(ctx: PageCtx, action: string, form: URLSearchParams):
     if (!EMAIL_RE.test(email) || email.length > 200) return { notice: { text: 'That email does not look right.', error: true }, back: 'people' };
     if (getUserByEmail(db, email)) return { notice: { text: `${email} is already a user.`, error: true }, back: 'people' };
     try { loadBrandConfig(ctx.brandsDir, brandId); } catch { return { notice: { text: `Unknown brand ${brandId}.`, error: true }, back: 'people' }; }
-    const id = crypto.randomUUID();
     const code = db.transaction(() => {
-      createUser(db, { id, name, email, role: 'member', brand_id: brandId });
-      const c = createInvite(db, id);
-      ctx.audit('add_user', id, { name, email, brand_id: brandId });
-      return c;
+      const created = createUserWithInvite(db, { name, email, role: 'member', brand_id: brandId });
+      ctx.audit('add_user', created.id, { name, email, brand_id: brandId });
+      return created.code;
     })();
     return { notice: { text: `Added ${name}. Invite code (shown once): ${code} — they send /start ${code} to the bot. It expires in 7 days.` }, back: 'people' };
   }
@@ -148,7 +161,7 @@ export function postPeople(ctx: PageCtx, action: string, form: URLSearchParams):
 
   if (action === 'grants') {
     const groups = [...new Set(form.getAll('groups'))];
-    const bad = groups.filter((g) => !Object.hasOwn(ctx.catalogue.groups, g));
+    const bad = unknownGroups(groups);
     if (bad.length > 0) return { notice: { text: `Unknown group(s): ${bad.join(', ')}.`, error: true }, back: 'people' };
     db.transaction(() => {
       setUserGrants(db, u.id, groups);

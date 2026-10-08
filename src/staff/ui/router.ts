@@ -13,15 +13,16 @@
 
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
-import { recordAdminAudit } from '../../db/admin-audit.js';
+import { recordAdminAudit, revokeStaffSession, sweepStaffSessions } from '../../db/staff-ui-queries.js';
 import { getTrustRow, promoteTrust } from '../../db/trust-queries.js';
 import { getUserById } from '../../db/user-queries.js';
 import { loadBrandConfig } from '../../spine/brand-config.js';
 import type { TrustLevel } from '../../spine/types.js';
 import type { StaffCatalogue } from '../catalogue.js';
 import {
-  SESSION_COOKIE, clearedSessionCookie, createLoginLimiter, csrfToken, csrfValid, issueSession,
-  passwordMatches, readCookie, sessionCookie, uiSecretsFromEnv, verifySession, type LoginLimiter, type UiSecrets,
+  FLASH_COOKIE, SESSION_COOKIE, clearedFlashCookie, clearedSessionCookie, createLoginLimiter, csrfToken, csrfValid,
+  flashCookie, issueFlash, issueSession, passwordMatches, readCookie, readFlash, sessionCookie, uiSecretsFromEnv,
+  verifySession, type LoginLimiter, type Notice, type UiSecrets,
 } from './auth.js';
 import { html, layout, type NavKey, type Safe } from './render.js';
 import { postPeople, renderPeople } from './pages/people.js';
@@ -49,7 +50,7 @@ export interface PageCtx {
 }
 
 export interface PostResult {
-  notice: { text: string; error?: boolean };
+  notice: Notice;
   back: 'people' | 'agents';
 }
 
@@ -74,12 +75,17 @@ function redirect(res: http.ServerResponse, to: string, headers: Record<string, 
   res.end();
 }
 
-/** The client address: the last X-Forwarded-For hop (added by Railway's edge), else the socket. */
+/**
+ * The client address for the login limiter. Assumption: McSecretary is only
+ * reachable through Railway's edge proxy, which puts the connecting client's
+ * address first in X-Forwarded-For, so the first entry is the client; with no
+ * header (a direct connection, tests) it is the socket address.
+ */
 export function clientIp(req: http.IncomingMessage): string {
   const xff = req.headers['x-forwarded-for'];
   const raw = Array.isArray(xff) ? xff.join(',') : xff;
-  const last = raw?.split(',').map((s) => s.trim()).filter(Boolean).at(-1);
-  return last || req.socket.remoteAddress || 'unknown';
+  const first = raw?.split(',').map((s) => s.trim()).filter(Boolean)[0];
+  return first || req.socket.remoteAddress || 'unknown';
 }
 
 function readForm(req: http.IncomingMessage): Promise<URLSearchParams | null> {
@@ -127,8 +133,16 @@ function postTrust(ctx: PageCtx, form: URLSearchParams): PostResult {
   try { loadBrandConfig(ctx.brandsDir, brandId); } catch { return bad(`Unknown brand ${brandId}.`); }
   const k = { agent, brand_id: brandId, action_type: actionType };
   const before = getTrustRow(ctx.db, k);
-  // A new row only for a person; a business agent's rows come from its own filings.
-  if (!before && !getUserById(ctx.db, agent)) return bad('No such trust row.');
+  const user = getUserById(ctx.db, agent);
+  if (back === 'people' || user) {
+    // A person: staff members only, and only the catalogue's write action types.
+    if (!user || user.role !== 'member') return bad('No such staff member.');
+    const staffTypes = new Set(Object.values(ctx.catalogue.actions).flatMap((a) => (a.kind === 'write' && a.action_type ? [a.action_type] : [])));
+    if (!staffTypes.has(actionType)) return bad(`${actionType} is not a staff action.`);
+  } else if (!before) {
+    // A business agent: only rows its own filings created.
+    return bad('No such trust row.');
+  }
   const r = ctx.db.transaction(() => {
     const out = promoteTrust(ctx.db, k, level as TrustLevel, 'staff-ui', ctx.nowIso);
     if (out.ok) ctx.audit('set_trust', agent, { brand_id: brandId, action_type: actionType, before: before?.level ?? null, after: level });
@@ -155,7 +169,7 @@ export function createStaffRouter(deps: StaffUiDeps) {
         return true;
       }
       const nowMs = Date.parse(deps.now());
-      const nonce = verifySession(secrets, readCookie(req.headers.cookie, SESSION_COOKIE), nowMs);
+      const nonce = verifySession(secrets, deps.db, readCookie(req.headers.cookie, SESSION_COOKIE), nowMs);
 
       if (path === '/staff/login') {
         if (req.method === 'GET') {
@@ -189,7 +203,10 @@ export function createStaffRouter(deps: StaffUiDeps) {
         }
         const page = PAGES[path];
         if (!page) { send(res, 404, layout({ title: 'Not found', nav: null, csrf, body: html`<h1>Not found</h1>` })); return true; }
-        send(res, 200, layout({ title: page.title, nav: page.nav, csrf, body: page.render(ctx, url.searchParams) }));
+        const flashToken = readCookie(req.headers.cookie, FLASH_COOKIE);
+        const notice = readFlash(secrets, nonce, flashToken, nowMs);
+        send(res, 200, layout({ title: page.title, nav: page.nav, csrf, notice, body: page.render(ctx, url.searchParams) }),
+          flashToken !== undefined ? { 'Set-Cookie': clearedFlashCookie() } : {});
         return true;
       }
 
@@ -202,6 +219,7 @@ export function createStaffRouter(deps: StaffUiDeps) {
       }
 
       if (path === '/staff/logout') {
+        revokeStaffSession(deps.db, nonce, ctx.nowIso);
         redirect(res, '/staff/login', { 'Set-Cookie': clearedSessionCookie() });
         return true;
       }
@@ -209,10 +227,15 @@ export function createStaffRouter(deps: StaffUiDeps) {
       if (path === '/staff/trust') result = postTrust(ctx, form);
       else if (path.startsWith('/staff/people/')) result = postPeople(ctx, path.slice('/staff/people/'.length), form);
       if (!result) { send(res, 404, layout({ title: 'Not found', nav: null, csrf, body: html`<h1>Not found</h1>` })); return true; }
-      const target = result.back === 'agents' ? PAGES['/staff/agents']! : PAGES['/staff']!;
-      send(res, result.notice.error ? 400 : 200, layout({
-        title: target.title, nav: target.nav, csrf, notice: result.notice, body: target.render(ctx, new URLSearchParams()),
-      }));
+      const back = result.back === 'agents' ? '/staff/agents' : '/staff';
+      if (result.notice.error) {
+        // Errors render inline; nothing was written.
+        const target = PAGES[back]!;
+        send(res, 400, layout({ title: target.title, nav: target.nav, csrf, notice: result.notice, body: target.render(ctx, new URLSearchParams()) }));
+        return true;
+      }
+      // Post/Redirect/Get: the one-time notice (e.g. an invite code) rides a 60 s signed cookie.
+      redirect(res, back, { 'Set-Cookie': flashCookie(issueFlash(secrets, nonce, result.notice, nowMs)) });
       return true;
     } catch (err) {
       console.error('staff-ui: request failed', req.method, path, err);
@@ -224,7 +247,8 @@ export function createStaffRouter(deps: StaffUiDeps) {
 
   async function login(req: http.IncomingMessage, res: http.ServerResponse, secrets: UiSecrets, nowMs: number): Promise<boolean> {
     const ip = clientIp(req);
-    if (limiter.blocked(ip, nowMs)) {
+    // Counted before the body is awaited, so concurrent attempts share one budget.
+    if (!limiter.take(ip, nowMs)) {
       req.resume();
       send(res, 429, loginPage('Too many attempts. Try again in 15 minutes.'), { 'Retry-After': '900' });
       return true;
@@ -232,13 +256,17 @@ export function createStaffRouter(deps: StaffUiDeps) {
     const form = await readForm(req);
     const password = form?.get('password') ?? '';
     if (!passwordMatches(password, secrets.password)) {
-      limiter.fail(ip, nowMs);
       send(res, 401, loginPage('Wrong password.'));
       return true;
     }
     limiter.succeed(ip);
-    recordAdminAudit(deps.db, { action: 'login', target: null, detail: { ip } }, new Date(nowMs).toISOString());
-    redirect(res, '/staff', { 'Set-Cookie': sessionCookie(issueSession(secrets, nowMs)) });
+    const nowIso = new Date(nowMs).toISOString();
+    const token = deps.db.transaction(() => {
+      sweepStaffSessions(deps.db, nowIso);
+      recordAdminAudit(deps.db, { action: 'login', target: null, detail: { ip } }, nowIso);
+      return issueSession(secrets, deps.db, nowMs);
+    })();
+    redirect(res, '/staff', { 'Set-Cookie': sessionCookie(token) });
     return true;
   }
 }
