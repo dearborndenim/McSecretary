@@ -11,6 +11,7 @@
 
 import type Database from 'better-sqlite3';
 import { getProposalById } from '../db/proposal-queries.js';
+import { ensureInitialTrust } from '../db/trust-queries.js';
 import type { BrandConfig } from '../spine/brand-config.js';
 import { extractNotify, resolveHandUrl, PROPOSAL_ID_PLACEHOLDER } from '../spine/executor.js';
 import { readHandPath, HAND_READ_PATH_PREFIX } from '../spine/hand-read.js';
@@ -417,6 +418,9 @@ export async function executeStaffAction(
     if (!d.limiter.allowed(user.id, Date.parse(nowIso))) {
       return `You have filed ${WRITES_PER_HOUR} requests in the last hour, which is the limit; nothing was filed. Try again later or message Robert.`;
     }
+    // First filing of this action type by this user: the ledger row starts at
+    // the catalogue's initial_level (an existing row is never touched).
+    ensureInitialTrust(d.db, { agent: user.id, brand_id: user.brand_id, action_type: action.action_type! }, action.initial_level ?? 1, nowIso);
     // A duplicate is an identical request still pending or filed in the last
     // 15 minutes (a double send must not run twice); a later repeat files anew.
     const { id: proposalId, routed } = await d.file(built.built.input, { dedupe: 'pending_or_recent' });

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { TrustRow } from '../spine/types.js';
 import type { ReviewProposalRow, ReviewRunRow, ReviewTrustRow } from '../spine/agent-review.js';
 
 /*
@@ -48,4 +49,11 @@ export function listReviewTrust(db: Database.Database): ReviewTrustRow[] {
     FROM trust_ledger
     WHERE ${BUSINESS_AGENT_SQL}
   `).all() as ReviewTrustRow[];
+}
+
+/** Every business-agent trust-ledger row in full, for the staff UI's agents page. */
+export function listBusinessTrustRows(db: Database.Database): TrustRow[] {
+  return db.prepare(`
+    SELECT * FROM trust_ledger WHERE ${BUSINESS_AGENT_SQL} ORDER BY agent, brand_id, action_type
+  `).all() as TrustRow[];
 }

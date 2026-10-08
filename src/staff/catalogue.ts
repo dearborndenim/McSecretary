@@ -61,6 +61,8 @@ export interface StaffAction {
   level_required?: 1 | 2 | 3;
   expires_hours?: number;
   summary?: string;
+  /** Trust level a user's ledger row starts at on their first filing (default 1; staff admin UI spec §4). */
+  initial_level?: 1 | 2 | 3;
 }
 
 export interface StaffCatalogue {
@@ -85,9 +87,9 @@ export const PLACEHOLDER_RE = /\{([^{}]*)\}/g;
 
 const ACTION_KEYS = new Set([
   'kind', 'description', 'params', 'bind', 'hand', 'method', 'path', 'body', 'switch',
-  'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary',
+  'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level',
 ]);
-const WRITE_ONLY_KEYS = ['body', 'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary'];
+const WRITE_ONLY_KEYS = ['body', 'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level'];
 const PARAM_KEYS = new Set(['type', 'required', 'description', 'enum', 'min', 'max', 'default', 'items', 'items_require_one_of']);
 const TYPES = new Set<ParamType>(['string', 'integer', 'number', 'boolean', 'enum', 'array']);
 
@@ -322,6 +324,12 @@ function parseAction(id: string, raw: unknown): StaffAction {
   action.expires_hours = raw.expires_hours;
   if (typeof raw.summary !== 'string' || !raw.summary.trim()) fail(where, 'summary is required on a write');
   action.summary = raw.summary;
+  if (raw.initial_level !== undefined) {
+    if (raw.initial_level !== 1 && raw.initial_level !== 2 && raw.initial_level !== 3) fail(where, 'initial_level must be 1, 2 or 3');
+    // Unreachable for a shipped catalogue (a pinned action_type is refused above); kept so the rule holds on its own.
+    if (raw.initial_level > 1 && isPinned(action.action_type!)) fail(where, 'a pinned action_type cannot start above level 1');
+    action.initial_level = raw.initial_level;
+  }
   checkTemplates(where, stringsIn([action.path, action.body, action.summary]), names);
   return action;
 }

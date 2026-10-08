@@ -48,6 +48,7 @@ import {
   setSpineHttpHandler,
   setLionsHttpHandler,
   setRfqFilesHttpHandler,
+  setStaffUiHttpHandler,
 } from './api.js';
 import { createLionsRouter } from './lions/routes.js';
 import { runLionsCheck, formatScheduleForTelegram } from './lions/check.js';
@@ -65,6 +66,7 @@ import { insertEvent } from './db/event-queries.js';
 import { runExpirySweep, buildTrustMonthlySummary, buildAgentReview, trailingDaysSince, AGENT_REVIEW_DEFAULT_DAYS, AGENT_REVIEW_MAX_DAYS } from './spine/jobs.js';
 import { getCatalogue, checkCatalogueAgainstBrand } from './staff/catalogue.js';
 import { setStaffDeps, createWriteLimiter, executeStaffTool } from './staff/execute.js';
+import { createStaffRouter } from './staff/ui/router.js';
 import { staffToolsForUser } from './staff/tools.js';
 import { loadBrandConfig } from './spine/brand-config.js';
 import { seedRobert, ROBERT_ID } from './db/seed-robert.js';
@@ -1759,6 +1761,16 @@ async function main() {
     now: () => new Date().toISOString(),
     limiter: createWriteLimiter(),
   });
+
+  // Staff admin UI at /staff (503 until STAFF_UI_PASSWORD is set).
+  setStaffUiHttpHandler(createStaffRouter({
+    db,
+    env: process.env,
+    brandsDir: config.spine.brandsDir,
+    now: () => new Date().toISOString(),
+    catalogue: getCatalogue,
+  }));
+  if (!process.env.STAFF_UI_PASSWORD) console.warn('staff-ui: STAFF_UI_PASSWORD is not set; /staff answers 503');
 
   const rfqBrandId = process.env.RFQ_BRAND_ID || 'dearborn-denim';
 

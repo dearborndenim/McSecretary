@@ -15,6 +15,12 @@ type SpineHttp = (req: http.IncomingMessage, res: http.ServerResponse) => Promis
 let _spineHttp: SpineHttp | null = null;
 let _lionsHttp: SpineHttp | null = null;
 let _rfqFilesHttp: SpineHttp | null = null;
+let _staffUiHttp: SpineHttp | null = null;
+
+/** Wired from src/index.ts. Handles /staff and /staff/* — the staff admin UI (src/staff/ui/router.ts). */
+export function setStaffUiHttpHandler(handler: SpineHttp): void {
+  _staffUiHttp = handler;
+}
 
 /** Wired from src/index.ts. Handles /spine/* before the legacy routes. */
 export function setSpineHttpHandler(handler: SpineHttp): void {
@@ -183,6 +189,10 @@ export function getRecentSmsMessages(db: Database.Database, hours: number = 24, 
 
 export function startApiServer(port: number = 3000): http.Server {
   const server = http.createServer(async (req, res) => {
+    if (_staffUiHttp && (req.url ?? '').startsWith('/staff')) {
+      if (await _staffUiHttp(req, res)) return;
+    }
+
     if (_spineHttp && (req.url ?? '').startsWith('/spine/')) {
       if (await _spineHttp(req, res)) return;
     }
