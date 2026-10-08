@@ -98,7 +98,8 @@ export function initializeSpineSchema(db: Database.Database): void {
       started_at TEXT NOT NULL,
       finished_at TEXT,
       outcome TEXT NOT NULL,
-      notes TEXT NOT NULL DEFAULT ''
+      notes TEXT NOT NULL DEFAULT '',
+      cost_usd REAL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_run_index_outcome ON agent_run_index(outcome, started_at);
 
@@ -178,6 +179,12 @@ export function initializeSpineSchema(db: Database.Database): void {
   // (see vendorNameFor in src/email/rfq-intake.ts).
   if (!rfqCols.includes('vendor_slug')) db.exec('ALTER TABLE rfq_messages ADD COLUMN vendor_slug TEXT');
   if (!rfqCols.includes('vendor_name')) db.exec('ALTER TABLE rfq_messages ADD COLUMN vendor_name TEXT');
+
+  // Additive migration: agent_run_index.cost_usd (agent review, 2026-10-08) --
+  // the run transcript's total_cost_usd, sent by agent-kit run-end when it has
+  // one. NULL means the run reported no cost; the review then reads "n/a".
+  const runCols = (db.prepare('PRAGMA table_info(agent_run_index)').all() as { name: string }[]).map((c) => c.name);
+  if (!runCols.includes('cost_usd')) db.exec('ALTER TABLE agent_run_index ADD COLUMN cost_usd REAL');
 
   const seed = db.prepare(
     'INSERT OR IGNORE INTO outcome_maturity (lane, metric, lag_days) VALUES (?, ?, ?)',

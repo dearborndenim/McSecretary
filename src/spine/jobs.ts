@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import { listStaleEvents } from '../db/event-queries.js';
 import { listFailedRunsSince } from '../db/run-index-queries.js';
 import { trustSummarySince } from '../db/trust-queries.js';
+import { listReviewProposals, listReviewRuns, listReviewTrust } from '../db/review-queries.js';
+import { computeAgentReview, formatAgentReview } from './agent-review.js';
 import { expireAndNotify } from './decision-events.js';
 import type { ProposalRow } from './types.js';
 
@@ -59,4 +61,20 @@ export function buildTrustMonthlySummary(db: Database.Database, sinceIso: string
   }
   lines.push('Reply "promote <agent> <action> <level>" to change a level.');
   return lines.join('\n');
+}
+
+/** Default and maximum window of the agent review, in days (spec §4). */
+export const AGENT_REVIEW_DEFAULT_DAYS = 30;
+export const AGENT_REVIEW_MAX_DAYS = 90;
+
+/** The monthly agent review message for the trailing `days` days. */
+export function buildAgentReview(db: Database.Database, nowIso: string, days = AGENT_REVIEW_DEFAULT_DAYS): string {
+  const sinceIso = new Date(Date.parse(nowIso) - days * 24 * 60 * 60 * 1000).toISOString();
+  return formatAgentReview(computeAgentReview({
+    proposals: listReviewProposals(db, sinceIso),
+    runs: listReviewRuns(db, sinceIso),
+    trust: listReviewTrust(db),
+    sinceIso,
+    nowIso,
+  }));
 }

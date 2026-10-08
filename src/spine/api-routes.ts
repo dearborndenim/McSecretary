@@ -182,6 +182,8 @@ function validateRun(b: Record<string, unknown>): string | null {
   if (b.finished_at !== undefined && b.finished_at !== null && !isIsoString(b.finished_at)) return 'finished_at must be null or an ISO timestamp';
   if (!RUN_OUTCOMES.includes(b.outcome as string)) return `outcome must be one of ${RUN_OUTCOMES.join('|')}`;
   if (b.notes !== undefined && (typeof b.notes !== 'string' || b.notes.length > 1000)) return 'notes must be a string of at most 1000 chars';
+  if (b.cost_usd !== undefined && b.cost_usd !== null
+    && (typeof b.cost_usd !== 'number' || !Number.isFinite(b.cost_usd) || b.cost_usd < 0)) return 'cost_usd must be a non-negative number';
   return null;
 }
 
@@ -441,7 +443,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const bad = validateRun(parsed.body);
         if (bad) { json(res, 400, { error: bad }); return true; }
         const r = parsed.body as unknown as RunIndexInput;
-        const ok = upsertRun(deps.db, { ...r, agent, finished_at: r.finished_at ?? null, notes: r.notes ?? '' });
+        const ok = upsertRun(deps.db, { ...r, agent, finished_at: r.finished_at ?? null, notes: r.notes ?? '', cost_usd: r.cost_usd ?? null });
         if (!ok) { json(res, 409, { error: 'run_id belongs to another agent' }); return true; }
         json(res, 200, { ok: true });
         return true;
