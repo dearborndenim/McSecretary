@@ -144,10 +144,10 @@ describe('staff-action execution', () => {
   });
   afterEach(() => db.close());
 
-  function setup() {
-    const spine = buildSpine({ db, transport, now: () => NOW, env, brandsDir: BRANDS, agentKeys: new Map(), fetch: fetchMock as never });
+  function setup(clock: { now: string } = { now: NOW }) {
+    const spine = buildSpine({ db, transport, now: () => clock.now, env, brandsDir: BRANDS, agentKeys: new Map(), fetch: fetchMock as never });
     const d: StaffExecDeps = {
-      db, loadBrand: spine.loadBrand, env, handFetch: spine.handFetch, file: spine.file, now: () => NOW, limiter: createWriteLimiter(),
+      db, loadBrand: spine.loadBrand, env, handFetch: spine.handFetch, file: spine.file, now: () => clock.now, limiter: createWriteLimiter(),
     };
     const run = (id: string, input: unknown, text = 'msg') => executeStaffAction(d, cat, getUserById(db, 'kristina')!, id, input, text);
     return { spine, run };
@@ -166,7 +166,7 @@ describe('staff-action execution', () => {
     const d: StaffExecDeps = { db, loadBrand: () => brand, env, handFetch: fetchMock as never, file: async () => ({ id: 0, routed: 'card' }), now: () => NOW, limiter: createWriteLimiter() };
     fetchMock.mockClear();
     for (const id of ['..', '../../admin', 'a/b']) {
-      expect(await executeStaffAction(d, evil, kristina(), 'peek', { id }, 'm')).toMatch(/not allowed in a path/);
+      expect(await executeStaffAction(d, evil, kristina(), 'peek', { id }, 'm')).toMatch(/^Cannot look that up: id ".*" is not a valid id: slashes and dot-segments are not allowed in ids/);
     }
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -193,11 +193,17 @@ describe('staff-action execution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('a repeat of a request that already ran files a new row, and staff executions emit no spine event', async () => {
-    const { run } = setup();
+  it('a double send runs once, a repeat 20 minutes later runs again, and staff executions emit no spine event', async () => {
+    const clock = { now: NOW };
+    const { run } = setup(clock);
     db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('kristina','dearborn-denim','inventory_transfer',2)").run();
     const move = { sku: 'H201-M', quantity: 3, direction: 'to_store', reason: 'weekend' };
     expect(await run('inventory_transfer', move)).toMatch(/^Done:/);
+    clock.now = '2026-10-08T15:00:40.000Z';
+    expect(await run('inventory_transfer', move)).toBe(
+      "That exact request ran at 10:00 (#1). If you mean another Move 3 × H201-M from the Factory to the store, add a different note (e.g. 'second batch') and ask again.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    clock.now = '2026-10-08T15:20:00.000Z';
     expect(await run('inventory_transfer', move)).toMatch(/^Done:/);
     const rows = db.prepare("SELECT id, status FROM proposals WHERE agent = 'kristina'").all() as { id: number; status: string }[];
     expect(rows.map((r) => r.status)).toEqual(['executed', 'executed']);
@@ -207,7 +213,7 @@ describe('staff-action execution', () => {
 
     // A still-pending identical request is the duplicate.
     expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/^Filed #/);
-    expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/already filed as #\d+ \(pending\)/);
+    expect(await run('ops_note', { text: 'leak by door 2' })).toMatch(/^That's already filed as #\d+ and waiting for Robert/);
   });
 
   it('tells the requester how each proposal ended, and never the admin about their own', async () => {

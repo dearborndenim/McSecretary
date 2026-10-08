@@ -4,6 +4,11 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/** `s` cut to `max` characters, the last one an ellipsis when it was longer. */
+export function cap(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 /** Parse a stored JSON column defensively — malformed text or a non-object value both yield `{}`. */
 export function safeJsonObject(json: string | null | undefined): Record<string, unknown> {
   if (!json) return {};

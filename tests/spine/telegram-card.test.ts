@@ -715,3 +715,19 @@ describe('renderProposalCard for pattern_draft', () => {
     expect(replies[0]).toContain(notify);
   });
 });
+
+describe('renderProposalCard: the staff requester line (staff access §7.4)', () => {
+  const row = (agent: string) => rowFor({
+    agent, action_type: 'material_request', reason: 'Request 2 rolls of 14oz indigo',
+    action_payload: JSON.stringify({ hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/requests', body: { material: '14oz indigo' } }),
+    evidence: JSON.stringify({ requested_by: 'Kristina', request_text: 'reorder 2 rolls 14oz indigo', material: '14oz indigo' }),
+  });
+
+  it('shows the line only when the filer is a person, never for an agent that put requested_by in its evidence', () => {
+    expect(renderProposalCard(row('kristina'), true).split('\n')[1])
+      .toBe('Requested by Kristina on Telegram: "reorder 2 rolls 14oz indigo"');
+    const agentCard = renderProposalCard(row('purchasing'), false);
+    expect(agentCard).not.toContain('Requested by');
+    expect(agentCard).toContain('requested_by: Kristina'); // plain evidence, as for any agent
+  });
+});

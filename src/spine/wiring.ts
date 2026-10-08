@@ -64,7 +64,7 @@ export function buildSpine(d: SpineBuildDeps) {
     sendCard: async (id) => {
       const p = getProposalById(d.db, id)!;
       const chatId = chatFor(p.brand_id);
-      const sent = await d.transport.sendCard(chatId, renderProposalCard(p), id);
+      const sent = await d.transport.sendCard(chatId, renderProposalCard(p, getUserById(d.db, p.agent) !== undefined), id);
       return { chatId, messageId: sent.message_id };
     },
   }, opts);

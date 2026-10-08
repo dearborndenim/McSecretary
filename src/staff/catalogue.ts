@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import { isPinned } from '../spine/gates.js';
 import type { BrandConfig } from '../spine/brand-config.js';
+import { isPlainObject as isObj } from '../spine/json-object.js';
 
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'array';
 
@@ -89,10 +90,6 @@ const ACTION_KEYS = new Set([
 const WRITE_ONLY_KEYS = ['body', 'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary'];
 const PARAM_KEYS = new Set(['type', 'required', 'description', 'enum', 'min', 'max', 'default', 'items', 'items_require_one_of']);
 const TYPES = new Set<ParamType>(['string', 'integer', 'number', 'boolean', 'enum', 'array']);
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 class CatalogueError extends Error {}
 

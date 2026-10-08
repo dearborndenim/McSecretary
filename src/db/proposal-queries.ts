@@ -9,10 +9,14 @@ const LIVE_STATUSES = "('pending','approved','approved_with_edit','executed')";
 
 /**
  * `live` (default): an identical pending, approved or executed proposal
- * swallows a new one. `pending_only` (staff actions): only a pending one does,
- * so a person repeating a real request after it ran files a new row.
+ * swallows a new one. `pending_or_recent` (staff actions): an identical
+ * pending one, or one filed in the last RECENT_DEDUPE_MS in any status but
+ * rejected/expired, does. That stops a double send (two messages, or a model
+ * retry) from executing twice at level 2+, while a person repeating a real
+ * request later files a new row.
  */
-export type DedupeMode = 'live' | 'pending_only';
+export type DedupeMode = 'live' | 'pending_or_recent';
+export const RECENT_DEDUPE_MS = 15 * 60 * 1000;
 
 /**
  * Insert a proposal. If an identical live proposal (same agent, brand,
@@ -30,12 +34,21 @@ export function insertProposal(
   const expiresAt = new Date(expiresMs).toISOString();
 
   const payload_hash = hashPayload(input.action_payload);
-  const existing = db.prepare(`
-    SELECT id FROM proposals
-    WHERE agent = ? AND brand_id = ? AND action_type = ? AND payload_hash = ?
-      AND status IN ${dedupe === 'pending_only' ? "('pending')" : LIVE_STATUSES} AND expires_at > ?
-    ORDER BY id DESC LIMIT 1
-  `).get(input.agent, input.brand_id, input.action_type, payload_hash, nowIso) as { id: number } | undefined;
+  const existing = (dedupe === 'pending_or_recent'
+    ? db.prepare(`
+      SELECT id FROM proposals
+      WHERE agent = ? AND brand_id = ? AND action_type = ? AND payload_hash = ?
+        AND ((status = 'pending' AND expires_at > ?)
+          OR (status NOT IN ('rejected','expired') AND created_at > ?))
+      ORDER BY id DESC LIMIT 1
+    `).get(input.agent, input.brand_id, input.action_type, payload_hash, nowIso,
+      new Date(Date.parse(nowIso) - RECENT_DEDUPE_MS).toISOString())
+    : db.prepare(`
+      SELECT id FROM proposals
+      WHERE agent = ? AND brand_id = ? AND action_type = ? AND payload_hash = ?
+        AND status IN ${LIVE_STATUSES} AND expires_at > ?
+      ORDER BY id DESC LIMIT 1
+    `).get(input.agent, input.brand_id, input.action_type, payload_hash, nowIso)) as { id: number } | undefined;
   if (existing) return { id: existing.id, deduped: true };
 
   const result = db.prepare(`

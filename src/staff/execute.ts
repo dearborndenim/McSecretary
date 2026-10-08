@@ -11,18 +11,19 @@
 
 import type Database from 'better-sqlite3';
 import { getProposalById } from '../db/proposal-queries.js';
-import { forwardBrandKey, resolveHand, type BrandConfig } from '../spine/brand-config.js';
-import { extractNotify, resolveHandUrl, withForwardedBrand, PROPOSAL_ID_PLACEHOLDER } from '../spine/executor.js';
+import type { BrandConfig } from '../spine/brand-config.js';
+import { extractNotify, resolveHandUrl, PROPOSAL_ID_PLACEHOLDER } from '../spine/executor.js';
+import { readHandPath, HAND_READ_PATH_PREFIX } from '../spine/hand-read.js';
+import { cap, isPlainObject as isObj } from '../spine/json-object.js';
 import type { Routed } from '../spine/router.js';
 import type { DedupeMode } from '../db/proposal-queries.js';
 import type { ProposalInput } from '../spine/types.js';
 import {
-  BUILT_IN_HANDS, READ_PATH_PREFIX, checkValue, getCatalogue,
+  BUILT_IN_HANDS, checkValue, getCatalogue,
   type ParamSpec, type StaffAction, type StaffCatalogue,
 } from './catalogue.js';
 import { staffActionIdsForUser, unsatisfiedBindings, type StaffUser } from './tools.js';
 
-export const READ_CAP_BYTES = 8192;
 export const REQUEST_TEXT_CAP = 300;
 const EVIDENCE_ARRAY_CAP = 500;
 const DETAIL_CAP = 300;
@@ -40,27 +41,26 @@ function label(hand: string): string {
   return HAND_LABELS[hand] ?? hand;
 }
 
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function cap(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
-
 // ── rate limit ───────────────────────────────────────────────
 
-/** Writes per user in a sliding hour, in memory per process (spec §7.2 step 6). */
+/**
+ * Filings per user in a sliding hour, in memory per process (spec §7.2 step
+ * 6). It counts filings, not attempts: `allowed` before filing, `record` only
+ * once a new row was filed (a duplicate or a refusal costs nothing).
+ */
 export function createWriteLimiter(limit = WRITES_PER_HOUR, windowMs = 3_600_000) {
   const hits = new Map<string, number[]>();
+  const recent = (userId: string, nowMs: number) => {
+    const r = (hits.get(userId) ?? []).filter((t) => nowMs - t < windowMs);
+    hits.set(userId, r);
+    return r;
+  };
   return {
-    /** Records a write and returns true, or returns false (nothing recorded) when over the limit. */
-    take(userId: string, nowMs: number): boolean {
-      const recent = (hits.get(userId) ?? []).filter((t) => nowMs - t < windowMs);
-      if (recent.length >= limit) { hits.set(userId, recent); return false; }
-      recent.push(nowMs);
-      hits.set(userId, recent);
-      return true;
+    allowed(userId: string, nowMs: number): boolean {
+      return recent(userId, nowMs).length < limit;
+    },
+    record(userId: string, nowMs: number): void {
+      recent(userId, nowMs).push(nowMs);
     },
   };
 }
@@ -80,6 +80,7 @@ function coerceScalar(spec: ParamSpec, v: unknown): unknown {
 
 function validateOne(name: string, spec: ParamSpec, raw: unknown): { ok: true; value: unknown } | { ok: false; error: string } {
   if (spec.type === 'array') {
+    if ((raw === undefined || raw === null) && !spec.required) return { ok: true, value: [] };
     if (!Array.isArray(raw) || raw.length === 0) return { ok: false, error: `${name} must be a non-empty list` };
     if (raw.length > spec.max!) return { ok: false, error: `${name} has ${raw.length} entries; at most ${spec.max}` };
     const items: Values[] = [];
@@ -135,7 +136,8 @@ export function bindValues(action: StaffAction, user: StaffUser, brand: BrandCon
       case 'user.id': v = user.id; break;
       case 'user.name': v = user.name; break;
       case 'brand.location_id': v = brand.location_id; break;
-      case 'proposal.id': v = PROPOSAL_ID_PLACEHOLDER; // the executor swaps in the row id just before the hand call break;
+      // The executor swaps in the row id just before the hand call.
+      case 'proposal.id': v = PROPOSAL_ID_PLACEHOLDER; break;
     }
     if (!v) {
       return {
@@ -197,13 +199,19 @@ export function fillPath(
 ): { ok: true; path: string; query: [string, string][] } | { ok: false; error: string } {
   const [pathT, queryT] = template.split('?', 2) as [string, string | undefined];
   let missing: string | null = null;
+  let badId: string | null = null;
   const path = pathT.replace(/\{([^{}]*)\}/g, (_m, name: string) => {
     const v = values[name];
     if (v === undefined || v === null || v === '') { missing ??= name; return ''; }
-    return encodeURIComponent(textOf(v));
+    const text = textOf(v);
+    // Path values are ids (vendor PO ids, SKUs): refused rather than encoded
+    // when they could name another segment.
+    if (/[/\\]/.test(text) || text === '.' || text === '..') { badId ??= `${name} "${cap(text, 60)}"`; return ''; }
+    return encodeURIComponent(text);
   });
   if (missing) return { ok: false, error: `${missing} is required` };
-  if (kind === 'read' && !path.startsWith(READ_PATH_PREFIX)) return { ok: false, error: `a read may only reach ${READ_PATH_PREFIX}` };
+  if (badId) return { ok: false, error: `${badId} is not a valid id: slashes and dot-segments are not allowed in ids` };
+  if (kind === 'read' && !path.startsWith(HAND_READ_PATH_PREFIX)) return { ok: false, error: `a read may only reach ${HAND_READ_PATH_PREFIX}` };
   if (path.split('/').some((seg) => seg === '.' || seg === '..')) return { ok: false, error: 'that value is not allowed in a path' };
   const check = resolveHandUrl('https://hand.invalid', path);
   if (!check.ok) return { ok: false, error: 'that value is not allowed in a path' };
@@ -324,51 +332,52 @@ async function runRead(d: StaffExecDeps, action: StaffAction, params: Values, br
   const c = resolveCase(action, values);
   const filled = fillPath(c.path, values, 'read');
   if (!filled.ok) return `Cannot look that up: ${filled.error}.`;
-  const target = resolveHand(brand, action.hand, d.env);
-  const resolved = resolveHandUrl(target.url, filled.path);
-  if (!resolved.ok) return `Cannot look that up: ${resolved.error}.`;
-  const url = new URL(resolved.href);
-  for (const [k, v] of filled.query) url.searchParams.set(k, v);
-  const href = withForwardedBrand(url.href, forwardBrandKey(brand, action.hand), brand.brand_id);
-  const res = await d.handFetch(href, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${target.bearer}`, Accept: 'application/json' },
+  const r = await readHandPath({
+    brand, hand: action.hand, path: filled.path, query: filled.query, env: d.env, handFetch: d.handFetch, forwardBrand: true,
   });
-  const text = await res.text();
-  if (res.status === 503) return `The ${label(action.hand)} is busy; try again in a minute.`;
-  if (!res.ok) {
-    let body: unknown = text;
-    try { body = JSON.parse(text); } catch { /* keep text */ }
-    return `The ${label(action.hand)} answered ${res.status}: ${refusalDetail(body)}`;
+  if (!r.ok) return `Cannot look that up: ${r.error}.`;
+  if (r.status === 503) return `The ${label(action.hand)} is busy; try again in a minute.`;
+  if (r.status < 200 || r.status >= 300) {
+    let body: unknown = r.text;
+    try { body = JSON.parse(r.text); } catch { /* keep text */ }
+    return `The ${label(action.hand)} answered ${r.status}: ${refusalDetail(body)}`;
   }
-  return text.length > READ_CAP_BYTES ? `${text.slice(0, READ_CAP_BYTES)}…[truncated]` : text;
+  return r.capped;
 }
 
-function replyFor(d: StaffExecDeps, id: number, routed: Routed, summary: string): string {
+/** HH:MM in the user's own zone (Chicago when unset or unknown). */
+function clock(iso: string, timeZone: string | undefined): string {
+  const opts = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
+  try { return new Intl.DateTimeFormat('en-GB', { ...opts, timeZone: timeZone || 'America/Chicago' }).format(new Date(iso)); }
+  catch { return new Intl.DateTimeFormat('en-GB', { ...opts, timeZone: 'America/Chicago' }).format(new Date(iso)); }
+}
+
+function replyFor(d: StaffExecDeps, user: StaffUser, id: number, routed: Routed, summary: string): string {
+  const row = getProposalById(d.db, id);
+  const result = (() => { try { return JSON.parse(row?.execution_result ?? 'null') as { body?: unknown; error?: string } | null; } catch { return null; } })();
   switch (routed) {
     case 'card':
-      return `Filed #${id} for Robert's approval. I'll tell you when it's decided.`;
+      // An admin decides his own card; nobody needs to tell him.
+      return user.role === 'admin'
+        ? `Filed #${id}; the card is in your inbox.`
+        : `Filed #${id} for Robert's approval. I'll tell you when it's decided.`;
     case 'card_failed':
       return `Filed #${id} for Robert's approval, but the card did not reach him; tell him it is waiting.`;
     case 'executed':
     case 'executed_silent': {
-      const row = getProposalById(d.db, id);
-      let notify: string | undefined;
-      try { notify = extractNotify((JSON.parse(row?.execution_result ?? '{}') as { body?: unknown }).body); } catch { /* summary */ }
-      return `Done: ${notify ?? summary}`;
+      if (!result) return 'It ran on the hand but the result was not recorded — Robert has been told; check before repeating.';
+      return `Done: ${extractNotify(result.body) ?? summary}`;
     }
     case 'execution_failed': {
-      const row = getProposalById(d.db, id);
-      let detail = 'no detail given';
-      try {
-        const r = JSON.parse(row?.execution_result ?? '{}') as { body?: unknown; error?: string };
-        detail = refusalDetail(r.body, r.error);
-      } catch { /* default */ }
-      return `Filed #${id} but the ${label(row ? (JSON.parse(row.action_payload) as { hand: string }).hand : '')} refused: ${detail}. Robert has been told.`;
+      const detail = result ? refusalDetail(result.body, result.error) : 'no detail given';
+      const hand = row ? (JSON.parse(row.action_payload) as { hand: string }).hand : '';
+      return `Filed #${id} but the ${label(hand)} refused: ${detail}. Robert has been told.`;
     }
     case 'deduped': {
-      const row = getProposalById(d.db, id);
-      return `That's already filed as #${id} (${row?.status ?? 'unknown'}) and waiting for Robert; nothing new was filed.`;
+      if (!row || row.status === 'pending') {
+        return `That's already filed as #${id} and waiting for Robert; nothing new was filed.`;
+      }
+      return `That exact request ran at ${clock(row.created_at, user.timezone)} (#${id}). If you mean another ${summary}, add a different note (e.g. 'second batch') and ask again.`;
     }
   }
 }
@@ -405,13 +414,14 @@ export async function executeStaffAction(
     const nowIso = d.now();
     const built = buildWriteProposal(action, params.values, user, brand, requestText, nowIso);
     if (!built.ok) return `Not filed: ${built.error}`;
-    if (!d.limiter.take(user.id, Date.parse(nowIso))) {
+    if (!d.limiter.allowed(user.id, Date.parse(nowIso))) {
       return `You have filed ${WRITES_PER_HOUR} requests in the last hour, which is the limit; nothing was filed. Try again later or message Robert.`;
     }
-    // Only a still-pending identical request is a duplicate: one that already
-    // ran (or was decided) must not swallow a person's genuine repeat.
-    const { id: proposalId, routed } = await d.file(built.built.input, { dedupe: 'pending_only' });
-    return replyFor(d, proposalId, routed, built.built.summary);
+    // A duplicate is an identical request still pending or filed in the last
+    // 15 minutes (a double send must not run twice); a later repeat files anew.
+    const { id: proposalId, routed } = await d.file(built.built.input, { dedupe: 'pending_or_recent' });
+    if (routed !== 'deduped') d.limiter.record(user.id, Date.parse(nowIso));
+    return replyFor(d, user, proposalId, routed, built.built.summary);
   } catch (err) {
     return `Tool error: ${err instanceof Error ? err.message : String(err)}`;
   }

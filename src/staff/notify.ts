@@ -12,12 +12,9 @@ import { getUserById } from '../db/user-queries.js';
 import type { ProposalRow } from '../spine/types.js';
 import type { InboxTransport } from '../spine/telegram-card.js';
 import { refusalDetail } from './execute.js';
+import { cap } from '../spine/json-object.js';
 
 const SUMMARY_CAP = 200;
-
-function cap(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
 
 /** The chat to tell and the line to send, or null when nobody should hear about this row. */
 export function requesterNotice(db: Database.Database, p: ProposalRow): { chatId: string; text: string } | null {

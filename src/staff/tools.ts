@@ -12,7 +12,7 @@ import type { User } from '../db/user-queries.js';
 import { getUserGrants } from '../db/user-queries.js';
 import type { ParamSpec, StaffAction, StaffCatalogue } from './catalogue.js';
 
-export type StaffUser = Pick<User, 'id' | 'name' | 'role' | 'brand_id' | 'grants_json' | 'location_id'>;
+export type StaffUser = Pick<User, 'id' | 'name' | 'role' | 'brand_id' | 'grants_json' | 'location_id'> & { timezone?: string };
 
 /** The user-row bindings this action needs that the user's row leaves empty. */
 export function unsatisfiedBindings(action: StaffAction, user: StaffUser): string[] {
