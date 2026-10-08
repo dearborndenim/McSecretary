@@ -48,7 +48,7 @@ describe('toolsForUser (staff access spec §7.1)', () => {
   });
 
   it('an admin gets the full list unchanged', () => {
-    expect(toolsForUser(admin, TOOL_DEFINITIONS, [])).toBe(TOOL_DEFINITIONS);
+    expect(toolsForUser(admin, TOOL_DEFINITIONS, [])).toEqual(TOOL_DEFINITIONS);
   });
 
   it('an unknown tool name is admin-only (fail closed)', () => {
@@ -78,8 +78,13 @@ describe('toolsForUser (staff access spec §7.1)', () => {
     expect([...PERSONAL_TOOLS].filter((n) => others.has(n))).toEqual([]);
   });
 
-  it('a member with no linked account sees no tools at all', () => {
+  it('a member with no linked account sees no personal tools, only their staff tools', () => {
     expect(toolsForUser(member, TOOL_DEFINITIONS, [])).toEqual([]);
+    const staff = [{ name: 'ops_note', description: 'x', input_schema: { type: 'object' as const, properties: {} } }];
+    expect(toolsForUser(member, TOOL_DEFINITIONS, [], staff).map((t) => t.name)).toEqual(['ops_note']);
+    // A staff action is callable only when it is in the caller's own set.
+    expect(checkToolCall(member, 'ops_note', {}, [], new Set(['ops_note']))).toBeNull();
+    expect(checkToolCall(member, 'store_inventory_set', {}, [], new Set(['ops_note']))).toMatch(/not available/);
   });
 
   it('refuses a path-traversal id into another mailbox; the URL segment encoder keeps it one segment', () => {

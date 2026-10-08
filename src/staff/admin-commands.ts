@@ -18,7 +18,9 @@ import {
   type User,
 } from '../db/user-queries.js';
 import { loadBrandConfig } from '../spine/brand-config.js';
-import { KNOWN_GROUPS, unknownGroups } from './groups.js';
+import { knownGroups, unknownGroups } from './groups.js';
+import { getCatalogue } from './catalogue.js';
+import { describeStaffTools } from './tools.js';
 
 const LOCATION_GID_RE = /^gid:\/\/shopify\/Location\/\d+$/;
 
@@ -26,17 +28,17 @@ type Result = { ok: true; message: string } | { ok: false; message: string };
 
 function describeUser(u: User): string {
   const groups = getUserGrants(u);
-  return `${u.name} <${u.email}> — groups: ${groups.length > 0 ? groups.join(', ') : '(none)'}; location: ${u.location_id ?? '(none)'}; language: ${u.language ?? '(as written)'}`;
+  return `${u.name} <${u.email}> — groups: ${groups.length > 0 ? groups.join(', ') : '(none)'}; location: ${u.location_id ?? '(none)'}; language: ${u.language ?? '(as written)'}; ${describeStaffTools(getCatalogue(), u)}`;
 }
 
-/** Replaces the user's groups. Every group must be in KNOWN_GROUPS; nothing is written otherwise. */
+/** Replaces the user's groups. Every group must be a catalogue group; nothing is written otherwise. */
 export function grantGroups(db: Database.Database, email: string, groups: string[]): Result {
   const user = getUserByEmail(db, email.trim().toLowerCase());
   if (!user) return { ok: false, message: `No user found with email: ${email}` };
-  if (groups.length === 0) return { ok: false, message: `Name at least one group. Known groups: ${KNOWN_GROUPS.join(', ')}` };
+  if (groups.length === 0) return { ok: false, message: `Name at least one group. Known groups: ${knownGroups().join(', ')}` };
   const bad = unknownGroups(groups);
   if (bad.length > 0) {
-    return { ok: false, message: `Unknown group(s): ${bad.join(', ')}. Known groups: ${KNOWN_GROUPS.join(', ')}` };
+    return { ok: false, message: `Unknown group(s): ${bad.join(', ')}. Known groups: ${knownGroups().join(', ')}` };
   }
   setUserGrants(db, user.id, groups);
   const updated = getUserById(db, user.id)!;
@@ -116,7 +118,7 @@ export function handleStaffAdminCommand(db: Database.Database, text: string, bra
   const parts = text.trim().split(/\s+/);
   const cmd = parts[0]?.toLowerCase();
   if (cmd === '/grant') {
-    if (parts.length < 3) return `Usage: /grant <email> <group> [group…]. Known groups: ${KNOWN_GROUPS.join(', ')}`;
+    if (parts.length < 3) return `Usage: /grant <email> <group> [group…]. Known groups: ${knownGroups().join(', ')}`;
     return grantGroups(db, parts[1]!, parts.slice(2).map((g) => g.toLowerCase())).message;
   }
   if (cmd === '/grants') {

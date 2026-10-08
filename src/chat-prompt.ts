@@ -26,6 +26,15 @@ export interface ChatPromptUser {
   is_admin: boolean;
   /** users.language (BCP-47); null/absent = reply in the language the user writes in. */
   language?: string | null;
+  /** The staff actions this user may call (src/staff/tools.ts); empty/absent = no STAFF ACTIONS block. */
+  staff_actions?: StaffActionLine[];
+}
+
+/** One staff action as the STAFF ACTIONS block lists it. */
+export interface StaffActionLine {
+  id: string;
+  kind: 'read' | 'write';
+  description: string;
 }
 
 /**
@@ -130,10 +139,15 @@ function buildMemberPromptBase(user: ChatPromptUser): string {
   const businessContext = user.business_context?.trim()
     ? user.business_context.trim()
     : `${name} is on the Dearborn Denim team.`;
-  // No linked account means no tools at all (toolsForUser returns []).
-  const capabilities = user.accounts.length > 0
+  // No linked account means no email or calendar tools (toolsForUser drops them).
+  const hasStaff = (user.staff_actions?.length ?? 0) > 0;
+  const staffNote = hasStaff ? ' You also have the business tools listed under STAFF ACTIONS below.' : '';
+  const capabilities = (user.accounts.length > 0
     ? `Your tools cover ${name}'s own Outlook email (archive, tag, mark read, send, contacts, categories) and ${name}'s own Outlook calendar, on the accounts listed above and no others. Bulk email tools exist for multi-email operations.`
-    : `${name} has no email account linked yet, so you have no email or calendar tools. Robert can link one.`;
+    : `${name} has no email account linked yet, so you have no email or calendar tools. Robert can link one.`) + staffNote;
+  const actsOn = hasStaff
+    ? `You only act on ${name}'s own email accounts and calendar and through the STAFF ACTIONS below.`
+    : `You only act on ${name}'s own email accounts and calendar.`;
 
   return `You are McSecretary, ${name}'s AI chief of staff at Dearborn Denim. You help ${name} with their own email and calendar.
 
@@ -161,7 +175,7 @@ When you send an hourly check-in and ${name} responds, the response is automatic
 - "/myrequests" — see your submitted requests
 
 === WHAT YOU DO NOT DO (HARD LIMITS) ===
-You never run code and never write to GitHub. You have no tool that executes commands, edits a repository, or starts a build, and you must not claim otherwise or pretend a tool call happened. You only act on ${name}'s own email accounts and calendar. When ${name} asks for something else, say that Robert can help and suggest "/request [description]".
+You never run code and never write to GitHub. You have no tool that executes commands, edits a repository, or starts a build, and you must not claim otherwise or pretend a tool call happened. ${actsOn} When ${name} asks for something else, say that Robert can help and suggest "/request [description]".
 
 === RULES ===
 - Be direct, specific, and concise. No emoji.
@@ -260,6 +274,35 @@ STILL THE FOREMAN'S:
 Code, builds, GitHub writes, and anything that edits a repository.`;
 }
 
+/** The first sentence of a tool description, for a one-line listing. */
+function firstSentence(text: string): string {
+  const m = /^.*?[.!?](?=\s|$)/.exec(text.trim());
+  return (m ? m[0] : text.trim());
+}
+
+/**
+ * The STAFF ACTIONS block (staff access spec §7.1): the user's staff actions,
+ * one line each, and how to use them. Byte-stable per user and grant set.
+ */
+export function buildStaffActions(userName: string, actions: StaffActionLine[]): string {
+  const lines = actions.map((a) => `- ${a.id} (${a.kind === 'read' ? 'look-up' : 'files a request'}): ${firstSentence(a.description)}`);
+  const hasNote = actions.some((a) => a.id === 'ops_note');
+  const outside = hasNote
+    ? `If ${userName} asks for something outside these, say Robert can do it and offer to pass it on with ops_note.`
+    : `If ${userName} asks for something outside these, say Robert can do it.`;
+  return `=== STAFF ACTIONS ===
+Your business tools for ${userName}, one line each:
+${lines.join('\n')}
+
+HOW THEY WORK:
+- A look-up answers now. Quote what it returns; never invent, round or guess a number or a SKU.
+- Every other action files a request in ${userName}'s name. Relay what the tool says: "Filed #N for Robert's approval" means it has NOT happened yet; only "Done:" means it ran. ${userName} hears again when Robert decides.
+- Fill parameters only from what ${userName} said or a look-up returned. When a required detail is missing or unclear (which SKU, how many, which direction, which PO), ask one short question first. Never fill a location: it comes from ${userName}'s profile.
+- When a tool lists candidates or refuses, relay that plainly and ask how to proceed; do not retry with a guess.
+- Two different things are both called "PO". A customer order is a purchase order a customer (VFC, Gibson, DDA work orders) placed with Dearborn Denim / McMillan Manufacturing; it is only looked up. A vendor PO is our purchase order to a vendor for fabric, thread or trims; materials arrive against it. Use those two words, never a bare "PO", when it could be either.
+- ${outside}`;
+}
+
 /** MCS-9 + graph routing: two system blocks, plus GRAPH ROUTING for an admin. */
 export function buildChatSystemBlocks(user: ChatPromptUser, ctx: ChatContext): Anthropic.TextBlockParam[] {
   const blocks: Anthropic.TextBlockParam[] = [
@@ -270,6 +313,11 @@ export function buildChatSystemBlocks(user: ChatPromptUser, ctx: ChatContext): A
   // rules for tools they cannot call.
   if (user.is_admin) {
     blocks.push({ type: 'text', text: buildGraphRouting(user.name), cache_control: { type: 'ephemeral' } });
+  }
+  // Byte-stable per grant set, so it sits before the volatile block and is
+  // read from cache with the base block. Admin total: 4 breakpoints, the API max.
+  if (user.staff_actions && user.staff_actions.length > 0) {
+    blocks.splice(1, 0, { type: 'text', text: buildStaffActions(user.name, user.staff_actions), cache_control: { type: 'ephemeral' } });
   }
   return blocks;
 }

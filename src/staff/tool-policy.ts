@@ -6,7 +6,10 @@
  * is admin-only, and so is any tool name this file does not list: a new tool
  * stays invisible to members until someone classifies it here (fail closed).
  *
- * Build 2 adds the staff-action catalogue tools on top of PERSONAL.
+ * Build 2 adds the staff-action catalogue tools (src/staff/tools.ts) on top:
+ * the caller passes the user's own staff tools, which every user gets whether
+ * or not they have a linked mailbox, and a staff tool name is callable only
+ * when it is in that user's set.
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
@@ -77,14 +80,17 @@ export function isToolAllowed(user: ToolPolicyUser, name: string): boolean {
 }
 
 /**
- * The tool definitions to send to the API for this user. An admin gets
- * `allTools` itself. A member with no linked account gets none: every
- * personal tool would fall back to the default (Robert's) mailbox.
+ * The tool definitions to send to the API for this user: `allTools` itself
+ * for an admin, the personal tools for a member, then the user's own staff
+ * tools. A member with no linked account gets no personal tool (every one
+ * would fall back to the default, Robert's, mailbox) but keeps staff tools.
  */
-export function toolsForUser(user: ToolPolicyUser, allTools: Anthropic.Tool[], ownAccounts: string[]): Anthropic.Tool[] {
-  if (isAdminUser(user)) return allTools;
-  if (ownAccounts.length === 0) return [];
-  return allTools.filter((t) => isToolAllowed(user, t.name));
+export function toolsForUser(
+  user: ToolPolicyUser, allTools: Anthropic.Tool[], ownAccounts: string[], staffTools: Anthropic.Tool[] = [],
+): Anthropic.Tool[] {
+  if (isAdminUser(user)) return [...allTools, ...staffTools];
+  const personal = ownAccounts.length === 0 ? [] : allTools.filter((t) => isToolAllowed(user, t.name));
+  return [...personal, ...staffTools];
 }
 
 /** Graph ids are base64url (with `=` padding); mailbox addresses add `@ . + -`. */
@@ -119,8 +125,13 @@ export function checkToolCall(
   name: string,
   input: unknown,
   ownAccounts: string[],
+  /** This user's own staff tool names; a staff action outside it falls through to the refusal. */
+  staffToolNames: ReadonlySet<string> = new Set(),
 ): string | null {
   if (isAdminUser(user)) return null;
+  // A staff action validates its own params against the catalogue; its
+  // executor re-checks the grant and never touches a mailbox.
+  if (staffToolNames.has(name)) return null;
   if (!isToolAllowed(user, name)) {
     return `The tool ${name} is not available to you. Nothing was done; ask Robert if you need it.`;
   }

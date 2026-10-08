@@ -12,6 +12,7 @@ import { createSpineRouter } from './api-routes.js';
 import { parsePromoteCommand, runPromoteCommand } from './promote-command.js';
 import type { ProposalInput } from './types.js';
 import type { AgentPolicy } from './agent-policy.js';
+import { notifyRequester } from '../staff/notify.js';
 
 export interface SpineBuildDeps {
   db: Database.Database;
@@ -67,7 +68,12 @@ export function buildSpine(d: SpineBuildDeps) {
     },
   });
 
-  const cardDeps = (chatId: string): CardDeps => ({ now: d.now, execute, reply: replyTo(chatId) });
+  /** Staff access §7.3: the staff member who filed a proposal hears how it ended. Never throws. */
+  const notifyRequesterOf = (id: number) => notifyRequester(d.db, d.transport, id);
+
+  const cardDeps = (chatId: string): CardDeps => ({
+    now: d.now, execute, reply: replyTo(chatId), onDecided: notifyRequesterOf,
+  });
 
   /** Returns the toast text for answerCallbackQuery. */
   const onCallback = async (data: string, chatId: string, by: string): Promise<string> => {
@@ -102,7 +108,9 @@ export function buildSpine(d: SpineBuildDeps) {
     agentPolicy: d.agentPolicy,
   });
 
-  return { file, onCallback, onText, handleHttp, execute, handFetch: fetchWithTimeout, loadBrand };
+  return {
+    file, onCallback, onText, handleHttp, execute, handFetch: fetchWithTimeout, loadBrand, notifyRequester: notifyRequesterOf,
+  };
 }
 
 export type Spine = ReturnType<typeof buildSpine>;

@@ -44,6 +44,25 @@ describe('executeProposal', () => {
     expect(row.execution_result).not.toContain('secret');
   });
 
+  it('swaps {{proposal.id}} in body strings for the row id on the hand call only, never in the stored row', async () => {
+    const tokened = insertProposal(db, {
+      agent: 'kristina', brand_id: 'dearborn-denim', action_type: 'store_inventory_set',
+      action_payload: {
+        hand: 'ad-manager', method: 'POST', path: '/api/x',
+        body: { idempotency_key: '{{proposal.id}}', lines: [{ ref: 'r-{{proposal.id}}' }], quantity: 4 },
+      },
+      reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    await executeProposal(db, tokened, deps(fetchMock));
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(url).toBe('https://am.example/api/x');
+    expect(JSON.parse(init.body as string)).toEqual({
+      idempotency_key: String(tokened), lines: [{ ref: `r-${tokened}` }], quantity: 4,
+    });
+    expect(JSON.parse(getProposalById(db, tokened)!.action_payload).body.idempotency_key).toBe('{{proposal.id}}');
+  });
+
   it('marks failed on non-2xx and stores the body', async () => {
     const r = await executeProposal(db, id, deps(async () => new Response('nope', { status: 500 })));
     expect(r.ok).toBe(false);

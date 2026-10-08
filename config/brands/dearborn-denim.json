@@ -4,6 +4,7 @@
   "active": true,
   "inbox_user_id": "robert-mcmillan",
   "shopify_store": "dearborn-denim-apparel.myshopify.com",
+  "location_id": "gid://shopify/Location/30653830",
   "store_location_id": "gid://shopify/Location/5526519911",
   "meta_ad_account": "1560973277494547",
   "silent_budget_usd": 500,
@@ -43,6 +44,10 @@
       "url_env": "DESIGN_MODULE_URL",
       "key_env": "DESIGN_MODULE_KEY",
       "forward_brand": "brand"
+    },
+    "factory-fenix": {
+      "url_env": "FACTORY_FENIX_URL",
+      "key_env": "FACTORY_FENIX_KEY"
     }
   }
 }
