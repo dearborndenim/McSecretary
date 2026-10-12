@@ -9,6 +9,8 @@ import {
 } from '../../src/spine/telegram-card.js';
 import type { ProposalRow } from '../../src/spine/types.js';
 import { parseEdit } from '../../src/spine/edits.js';
+import { executeProposal, type ExecutorDeps } from '../../src/spine/executor.js';
+import type { BrandConfig } from '../../src/spine/brand-config.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 
@@ -259,7 +261,33 @@ describe('telegram card', () => {
     expect(d.executed).toEqual([cs]);
     expect(JSON.parse(getProposalById(db, cs)!.action_payload).body).toEqual({
       text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim',
+      edited: true,
     });
+  });
+
+  it('a text= edit marks a cs-desk draft body edited:true; an edit of another field leaves edited as filed', async () => {
+    const file = (body: Record<string, unknown>, msg: number): number => {
+      const pid = insertProposal(db, {
+        agent: 'cs-desk', brand_id: 'dearborn-denim', action_type: 'cs_reply',
+        action_payload: { hand: 'cs-desk', method: 'POST', path: `/api/integration/drafts/${msg}/send`, body },
+        reason: 'Reply to ticket #1042', evidence: {}, cost_usd: 0, reversible: false, level_required: 1,
+        expires_at: '2026-09-09T00:00:00.000Z',
+      }, NOW).id;
+      setTelegramRef(db, pid, '555', msg);
+      return pid;
+    };
+    const d = deps(db);
+    const draft = file({ idempotency_key: 'draft:88', edited: false, text: 'Hi Jane' }, 88);
+    await handleProposalCallback(db, { action: 'edit', id: draft }, '555', 'robert', d);
+    expect(await handleEditReply(db, '555', 'text=Hi Jane, it ships today.', 'robert', d)).toBe(true);
+    expect(JSON.parse(getProposalById(db, draft)!.action_payload).body)
+      .toEqual({ idempotency_key: 'draft:88', edited: true, text: 'Hi Jane, it ships today.' });
+
+    const other = file({ idempotency_key: 'draft:89', edited: false, text: 'Hi Sam', close_after_send: false }, 89);
+    await handleProposalCallback(db, { action: 'edit', id: other }, '555', 'robert', d);
+    expect(await handleEditReply(db, '555', 'close_after_send=true', 'robert', d)).toBe(true);
+    expect(JSON.parse(getProposalById(db, other)!.action_payload).body)
+      .toEqual({ idempotency_key: 'draft:89', edited: false, text: 'Hi Sam', close_after_send: true });
   });
 
   it('edit reply with bad text keeps waiting and explains', async () => {
@@ -302,6 +330,31 @@ describe('telegram card', () => {
     const d = deps(db, { execute: async () => ({ ok: false, http_status: 500 }) });
     await handleProposalCallback(db, { action: 'approve', id }, '555', 'robert', d);
     expect(d.replies[0]).toMatch(/failed/);
+  });
+
+  it('a 409 from the hand shows its notify text in the failure reply, and the proposal ends failed', async () => {
+    const cs = insertProposal(db, {
+      agent: 'cs-desk', brand_id: 'dearborn-denim', action_type: 'cs_reply',
+      action_payload: { hand: 'cs-desk', method: 'POST', path: '/api/integration/drafts/88/send',
+        body: { idempotency_key: 'draft:88', edited: false, text: 'Hi Jane' } },
+      reason: 'Reply to ticket #1042', evidence: {}, cost_usd: 0, reversible: false, level_required: 1,
+      expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    setTelegramRef(db, cs, '555', 4);
+    const fixture = { error: 'superseded', reason: 'customer_message', notify: 'This draft no longer applies: the customer wrote again at 11:58.\u0007' };
+    const brand: BrandConfig = {
+      brand_id: 'dearborn-denim', display_name: 'DD', inbox_user_id: 'robert-mcmillan', shopify_store: 's', meta_ad_account: 'm',
+      silent_budget_usd: 500, exploration_share: 0.2, proposal_expiry_hours: 48,
+      hands: { 'cs-desk': { url_env: 'CS_URL', key_env: 'CS_KEY' } },
+    };
+    const executorDeps: ExecutorDeps = {
+      fetch: async () => new Response(JSON.stringify(fixture), { status: 409 }),
+      env: { CS_URL: 'https://cs.example/', CS_KEY: 'k' }, loadBrand: () => brand, now: () => NOW,
+    };
+    const d = deps(db, { execute: (pid) => executeProposal(db, pid, executorDeps) });
+    await handleProposalCallback(db, { action: 'approve', id: cs }, '555', 'robert', d);
+    expect(d.replies).toEqual([`Approved #${cs} — execution failed (409): This draft no longer applies: the customer wrote again at 11:58.`]);
+    expect(getProposalById(db, cs)!.status).toBe('failed');
   });
 
   it('caps a runaway reason and evidence values so the card stays phone-sized', () => {

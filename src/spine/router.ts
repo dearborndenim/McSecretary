@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { insertProposal, setTelegramRef, getProposalById, type DedupeMode } from '../db/proposal-queries.js';
 import { getTrustLevel } from '../db/trust-queries.js';
 import { isPinned } from './gates.js';
-import { extractNotify, type ExecutionResult } from './executor.js';
+import { endSentence, extractNotify, extractFailureNotify, type ExecutionResult } from './executor.js';
 import type { ProposalInput } from './types.js';
 
 export interface RouterDeps {
@@ -20,6 +20,12 @@ function notifySuffix(r: ExecutionResult): string {
   if (!r.ok) return '';
   const notify = extractNotify(r.body);
   return notify ? ` ${notify}` : '';
+}
+
+/** `: <notify>` when a failed execution's 4xx/5xx body carries the hand's own explanation, else ''. */
+function failureNotifySuffix(r: ExecutionResult): string {
+  const notify = extractFailureNotify(r);
+  return notify ? `: ${notify}` : '';
 }
 
 async function sendCardAndRef(db: Database.Database, id: number, deps: RouterDeps): Promise<boolean> {
@@ -70,7 +76,7 @@ export async function fileProposal(
       await deps.report(
         unrecorded ? `Executed #${id} ${p.agent} ${p.action_type} on the hand but the result was NOT recorded (row status changed mid-flight). Check the hand.`
         : r.ok ? `Executed #${id} ${p.agent} ${p.action_type} (level ${level}, ${r.http_status}).${notifySuffix(r)}`
-        : `Auto-execution of #${id} ${p.agent} ${p.action_type} failed${r.http_status ? ` (${r.http_status})` : ''}.`);
+        : endSentence(`Auto-execution of #${id} ${p.agent} ${p.action_type} failed${r.http_status ? ` (${r.http_status})` : ''}${failureNotifySuffix(r)}`));
     } catch (err) {
       console.error('spine: report failed', id, err);
     }
