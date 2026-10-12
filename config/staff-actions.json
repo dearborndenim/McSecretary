@@ -193,9 +193,10 @@
       "params": {
         "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only (e.g. 1042 for #1042)." }
       },
+      "bind": { "brand_id": "user.brand_id" },
       "hand": "cs-desk",
       "method": "GET",
-      "path": "/api/integration/tickets/{ticket_id}/thread",
+      "path": "/api/integration/tickets/{ticket_id}/thread?brand={brand_id}",
       "render": "cs_thread"
     },
     "cs_reply": {
@@ -206,11 +207,11 @@
         "text": { "type": "string", "required": true, "max": 4000, "description": "The reply body exactly as the customer should read it; no signature." },
         "close": { "type": "boolean", "required": false, "default": false, "description": "true = close the ticket after the reply is sent." }
       },
-      "bind": { "author": "user.id", "idempotency_key": "proposal.id" },
+      "bind": { "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
       "hand": "cs-desk",
       "method": "POST",
       "path": "/api/integration/tickets/{ticket_id}/reply",
-      "body": { "text": "{text}", "close": "{close}", "author": "{author}", "idempotency_key": "{idempotency_key}" },
+      "body": { "text": "{text}", "close": "{close}", "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
       "action_type": "cs_staff_reply",
       "reversible": false,
       "cost_usd": 0,
@@ -224,11 +225,11 @@
       "params": {
         "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only." }
       },
-      "bind": { "author": "user.id", "idempotency_key": "proposal.id" },
+      "bind": { "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
       "hand": "cs-desk",
       "method": "POST",
       "path": "/api/integration/tickets/{ticket_id}/close",
-      "body": { "author": "{author}", "idempotency_key": "{idempotency_key}" },
+      "body": { "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
       "action_type": "cs_staff_close",
       "reversible": true,
       "cost_usd": 0,
@@ -243,11 +244,11 @@
       "params": {
         "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only." }
       },
-      "bind": { "assignee": "user.id", "author": "user.id", "idempotency_key": "proposal.id" },
+      "bind": { "assignee": "user.id", "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
       "hand": "cs-desk",
       "method": "POST",
       "path": "/api/integration/tickets/{ticket_id}/assign",
-      "body": { "assignee": "{assignee}", "author": "{author}", "idempotency_key": "{idempotency_key}" },
+      "body": { "assignee": "{assignee}", "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
       "action_type": "cs_staff_assign",
       "reversible": true,
       "cost_usd": 0,

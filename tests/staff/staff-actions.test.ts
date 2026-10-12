@@ -145,8 +145,31 @@ describe('staff-action params and payloads (spec §7.2)', () => {
     const r = buildWriteProposal(action, (v as any).values, kristina({ grants_json: '["cs"]' }), brand, 'reply to 1042', NOW);
     expect((r as any).built.input.action_payload).toEqual({
       hand: 'cs-desk', method: 'POST', path: '/api/integration/tickets/1042/reply',
-      body: { text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}' },
+      body: { text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim' },
     });
+  });
+
+  it("every cs action carries the user's own brand to cs-desk, never one from input, so a ticket of another brand answers not_found", async () => {
+    const knits = loadBrandConfig(BRANDS, 'knits');
+    const user = kristina({ grants_json: '["cs"]', brand_id: 'knits' });
+    const csIds = cat.groups.cs!.filter((id) => id.startsWith('cs_'));
+    const spoof = { ticket_id: '1042', text: 'Hi', note: 'n', by: 'email', value: 'a@b.co', brand: 'dearborn-denim', brand_id: 'dearborn-denim' };
+    for (const id of csIds.filter((i) => cat.actions[i]!.kind === 'write')) {
+      const action = cat.actions[id]!;
+      const v = validateParams(action, spoof);
+      const r = buildWriteProposal(action, (v as any).values, user, knits, 'r', NOW) as any;
+      expect([id, r.built.input.action_payload.body.brand, r.built.input.brand_id]).toEqual([id, 'knits', 'knits']);
+    }
+    const urls: string[] = [];
+    const handFetch = vi.fn(async (url: string) => { urls.push(url); return new Response('{"error":"not_found"}', { status: 404 }); });
+    const d: StaffExecDeps = {
+      db: new Database(':memory:'), loadBrand: () => knits, env: { CS_DESK_URL: 'https://cs.example', CS_DESK_KEY: 'k' },
+      handFetch: handFetch as never, file: async () => ({ id: 0, routed: 'card' }), now: () => NOW, limiter: createWriteLimiter(),
+    };
+    const reads = csIds.filter((i) => cat.actions[i]!.kind === 'read');
+    for (const id of reads) await executeStaffAction(d, cat, user, id, spoof, 'r');
+    expect(urls).toHaveLength(reads.length);
+    for (const u of urls) expect(new URL(u).searchParams.getAll('brand')).toEqual(['knits']);
   });
 });
 
