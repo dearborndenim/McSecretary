@@ -1,10 +1,11 @@
 {
-  "_comment": "Staff-action catalogue (staff access spec docs/superpowers/specs/2026-10-08-staff-access-design.md §5). Validated at boot by src/staff/catalogue.ts; a malformed entry stops the boot. {name} placeholders come only from validated params and bindings. 'customer order' = a customer's purchase order TO Dearborn Denim (purchase-order-receiver); 'vendor PO' = our purchase order TO a vendor (kanban-purchaser).",
+  "_comment": "Staff-action catalogue (staff access spec docs/superpowers/specs/2026-10-08-staff-access-design.md §5). Validated at boot by src/staff/catalogue.ts; a malformed entry stops the boot. {name} placeholders come only from validated params and bindings. 'customer order' = a customer's purchase order TO Dearborn Denim (purchase-order-receiver); 'vendor PO' = our purchase order TO a vendor (kanban-purchaser). 'ticket' = a cs-desk customer-service ticket (a retail customer's email thread), never either kind of PO.",
   "groups": {
     "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
     "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "ops_note"],
     "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
-    "office": ["vendor_po_lookup", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"]
+    "office": ["vendor_po_lookup", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"],
+    "cs": ["cs_my_queue", "cs_search", "cs_ticket", "cs_reply", "cs_note", "cs_close", "cs_assign_me", "ops_note"]
   },
   "actions": {
     "inventory_lookup": {
@@ -176,6 +177,125 @@
           "wip": { "path": "/api/integration/wip-summary" }
         }
       }
+    },
+    "cs_my_queue": {
+      "kind": "read",
+      "description": "Your customer-service queue: cs-desk tickets handed to you and waiting on a person (waiting_human), most recently updated first, one line each with the ticket number, customer, subject and when the customer last wrote. Use the ticket number with cs_ticket, then cs_reply.",
+      "bind": { "brand_id": "user.brand_id", "assignee": "user.id" },
+      "hand": "cs-desk",
+      "method": "GET",
+      "path": "/api/integration/tickets?brand={brand_id}&status=waiting_human&assignee={assignee}&limit=20",
+      "render": "cs_ticket_list"
+    },
+    "cs_search": {
+      "kind": "read",
+      "description": "Find cs-desk tickets by the customer's email address, an order number or words in the subject or messages, one line each, most recently updated first, any status. Use the ticket number with cs_ticket.",
+      "params": {
+        "by": { "type": "enum", "enum": ["email", "order", "text"], "required": true, "description": "email = the customer's exact address; order = an order number like #309610; text = words from the subject or the messages." },
+        "value": { "type": "string", "required": true, "max": 200, "description": "The address, order number or words to look for." }
+      },
+      "bind": { "brand_id": "user.brand_id" },
+      "hand": "cs-desk",
+      "method": "GET",
+      "switch": {
+        "param": "by",
+        "cases": {
+          "email": { "path": "/api/integration/tickets?brand={brand_id}&email={value}&limit=20" },
+          "order": { "path": "/api/integration/tickets?brand={brand_id}&order={value}&limit=20" },
+          "text": { "path": "/api/integration/tickets?brand={brand_id}&q={value}&limit=20" }
+        }
+      },
+      "render": "cs_ticket_list"
+    },
+    "cs_ticket": {
+      "kind": "read",
+      "description": "Read one customer-service ticket: the header (status, customer, subject) and its last messages, oldest first, with what the customer wrote, what the bot or staff already sent, and internal notes (marked INTERNAL NOTE, never sent to the customer). Always read it before cs_reply.",
+      "params": {
+        "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only (e.g. 1042 for #1042)." }
+      },
+      "bind": { "brand_id": "user.brand_id" },
+      "hand": "cs-desk",
+      "method": "GET",
+      "path": "/api/integration/tickets/{ticket_id}/thread?brand={brand_id}",
+      "render": "cs_thread"
+    },
+    "cs_reply": {
+      "kind": "write",
+      "description": "Send your reply by email to the customer on a cs-desk ticket, threaded into their conversation; cs-desk adds your signature. Write only the reply body, no signature. Set close=true when nothing more is needed. An email cannot be unsent: it goes out once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only." },
+        "text": { "type": "string", "required": true, "max": 4000, "description": "The reply body exactly as the customer should read it; no signature." },
+        "close": { "type": "boolean", "required": false, "default": false, "description": "true = close the ticket after the reply is sent." }
+      },
+      "bind": { "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
+      "hand": "cs-desk",
+      "method": "POST",
+      "path": "/api/integration/tickets/{ticket_id}/reply",
+      "body": { "text": "{text}", "close": "{close}", "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
+      "action_type": "cs_staff_reply",
+      "reversible": false,
+      "cost_usd": 0,
+      "level_required": 1,
+      "expires_hours": 24,
+      "summary": "Email the customer on ticket #{ticket_id}"
+    },
+    "cs_note": {
+      "kind": "write",
+      "description": "Add an internal note to a cs-desk ticket for Robert and the team (a phone call, what you checked, what is still pending); it is never sent to the customer. Files a request; it runs right away once you are trusted on it, else when Robert approves.",
+      "params": {
+        "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only." },
+        "note": { "type": "string", "required": true, "max": 4000, "description": "The note text." }
+      },
+      "bind": { "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
+      "hand": "cs-desk",
+      "method": "POST",
+      "path": "/api/integration/tickets/{ticket_id}/note",
+      "body": { "text": "{note}", "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
+      "action_type": "cs_staff_note",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 2,
+      "expires_hours": 24,
+      "summary": "Add a note to ticket #{ticket_id}"
+    },
+    "cs_close": {
+      "kind": "write",
+      "description": "Close a cs-desk ticket without replying (already answered, resolved, spam or a duplicate). Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only." }
+      },
+      "bind": { "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
+      "hand": "cs-desk",
+      "method": "POST",
+      "path": "/api/integration/tickets/{ticket_id}/close",
+      "body": { "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
+      "action_type": "cs_staff_close",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 2,
+      "expires_hours": 24,
+      "summary": "Close ticket #{ticket_id}"
+    },
+    "cs_assign_me": {
+      "kind": "write",
+      "description": "Take a cs-desk ticket: assign it to yourself so it shows in your queue (cs_my_queue). Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "ticket_id": { "type": "string", "required": true, "max": 20, "description": "The ticket number, digits only." }
+      },
+      "bind": { "assignee": "user.id", "author": "user.id", "idempotency_key": "proposal.id", "brand_id": "user.brand_id" },
+      "hand": "cs-desk",
+      "method": "POST",
+      "path": "/api/integration/tickets/{ticket_id}/assign",
+      "body": { "assignee": "{assignee}", "author": "{author}", "idempotency_key": "{idempotency_key}", "brand": "{brand_id}" },
+      "action_type": "cs_staff_assign",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 2,
+      "expires_hours": 24,
+      "summary": "Assign ticket #{ticket_id} to {author}"
     },
     "ops_note": {
       "kind": "write",

@@ -48,6 +48,10 @@
     "factory-fenix": {
       "url_env": "FACTORY_FENIX_URL",
       "key_env": "FACTORY_FENIX_KEY"
+    },
+    "cs-desk": {
+      "url_env": "CS_DESK_URL",
+      "key_env": "CS_DESK_KEY"
     }
   }
 }

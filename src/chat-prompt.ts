@@ -292,6 +292,9 @@ function firstSentence(text: string): string {
 export function buildStaffActions(userName: string, actions: StaffActionLine[]): string {
   const lines = actions.map((a) => `- ${a.id} (${a.kind === 'read' ? 'look-up' : 'files a request'}): ${firstSentence(a.description)}`);
   const hasNote = actions.some((a) => a.id === 'ops_note');
+  const csLine = actions.some((a) => a.id === 'cs_reply')
+    ? `\n- cs_reply sends an email to a customer; read the thread first (cs_ticket); quote nothing you did not read. Never promise a refund, credit, replacement or date the thread or ${userName} did not give. Lines marked INTERNAL NOTE were never sent to the customer. A "ticket" is a cs-desk customer-service ticket, not a customer order or a vendor PO.`
+    : '';
   const outside = hasNote
     ? `If ${userName} asks for something outside these, say Robert can do it and offer to pass it on with ops_note.`
     : `If ${userName} asks for something outside these, say Robert can do it.`;
@@ -304,7 +307,7 @@ HOW THEY WORK:
 - Every other action files a request in ${userName}'s name. Relay what the tool says: "Filed #N for Robert's approval" means it has NOT happened yet; only "Done:" means it ran. ${userName} hears again when Robert decides.
 - Fill parameters only from what ${userName} said or a look-up returned. When a required detail is missing or unclear (which SKU, how many, which direction, which PO), ask one short question first. Never fill a location: it comes from ${userName}'s profile.
 - When a tool lists candidates or refuses, relay that plainly and ask how to proceed; do not retry with a guess.
-- Two different things are both called "PO". A customer order is a purchase order a customer (VFC, Gibson, DDA work orders) placed with Dearborn Denim / McMillan Manufacturing; it is only looked up. A vendor PO is our purchase order to a vendor for fabric, thread or trims; materials arrive against it. Use those two words, never a bare "PO", when it could be either.
+- Two different things are both called "PO". A customer order is a purchase order a customer (VFC, Gibson, DDA work orders) placed with Dearborn Denim / McMillan Manufacturing; it is only looked up. A vendor PO is our purchase order to a vendor for fabric, thread or trims; materials arrive against it. Use those two words, never a bare "PO", when it could be either.${csLine}
 - ${outside}`;
 }
 

@@ -1,0 +1,19 @@
+{
+  "tickets": [
+    {
+      "id": 1042, "brand_id": "dearborn-denim", "status": "waiting_human", "subject": "Wrong inseam on my order #D48211",
+      "customer": { "email": "jane.doe@example.com", "name": "Jane Doe" }, "assignee": "kristina", "priority": "high",
+      "tags": ["needs-human"], "created_at": "2026-10-10T14:02:11.000Z", "updated_at": "2026-10-10T19:31:02.000Z",
+      "last_message_at": "2026-10-10T19:30:00.000Z", "last_message_direction": "in", "closed_at": null,
+      "first_response_at": "2026-10-10T14:05:40.000Z", "handed_off_at": "2026-10-10T19:31:02.000Z", "message_count": 4
+    },
+    {
+      "id": 1038, "brand_id": "dearborn-denim", "status": "waiting_human", "subject": "Hem service",
+      "customer": { "email": "sam@example.org", "name": null }, "assignee": "kristina", "priority": "normal",
+      "tags": [], "created_at": "2026-10-09T16:00:00.000Z", "updated_at": "2026-10-09T18:00:00.000Z",
+      "last_message_at": "2026-10-09T17:45:00.000Z", "last_message_direction": "out", "closed_at": null,
+      "first_response_at": null, "handed_off_at": "2026-10-09T18:00:00.000Z", "message_count": 2
+    }
+  ],
+  "next_cursor": null
+}

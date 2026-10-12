@@ -241,6 +241,27 @@ describe('telegram card', () => {
     expect(getTrustRow(db, { agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'ad_spend_step' })!.approved_with_edit).toBe(1);
   });
 
+  it('a text= edit on a cs-desk reply keeps the proposal-id key (one send) and refuses text over cs-desk\'s 20,000 limit', async () => {
+    const cs = insertProposal(db, {
+      agent: 'kristina', brand_id: 'dearborn-denim', action_type: 'cs_staff_reply',
+      action_payload: { hand: 'cs-desk', method: 'POST', path: '/api/integration/tickets/1042/reply',
+        body: { text: 'Hi Jane', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim' } },
+      reason: 'Email the customer on ticket #1042', evidence: {}, cost_usd: 0, reversible: false, level_required: 1,
+      expires_at: '2026-09-09T00:00:00.000Z',
+    }, NOW).id;
+    setTelegramRef(db, cs, '555', 3);
+    const d = deps(db);
+    await handleProposalCallback(db, { action: 'edit', id: cs }, '555', 'robert', d);
+    expect(await handleEditReply(db, '555', `text=${'x'.repeat(20001)}`, 'robert', d)).toBe(true);
+    expect(d.replies.at(-1)).toBe(`Still editing #${cs}. That text is 20001 characters; cs-desk takes at most 20000.`);
+    expect(getProposalById(db, cs)!.status).toBe('pending');
+    expect(await handleEditReply(db, '555', 'text=Hi Jane, the 32x30 ships today.', 'robert', d)).toBe(true);
+    expect(d.executed).toEqual([cs]);
+    expect(JSON.parse(getProposalById(db, cs)!.action_payload).body).toEqual({
+      text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim',
+    });
+  });
+
   it('edit reply with bad text keeps waiting and explains', async () => {
     const d = deps(db);
     await handleProposalCallback(db, { action: 'edit', id }, '555', 'robert', d);
@@ -420,6 +441,24 @@ function rowFor(over: Partial<ProposalRow>): ProposalRow {
     telegram_message_id: null, run_id: null, ...over,
   };
 }
+
+describe('renderProposalCard for cs-desk', () => {
+  const csRow = (action_type: string, path: string) => rowFor({
+    agent: 'kristina', action_type, reason: 'On ticket #1042', reversible: action_type === 'cs_staff_note' ? 1 : 0,
+    action_payload: JSON.stringify({ hand: 'cs-desk', method: 'POST', path, body: { text: 'Called her; she wants 32x30.', author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim' } }),
+  });
+
+  it('a note card says the text is internal and offers a note edit; a reply card offers a reply edit', () => {
+    const note = renderProposalCard(csRow('cs_staff_note', '/api/integration/tickets/1042/note'));
+    expect(note).toContain('Internal note (not sent to the customer):\nCalled her; she wants 32x30.');
+    expect(note).toContain('Edit: text=<new note text>');
+    expect(note).toContain('· reversible');
+    const reply = renderProposalCard(csRow('cs_staff_reply', '/api/integration/tickets/1042/reply'));
+    expect(reply).not.toContain('Internal note');
+    expect(reply).toContain('Edit: text=<new reply text>');
+    expect(reply).toContain('NOT reversible');
+  });
+});
 
 describe('renderProposalCard for the graph hand', () => {
   const plan = {
