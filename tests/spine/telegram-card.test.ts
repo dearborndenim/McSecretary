@@ -442,6 +442,24 @@ function rowFor(over: Partial<ProposalRow>): ProposalRow {
   };
 }
 
+describe('renderProposalCard for cs-desk', () => {
+  const csRow = (action_type: string, path: string) => rowFor({
+    agent: 'kristina', action_type, reason: 'On ticket #1042', reversible: action_type === 'cs_staff_note' ? 1 : 0,
+    action_payload: JSON.stringify({ hand: 'cs-desk', method: 'POST', path, body: { text: 'Called her; she wants 32x30.', author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim' } }),
+  });
+
+  it('a note card says the text is internal and offers a note edit; a reply card offers a reply edit', () => {
+    const note = renderProposalCard(csRow('cs_staff_note', '/api/integration/tickets/1042/note'));
+    expect(note).toContain('Internal note (not sent to the customer):\nCalled her; she wants 32x30.');
+    expect(note).toContain('Edit: text=<new note text>');
+    expect(note).toContain('· reversible');
+    const reply = renderProposalCard(csRow('cs_staff_reply', '/api/integration/tickets/1042/reply'));
+    expect(reply).not.toContain('Internal note');
+    expect(reply).toContain('Edit: text=<new reply text>');
+    expect(reply).toContain('NOT reversible');
+  });
+});
+
 describe('renderProposalCard for the graph hand', () => {
   const plan = {
     summary: 'Four knit concepts, both lines.',

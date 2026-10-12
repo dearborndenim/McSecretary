@@ -57,18 +57,19 @@ function base(): Record<string, any> {
 describe('staff-action catalogue validator (spec §5)', () => {
   it('accepts the shipped catalogue with every v1 action', () => {
     expect(Object.keys(cat.actions).sort()).toEqual([
-      'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_reply', 'cs_ticket',
+      'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_note', 'cs_reply', 'cs_search', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
       'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive',
     ]);
-    expect(cat.groups.cs).toEqual(['cs_my_queue', 'cs_ticket', 'cs_reply', 'cs_close', 'cs_assign_me', 'ops_note']);
+    expect(cat.groups.cs).toEqual(['cs_my_queue', 'cs_search', 'cs_ticket', 'cs_reply', 'cs_note', 'cs_close', 'cs_assign_me', 'ops_note']);
     // An email cannot be unsent: cs_reply is irreversible and starts at level 1 (a card) until Robert promotes it.
-    const levels = Object.fromEntries(['cs_reply', 'cs_close', 'cs_assign_me'].map((id) => {
+    const levels = Object.fromEntries(['cs_reply', 'cs_note', 'cs_close', 'cs_assign_me'].map((id) => {
       const a = cat.actions[id]!;
       return [id, [a.action_type, a.reversible, a.cost_usd, a.level_required, a.initial_level ?? 1]];
     }));
     expect(levels).toEqual({
       cs_reply: ['cs_staff_reply', false, 0, 1, 1],
+      cs_note: ['cs_staff_note', true, 0, 1, 2],
       cs_close: ['cs_staff_close', true, 0, 1, 2],
       cs_assign_me: ['cs_staff_assign', true, 0, 1, 2],
     });
@@ -147,6 +148,18 @@ describe('staff-action params and payloads (spec §7.2)', () => {
       hand: 'cs-desk', method: 'POST', path: '/api/integration/tickets/1042/reply',
       body: { text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim' },
     });
+  });
+
+  it('cs_note posts the note text to the note route with the bound author, brand and proposal-id key', () => {
+    const action = cat.actions.cs_note!;
+    const v = validateParams(action, { ticket_id: '1042', note: 'Called her; she wants 32x30.', author: 'robert' });
+    const r = buildWriteProposal(action, (v as any).values, kristina({ grants_json: '["cs"]' }), brand, 'note on 1042', NOW) as any;
+    expect(r.built.input.action_payload).toEqual({
+      hand: 'cs-desk', method: 'POST', path: '/api/integration/tickets/1042/note',
+      body: { text: 'Called her; she wants 32x30.', author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim' },
+    });
+    expect(r.built.summary).toBe('Add a note to ticket #1042');
+    expect(validateParams(action, { ticket_id: '1042', note: 'x'.repeat(4001) })).toEqual({ ok: false, error: 'note must be at most 4000 characters' });
   });
 
   it("every cs action carries the user's own brand to cs-desk, never one from input, so a ticket of another brand answers not_found", async () => {
@@ -273,6 +286,26 @@ describe('staff-action execution', () => {
       '#1042 · waiting_human · high · Jane Doe <jane.doe@example.com> · "Wrong inseam on my order #D48211" · customer wrote Oct 10 14:30',
       '#1038 · waiting_human · sam@example.org · "Hem service" · we wrote Oct 9 12:45',
     ].join('\n'));
+  });
+
+  it('cs_search sends exactly one of email, order or q with the bound brand and renders the compact list', async () => {
+    db.prepare("UPDATE users SET grants_json = '[\"cs\"]' WHERE id = 'kristina'").run();
+    const csEnv = { ...env, CS_DESK_URL: 'https://cs.example', CS_DESK_KEY: 'cskey' };
+    const list = fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'cs-desk', 'tickets.json'), 'utf8');
+    const handFetch = vi.fn(async () => new Response(list, { status: 200 }));
+    const d: StaffExecDeps = { db, loadBrand: () => brand, env: csEnv, handFetch: handFetch as never, file: async () => ({ id: 0, routed: 'card' }), now: () => NOW, limiter: createWriteLimiter() };
+    const run = (input: unknown) => executeStaffAction(d, cat, getUserById(db, 'kristina')!, 'cs_search', input, 'find');
+    const out = await run({ by: 'order', value: '#309610' });
+    await run({ by: 'email', value: 'Jane.Doe@example.com' });
+    await run({ by: 'text', value: 'wrong inseam' });
+    expect(handFetch.mock.calls.map((c) => (c as unknown[])[0])).toEqual([
+      'https://cs.example/api/integration/tickets?brand=dearborn-denim&order=%23309610&limit=20',
+      'https://cs.example/api/integration/tickets?brand=dearborn-denim&email=Jane.Doe%40example.com&limit=20',
+      'https://cs.example/api/integration/tickets?brand=dearborn-denim&q=wrong+inseam&limit=20',
+    ]);
+    expect(out.split('\n')[1]).toBe('#1042 · waiting_human · high · Jane Doe <jane.doe@example.com> · "Wrong inseam on my order #D48211" · customer wrote Oct 10 14:30');
+    expect(await run({ by: 'phone', value: '555' })).toMatch(/^Not filed: by must be one of email, order, text/);
+    expect(handFetch).toHaveBeenCalledTimes(3);
   });
 
   it('ops_note goes end to end through spine.file on the built-in notes hand', async () => {

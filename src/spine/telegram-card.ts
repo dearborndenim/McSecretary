@@ -294,15 +294,18 @@ export function renderProposalCard(p: ProposalRow, agentIsUser = false): string 
   // A staff reply on cs-desk is a customer email: Robert approves the text
   // itself, so show it (from the body, so a text= edit shows through), not an
   // 80-character evidence slice.
+  // An internal note (cs_staff_note) carries text too but never reaches the customer; its card says so.
   if (payload.hand === 'cs-desk' && typeof (payload.body as { text?: unknown }).text === 'string') {
     const body = payload.body as { text: string; close?: unknown };
+    const note = p.action_type === 'cs_staff_note';
     return [
       `#${p.id} ${p.agent} · ${p.brand_id}`,
       requesterLine(p, agentIsUser),
       cap(p.reason, REASON_CAP),
+      note ? 'Internal note (not sent to the customer):' : null,
       cap(body.text, EMAIL_PREVIEW_CAP),
       body.close === true ? 'Closes the ticket after sending.' : null,
-      'Edit: text=<new reply text>',
+      note ? 'Edit: text=<new note text>' : 'Edit: text=<new reply text>',
       `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
       `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
     ].filter((l): l is string => l !== null).join('\n');
