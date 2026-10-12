@@ -298,6 +298,9 @@ export function refusalDetail(body: unknown, fallback?: string): string {
       parts.push(`ticket was merged into #${body.into}; use ticket ${body.into} instead`);
     } else if (body.error === 'no_customer') {
       parts.push('the ticket has no customer email address, so no reply can be sent from here');
+    } else if (body.error === 'request with this idempotency_key is in progress') {
+      // The first run of this same request is still going on cs-desk: its email may already be out.
+      parts.push('the same request is still running on the customer-service desk and may already have gone out; check the ticket before asking again');
     } else if (typeof body.error === 'string') parts.push(body.error);
     if (Array.isArray(body.candidates) && body.candidates.length > 0) {
       const names = body.candidates.slice(0, 8).map((c) => {

@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import { loadCatalogue, parseCatalogue, type StaffCatalogue } from '../../src/staff/catalogue.js';
 import { renderCsThread, renderRead, RENDER_CAP } from '../../src/staff/render.js';
 import {
-  buildWriteProposal, createWriteLimiter, executeStaffAction, validateParams, type StaffExecDeps,
+  buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
 
 const NOW = '2026-10-08T15:00:00.000Z';
@@ -170,6 +170,16 @@ describe('staff-action params and payloads (spec §7.2)', () => {
     for (const id of reads) await executeStaffAction(d, cat, user, id, spoof, 'r');
     expect(urls).toHaveLength(reads.length);
     for (const u of urls) expect(new URL(u).searchParams.getAll('brand')).toEqual(['knits']);
+  });
+});
+
+describe("cs-desk's 409s read for a person", () => {
+  it('names the surviving ticket, the missing address, and a same-key request still in flight (which may have sent)', () => {
+    expect(refusalDetail({ error: 'merged', into: 1050 })).toBe('ticket was merged into #1050; use ticket 1050 instead');
+    expect(refusalDetail({ error: 'no_customer' })).toBe('the ticket has no customer email address, so no reply can be sent from here');
+    expect(refusalDetail({ error: 'request with this idempotency_key is in progress' })).toBe(
+      'the same request is still running on the customer-service desk and may already have gone out; check the ticket before asking again',
+    );
   });
 });
 
