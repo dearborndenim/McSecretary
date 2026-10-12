@@ -7,7 +7,7 @@ import {
 import { recordTrustDecision } from '../db/trust-queries.js';
 import { parseEdit, applyEdit } from './edits.js';
 import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
-import { extractNotify, type ExecutionResult } from './executor.js';
+import { endSentence, extractNotify, failureDetail, type ExecutionResult } from './executor.js';
 import { rejectProposal } from './decision-events.js';
 import { cap, safeJsonObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
@@ -402,7 +402,7 @@ async function approveAndExecute(
   const r = await deps.execute(p.id);
   await safeReply(deps, r.ok
     ? `Approved #${p.id} — executed (${r.http_status}).${notifySuffix(r)}`
-    : `Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${r.error ? `: ${r.error}` : ''}.`);
+    : endSentence(`Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${failureDetail(r)}`));
   await safeDecided(deps, p.id);
   return { ok: true, message: status };
 }
