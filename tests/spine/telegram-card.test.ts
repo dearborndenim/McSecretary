@@ -261,7 +261,33 @@ describe('telegram card', () => {
     expect(d.executed).toEqual([cs]);
     expect(JSON.parse(getProposalById(db, cs)!.action_payload).body).toEqual({
       text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}', brand: 'dearborn-denim',
+      edited: true,
     });
+  });
+
+  it('a text= edit marks a cs-desk draft body edited:true; an edit of another field leaves edited as filed', async () => {
+    const file = (body: Record<string, unknown>, msg: number): number => {
+      const pid = insertProposal(db, {
+        agent: 'cs-desk', brand_id: 'dearborn-denim', action_type: 'cs_reply',
+        action_payload: { hand: 'cs-desk', method: 'POST', path: `/api/integration/drafts/${msg}/send`, body },
+        reason: 'Reply to ticket #1042', evidence: {}, cost_usd: 0, reversible: false, level_required: 1,
+        expires_at: '2026-09-09T00:00:00.000Z',
+      }, NOW).id;
+      setTelegramRef(db, pid, '555', msg);
+      return pid;
+    };
+    const d = deps(db);
+    const draft = file({ idempotency_key: 'draft:88', edited: false, text: 'Hi Jane' }, 88);
+    await handleProposalCallback(db, { action: 'edit', id: draft }, '555', 'robert', d);
+    expect(await handleEditReply(db, '555', 'text=Hi Jane, it ships today.', 'robert', d)).toBe(true);
+    expect(JSON.parse(getProposalById(db, draft)!.action_payload).body)
+      .toEqual({ idempotency_key: 'draft:88', edited: true, text: 'Hi Jane, it ships today.' });
+
+    const other = file({ idempotency_key: 'draft:89', edited: false, text: 'Hi Sam', close_after_send: false }, 89);
+    await handleProposalCallback(db, { action: 'edit', id: other }, '555', 'robert', d);
+    expect(await handleEditReply(db, '555', 'close_after_send=true', 'robert', d)).toBe(true);
+    expect(JSON.parse(getProposalById(db, other)!.action_payload).body)
+      .toEqual({ idempotency_key: 'draft:89', edited: false, text: 'Hi Sam', close_after_send: true });
   });
 
   it('edit reply with bad text keeps waiting and explains', async () => {
