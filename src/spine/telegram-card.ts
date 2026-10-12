@@ -33,6 +33,8 @@ const REASON_CAP = 500;
 const EVIDENCE_VALUE_CAP = 80;
 /** An RFQ body is longer than a reason; Robert still has to read it on a phone. */
 const EMAIL_PREVIEW_CAP = 1200;
+/** cs-desk refuses a reply or note text longer than this (its own 1–20,000 limit). */
+export const CS_DESK_TEXT_MAX = 20000;
 /** A dispatch plan is one line per brief; 500 would cut the card mid-brief. */
 const GRAPH_PLAN_CAP = 1600;
 /** Up to this many briefs, the card also shows what Robert actually asked for. */
@@ -462,6 +464,13 @@ export async function handleEditReply(
   if (!parsed.ok) { await safeReply(deps, `Still editing #${p.id}. ${parsed.reason}`); return true; }
   const applied = applyEdit(JSON.parse(p.action_payload) as ActionPayload, parsed.fields);
   if (!applied.ok) { await safeReply(deps, `Still editing #${p.id}. ${applied.reason}`); return true; }
+  // An edit skips the catalogue's param checks, so hold a cs-desk text to cs-desk's own limit here rather than
+  // approving a payload the hand would refuse.
+  const editedText = (applied.payload.body as { text?: unknown }).text;
+  if (applied.payload.hand === 'cs-desk' && typeof editedText === 'string' && editedText.length > CS_DESK_TEXT_MAX) {
+    await safeReply(deps, `Still editing #${p.id}. That text is ${editedText.length} characters; cs-desk takes at most ${CS_DESK_TEXT_MAX}.`);
+    return true;
+  }
   if (!updateActionPayload(db, p.id, applied.payload)) {
     await safeReply(deps, `#${p.id} was already decided.`);
     return true;
