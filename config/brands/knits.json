@@ -43,6 +43,10 @@
       "url_env": "DESIGN_MODULE_URL",
       "key_env": "DESIGN_MODULE_KEY",
       "forward_brand": "brand"
+    },
+    "cs-desk": {
+      "url_env": "CS_DESK_URL",
+      "key_env": "CS_DESK_KEY"
     }
   }
 }

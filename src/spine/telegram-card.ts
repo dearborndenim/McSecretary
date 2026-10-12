@@ -289,6 +289,23 @@ export function renderProposalCard(p: ProposalRow, agentIsUser = false): string 
     return lines.join('\n');
   }
 
+  // A staff reply on cs-desk is a customer email: Robert approves the text
+  // itself, so show it (from the body, so a text= edit shows through), not an
+  // 80-character evidence slice.
+  if (payload.hand === 'cs-desk' && typeof (payload.body as { text?: unknown }).text === 'string') {
+    const body = payload.body as { text: string; close?: unknown };
+    return [
+      `#${p.id} ${p.agent} · ${p.brand_id}`,
+      requesterLine(p, agentIsUser),
+      cap(p.reason, REASON_CAP),
+      cap(body.text, EMAIL_PREVIEW_CAP),
+      body.close === true ? 'Closes the ticket after sending.' : null,
+      'Edit: text=<new reply text>',
+      `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
+      `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
+    ].filter((l): l is string => l !== null).join('\n');
+  }
+
   // graph proposals carry a whole dispatch plan: Robert is approving briefs
   // and vendor contacts, so render the plan itself rather than a 500-char
   // slice of `reason`. Rendered from the body, so an Edit to `summary` shows

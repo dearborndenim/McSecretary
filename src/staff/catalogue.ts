@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { isPinned } from '../spine/gates.js';
 import type { BrandConfig } from '../spine/brand-config.js';
 import { isPlainObject as isObj } from '../spine/json-object.js';
+import { RENDERERS } from './render.js';
 
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'array';
 
@@ -54,6 +55,8 @@ export interface StaffAction {
   path?: string;
   body?: Record<string, unknown>;
   switch?: { param: string; cases: Record<string, SwitchCase> };
+  /** read only: a renderer in src/staff/render.ts that turns the hand's JSON into plain text for the model. */
+  render?: string;
   // write only
   action_type?: string;
   reversible?: boolean;
@@ -87,7 +90,7 @@ export const PLACEHOLDER_RE = /\{([^{}]*)\}/g;
 
 const ACTION_KEYS = new Set([
   'kind', 'description', 'params', 'bind', 'hand', 'method', 'path', 'body', 'switch',
-  'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level',
+  'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level', 'render',
 ]);
 const WRITE_ONLY_KEYS = ['body', 'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level'];
 const PARAM_KEYS = new Set(['type', 'required', 'description', 'enum', 'min', 'max', 'default', 'items', 'items_require_one_of']);
@@ -292,6 +295,14 @@ function parseAction(id: string, raw: unknown): StaffAction {
     action.switch = { param: sw.param, cases };
   } else if (action.path === undefined) {
     fail(where, 'path is required');
+  }
+
+  if (raw.render !== undefined) {
+    if (kind !== 'read') fail(where, 'render is for reads only');
+    if (typeof raw.render !== 'string' || !Object.hasOwn(RENDERERS, raw.render)) {
+      fail(where, `render must be one of ${Object.keys(RENDERERS).join(', ')}`);
+    }
+    action.render = raw.render;
   }
 
   if (kind === 'read') {

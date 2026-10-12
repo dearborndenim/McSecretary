@@ -9,7 +9,9 @@ import { buildSpine } from '../../src/spine/wiring.js';
 import { runExpirySweep } from '../../src/spine/jobs.js';
 import { loadBrandConfig } from '../../src/spine/brand-config.js';
 import type { InboxTransport } from '../../src/spine/telegram-card.js';
+import fs from 'node:fs';
 import { loadCatalogue, parseCatalogue, type StaffCatalogue } from '../../src/staff/catalogue.js';
+import { renderCsThread, renderRead, RENDER_CAP } from '../../src/staff/render.js';
 import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
@@ -55,9 +57,23 @@ function base(): Record<string, any> {
 describe('staff-action catalogue validator (spec §5)', () => {
   it('accepts the shipped catalogue with every v1 action', () => {
     expect(Object.keys(cat.actions).sort()).toEqual([
+      'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_reply', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
       'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive',
     ]);
+    expect(cat.groups.cs).toEqual(['cs_my_queue', 'cs_ticket', 'cs_reply', 'cs_close', 'cs_assign_me', 'ops_note']);
+    // An email cannot be unsent: cs_reply is irreversible and starts at level 1 (a card) until Robert promotes it.
+    const levels = Object.fromEntries(['cs_reply', 'cs_close', 'cs_assign_me'].map((id) => {
+      const a = cat.actions[id]!;
+      return [id, [a.action_type, a.reversible, a.cost_usd, a.level_required, a.initial_level ?? 1]];
+    }));
+    expect(levels).toEqual({
+      cs_reply: ['cs_staff_reply', false, 0, 1, 1],
+      cs_close: ['cs_staff_close', true, 0, 1, 2],
+      cs_assign_me: ['cs_staff_assign', true, 0, 1, 2],
+    });
+    expect(Object.keys(brand.hands)).toContain('cs-desk');
+    expect(Object.keys(loadBrandConfig(BRANDS, 'knits').hands)).toContain('cs-desk');
     expect(cat.actions.customer_order_lookup!.description).toMatch(/^[^.]*customer order/i);
     expect(cat.actions.vendor_po_lookup!.description).toMatch(/^[^.]*vendor PO/);
     expect(cat.actions.vendor_po_receive!.description).toMatch(/^[^.]*vendor PO/);
@@ -122,6 +138,42 @@ describe('staff-action params and payloads (spec §7.2)', () => {
     expect(build('to_store')).toEqual({ sku: 'H201-M', quantity: 3, idempotency_key: '{{proposal.id}}', from_location_id: FACTORY, to_location_id: STORE });
     expect(build('to_factory')).toEqual({ sku: 'H201-M', quantity: 3, idempotency_key: '{{proposal.id}}', from_location_id: STORE, to_location_id: FACTORY });
   });
+
+  it('cs_reply binds the author from the user row and the idempotency key to the proposal id, so a retry cannot send twice', () => {
+    const action = cat.actions.cs_reply!;
+    const v = validateParams(action, { ticket_id: '1042', text: 'Hi Jane, the 32x30 ships today.', author: 'robert', idempotency_key: 'k1' });
+    const r = buildWriteProposal(action, (v as any).values, kristina({ grants_json: '["cs"]' }), brand, 'reply to 1042', NOW);
+    expect((r as any).built.input.action_payload).toEqual({
+      hand: 'cs-desk', method: 'POST', path: '/api/integration/tickets/1042/reply',
+      body: { text: 'Hi Jane, the 32x30 ships today.', close: false, author: 'kristina', idempotency_key: '{{proposal.id}}' },
+    });
+  });
+});
+
+describe('cs-desk look-ups rendered for Telegram', () => {
+  const fixture = (name: string) => fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'cs-desk', name), 'utf8');
+
+  it('renders a thread as plain text with notes marked and quoted history dropped', () => {
+    const text = renderRead('cs_thread', fixture('thread.json'))!;
+    expect(text.length).toBeLessThanOrEqual(RENDER_CAP);
+    expect(text).toContain('Ticket #1042 · waiting_human · assigned kristina · priority high · tags needs-human, exchange');
+    expect(text).toContain('Customer: Jane Doe <jane.doe@example.com>');
+    expect(text).toContain('[INTERNAL NOTE by BOT, not sent to the customer · Oct 10 14:31]\n[AI Handoff] exchange');
+    expect(text).toContain('[CUSTOMER wrote · Oct 10 09:02]\nHi,\n\nI ordered the Straight Fit in 32x30');
+    expect(text).toContain('(1 attachment: tag.jpg)');
+    expect(text).toContain("[SENT TO CUSTOMER by BOT · Oct 10 09:05]\nHi Jane, sorry about that! I've passed this to our team so they can set up the exchange.\n\n[");
+    expect(text).not.toMatch(/wrote:|^>|\r|<\/?[a-z]+>|\*\*/m);
+  });
+
+  it('keeps a long thread under the Telegram cap and always shows the newest message', () => {
+    const t = JSON.parse(fixture('thread.json'));
+    t.messages = Array.from({ length: 40 }, (_, i) => ({ ...t.messages[0], id: i, body_text: `message ${i} ${'x'.repeat(2000)}`, created_at: new Date(Date.parse('2026-10-01T00:00:00Z') + i * 60_000).toISOString() }));
+    const text = renderCsThread(t)!;
+    expect(text.length).toBeLessThanOrEqual(RENDER_CAP);
+    expect(text).toContain('message 39 ');
+    expect(text).not.toContain('message 31 ');
+    expect(text).toMatch(/^Last \d of 40 messages, oldest first \(\d+ earlier not shown\):$/m);
+  });
 });
 
 describe('staff-action execution', () => {
@@ -173,6 +225,21 @@ describe('staff-action execution', () => {
       expect(await executeStaffAction(d, evil, kristina(), 'peek', { id }, 'm')).toMatch(/^Cannot look that up: id ".*" is not a valid id: slashes and dot-segments are not allowed in ids/);
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('cs_my_queue binds the brand and the caller as assignee, never from input, and renders the list', async () => {
+    db.prepare("UPDATE users SET grants_json = '[\"cs\"]' WHERE id = 'kristina'").run();
+    const csEnv = { ...env, CS_DESK_URL: 'https://cs.example', CS_DESK_KEY: 'cskey' };
+    const list = fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'cs-desk', 'tickets.json'), 'utf8');
+    const handFetch = vi.fn(async () => new Response(list, { status: 200 }));
+    const d: StaffExecDeps = { db, loadBrand: () => brand, env: csEnv, handFetch: handFetch as never, file: async () => ({ id: 0, routed: 'card' }), now: () => NOW, limiter: createWriteLimiter() };
+    const out = await executeStaffAction(d, cat, getUserById(db, 'kristina')!, 'cs_my_queue', { assignee: 'robert', brand_id: 'knits' }, 'my queue');
+    expect(handFetch.mock.calls[0]![0]).toBe('https://cs.example/api/integration/tickets?brand=dearborn-denim&status=waiting_human&assignee=kristina&limit=20');
+    expect(out).toBe([
+      '2 tickets, most recently updated first:',
+      '#1042 · waiting_human · high · Jane Doe <jane.doe@example.com> · "Wrong inseam on my order #D48211" · customer wrote Oct 10 14:30',
+      '#1038 · waiting_human · sam@example.org · "Hem service" · we wrote Oct 9 12:45',
+    ].join('\n'));
   });
 
   it('ops_note goes end to end through spine.file on the built-in notes hand', async () => {
