@@ -233,3 +233,30 @@ describe('fileProposal', () => {
     expect(d.reports[0]).toBe(`Executed #${r.id} marketing-manager creative_request (level 2, 200).`);
   });
 });
+
+describe('fileProposal: design_feedback (not a pinned gate)', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+  const FK = { agent: 'wall', brand_id: 'dearborn-denim', action_type: 'design_feedback' };
+  const feedback = () => input({
+    ...FK, level_required: 2,
+    action_payload: { hand: 'feedback', method: 'POST', path: '/feedback', body: { to_agent: 'designer', kind: 'note' } },
+  });
+
+  it('gets a card at ledger level 1', async () => {
+    const d = deps();
+    const r = await fileProposal(db, feedback(), d);
+    expect(r.routed).toBe('card');
+    expect(d.executed).toEqual([]);
+  });
+
+  it('auto-executes at ledger level 2', async () => {
+    promoteTrust(db, FK, 2, 'robert', NOW);
+    const d = deps();
+    const r = await fileProposal(db, feedback(), d);
+    expect(r.routed).toBe('executed');
+    expect(d.executed).toEqual([r.id]);
+    expect(d.cards).toEqual([]);
+  });
+});

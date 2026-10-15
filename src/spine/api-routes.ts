@@ -5,6 +5,9 @@ import { matchesType, mayPropose, sourceHandAllowed, type AgentPolicy } from './
 import { forwardBrandKey, isBrandActive, listBrandIds, loadBrandConfig, publicBrandEntry, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
+import {
+  FEEDBACK_ACTION_TYPE, FEEDBACK_HAND, FEEDBACK_TO_AGENTS, feedbackRelPath, readFeedbackRows, validateFeedbackPayload,
+} from './feedback-hand.js';
 import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
 import { insertEvent, drainEvents, countPendingByType, countEventsSince } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
@@ -25,6 +28,8 @@ export interface SpineRouterDeps {
   env: Record<string, string | undefined>;
   /** Per-agent restrictions (AGENT_POLICY). Absent = every agent unrestricted. */
   agentPolicy?: AgentPolicy;
+  /** Root of the built-in `feedback` hand's store; absent = reads answer 404. */
+  feedbackRoot?: string;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -119,6 +124,15 @@ function validateProposal(b: Record<string, unknown>): string | null {
     const emailCheck = validateEmailPayload(payload);
     if (!emailCheck.ok) return emailCheck.error;
   }
+  // The built-in feedback hand writes only design_feedback rows; a bad row is
+  // a 400 here, never a failed execution after it was routed.
+  if (payload.hand === FEEDBACK_HAND || b.action_type === FEEDBACK_ACTION_TYPE) {
+    if (payload.hand !== FEEDBACK_HAND || b.action_type !== FEEDBACK_ACTION_TYPE) {
+      return `action_type '${FEEDBACK_ACTION_TYPE}' and hand '${FEEDBACK_HAND}' go together`;
+    }
+    const feedbackCheck = validateFeedbackPayload(payload, b.brand_id);
+    if (!feedbackCheck.ok) return feedbackCheck.error;
+  }
   // The `graph` hand starts Designer runs and rewrites the vendor registry.
   // Its only legitimate producer is McSecretary's own chat tool, which files
   // in-process through `spine.file`. No agent bearer may reach it, whatever
@@ -138,17 +152,18 @@ function validateProposal(b: Record<string, unknown>): string | null {
 
 /**
  * The brand must have a config file and the hand must be registered in it, or
- * Robert would approve a card that can only fail. Exceptions: `notes` and
- * `email` are built-in hands available to every brand that hasn't registered
- * its own hand of that name — `notes` never makes an HTTP call and `email`
- * goes out through Microsoft Graph, so neither needs a config entry. The third
+ * Robert would approve a card that can only fail. Exceptions: `notes`,
+ * `email` and `feedback` are built-in hands available to every brand that
+ * hasn't registered its own hand of that name — `notes` and `feedback` never
+ * make an HTTP call and `email` goes out through Microsoft Graph, so none
+ * needs a config entry. The third
  * built-in hand, `graph`, is deliberately NOT an exception here: `validateProposal`
  * refuses it outright on this path.
  */
 function validateBrandAndHand(brandsDir: string, brandId: string, hand: string): string | null {
   let brand;
   try { brand = loadBrandConfig(brandsDir, brandId); } catch { return `Unknown brand: ${brandId}`; }
-  if ((hand === 'notes' || hand === 'email') && !Object.hasOwn(brand.hands, hand)) return null;
+  if ((hand === 'notes' || hand === 'email' || hand === FEEDBACK_HAND) && !Object.hasOwn(brand.hands, hand)) return null;
   if (!Object.hasOwn(brand.hands, hand)) return `Unknown hand for ${brandId}: ${hand}`;
   return null;
 }
@@ -320,6 +335,24 @@ async function readObject(req: http.IncomingMessage, fields: string[]): Promise<
   return missing ? { error: missing } : { body };
 }
 
+const FEEDBACK_READ_RE = /^\/([a-z0-9-]{1,64})\/([a-z0-9][a-z0-9-]{0,127})$/;
+
+/**
+ * The built-in `feedback` hand's read side: `GET /spine/hands/feedback/<to_agent>/<prompt>?brand=<id>`
+ * → `{to_agent, brand, prompt, path, rows}` (rows `[]` before anything was filed). Only the
+ * addressed agent may read its own store.
+ */
+function readFeedbackRoute(res: http.ServerResponse, deps: SpineRouterDeps, agent: string, brandId: string, handPath: string): true {
+  const m = FEEDBACK_READ_RE.exec(handPath);
+  if (!m || !FEEDBACK_TO_AGENTS.includes(m[1]!)) { json(res, 400, { error: 'path must be /<to_agent>/<prompt>' }); return true; }
+  const [, toAgent, prompt] = m as unknown as [string, string, string];
+  if (toAgent !== agent) return refuse(res, agent, 'read feedback for', toAgent);
+  if (!deps.feedbackRoot) { json(res, 404, { error: 'Feedback store is not configured' }); return true; }
+  const rows = readFeedbackRows(deps.feedbackRoot, toAgent, brandId, prompt);
+  json(res, 200, { to_agent: toAgent, brand: brandId, prompt, path: feedbackRelPath(toAgent, brandId, prompt), rows });
+  return true;
+}
+
 /**
  * Returns a handler that answers `/spine/*` and returns true, or returns false
  * untouched for any other path so the existing api.ts chain continues.
@@ -465,6 +498,11 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const brandId = params.get('brand') ?? '';
         params.delete('brand');
         if (!BRAND_ID_RE.test(brandId)) { json(res, 400, { error: 'brand= is required' }); return true; }
+        if (hand === FEEDBACK_HAND) {
+          let builtIn = false;
+          try { builtIn = !Object.hasOwn(loadBrandConfig(deps.brandsDir, brandId).hands, FEEDBACK_HAND); } catch { /* unknown brand: 404 below */ }
+          if (builtIn) return readFeedbackRoute(res, deps, agent, brandId, handPath);
+        }
         let target: { url: string; bearer: string };
         try {
           const brand = loadBrandConfig(deps.brandsDir, brandId);

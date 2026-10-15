@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { appendFeedbackRow, type FeedbackBody } from '../../src/spine/feedback-hand.js';
 import http from 'node:http';
 import { initializeSchema } from '../../src/db/schema.js';
 import { createSpineRouter, type SpineRouterDeps } from '../../src/spine/api-routes.js';
@@ -881,5 +884,70 @@ describe('agent policy', () => {
     expect(await call('GET', '/spine/policy/self', KEY))
       .toEqual({ status: 200, body: { agent: 'marketing-manager', restricted: false, policy: null } });
     expect((await call('GET', '/spine/policy/self')).status).toBe(401);
+  });
+});
+
+describe('spine routes: design_feedback intake and the feedback store read', () => {
+  const FEEDBACK = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'design-feedback.json'), 'utf8')) as { body: Record<string, unknown> }).body;
+  const COSTING = 'c'.repeat(24);
+  const DESIGNER = 'd'.repeat(24);
+  let db: Database.Database;
+  let handle: ReturnType<typeof createSpineRouter>;
+  let filed: unknown[];
+  let root: string;
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db); filed = [];
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-routes-'));
+    handle = createSpineRouter({
+      db, now: () => NOW,
+      agentKeys: new Map([[COSTING, 'costing'], [DESIGNER, 'designer']]),
+      brandsDir: path.join(process.cwd(), 'config', 'brands'),
+      file: async (input) => { filed.push(input); return { id: 1, routed: 'executed' }; },
+      handFetch: async () => { throw new Error('the feedback store is never proxied'); }, env: {}, feedbackRoot: root,
+    });
+  });
+  afterEach(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }); });
+
+  const propose = async (over: Record<string, unknown> = {}, body: Record<string, unknown> = FEEDBACK) => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/proposals', {
+      brand_id: 'dearborn-denim', action_type: 'design_feedback',
+      action_payload: { hand: 'feedback', method: 'POST', path: '/feedback', body },
+      reason: 'cost out of band', evidence: {}, cost_usd: 0, reversible: true, level_required: 2,
+      expires_at: '2026-09-10T00:00:00.000Z', ...over,
+    }, `Bearer ${COSTING}`), res);
+    return out;
+  };
+
+  it('files the spec example with no brand-config entry for the hand', async () => {
+    expect((await propose()).status).toBe(200);
+    expect(filed).toHaveLength(1);
+  });
+
+  it('400s a bad kind, an unknown to_agent, and the type on another hand', async () => {
+    expect(JSON.parse((await propose({}, { ...FEEDBACK, kind: 'vibes' })).body).error).toMatch(/kind must be one of/);
+    expect(JSON.parse((await propose({}, { ...FEEDBACK, to_agent: 'sourcing' })).body).error).toMatch(/to_agent/);
+    const onNotes = await propose({ action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title: 't', summary: 's' } } });
+    expect(JSON.parse(onNotes.body).error).toMatch(/go together/);
+    expect(filed).toHaveLength(0);
+  });
+
+  it('serves the store to the addressed agent only', async () => {
+    appendFeedbackRow(root, FEEDBACK as unknown as FeedbackBody, 7, NOW);
+    const get = async (key: string, url: string) => {
+      const { res, out } = fakeRes();
+      await handle(fakeReq('GET', url, undefined, `Bearer ${key}`), res);
+      return out;
+    };
+    const own = await get(DESIGNER, '/spine/hands/feedback/designer/fall-workwear-2027?brand=dearborn-denim');
+    expect(own.status).toBe(200);
+    expect(JSON.parse(own.body)).toEqual({
+      to_agent: 'designer', brand: 'dearborn-denim', prompt: 'fall-workwear-2027',
+      path: 'designer/feedback/dearborn-denim/fall-workwear-2027.json',
+      rows: [{ ...FEEDBACK, received_at: NOW, proposal_id: 7 }],
+    });
+    expect(JSON.parse((await get(DESIGNER, '/spine/hands/feedback/designer/other-prompt?brand=knits')).body).rows).toEqual([]);
+    expect((await get(COSTING, '/spine/hands/feedback/designer/fall-workwear-2027?brand=dearborn-denim')).status).toBe(403);
+    expect((await get(DESIGNER, '/spine/hands/feedback/designer/../x?brand=dearborn-denim')).status).toBe(400);
   });
 });

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { getUserById } from '../db/user-queries.js';
 import { getProposalById } from '../db/proposal-queries.js';
@@ -30,6 +31,8 @@ export interface SpineBuildDeps {
   handTimeoutMs?: number;
   /** Microsoft Graph app token for the built-in `email` hand. Omit to disable sending. */
   getGraphToken?: () => Promise<string>;
+  /** Root of the built-in `feedback` hand's store. Default: `FEEDBACK_DIR`, else `inputs/` beside `DB_PATH`. */
+  feedbackRoot?: string;
 }
 
 const DEFAULT_HAND_TIMEOUT_MS = 20_000;
@@ -51,8 +54,10 @@ export function buildSpine(d: SpineBuildDeps) {
     ? (req: EmailHandRequest): Promise<EmailHandResult> =>
         sendHandEmail(d.db, req, { fetch: fetchWithTimeout, getGraphToken, env: d.env, now: d.now, loadBrand })
     : undefined;
+  const feedbackRoot = d.feedbackRoot
+    ?? (d.env.FEEDBACK_DIR || path.join(path.dirname(d.env.DB_PATH || '/data/secretary.db'), 'inputs'));
   const execute = (id: number) => executeProposal(d.db, id, {
-    fetch: fetchWithTimeout, env: d.env, loadBrand, now: d.now, sendEmail,
+    fetch: fetchWithTimeout, env: d.env, loadBrand, now: d.now, sendEmail, feedbackRoot,
   });
   const replyTo = (chatId: string) => async (text: string) => { await d.transport.sendText(chatId, text); };
 
@@ -106,7 +111,7 @@ export function buildSpine(d: SpineBuildDeps) {
 
   const handleHttp = createSpineRouter({
     db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file, handFetch: fetchWithTimeout, env: d.env,
-    agentPolicy: d.agentPolicy,
+    agentPolicy: d.agentPolicy, feedbackRoot,
   });
 
   return {

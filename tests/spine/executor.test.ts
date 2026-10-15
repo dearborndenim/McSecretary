@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { initializeSchema } from '../../src/db/schema.js';
 import { insertProposal, getProposalById } from '../../src/db/proposal-queries.js';
 import { executeProposal, resolveHandUrl, extractNotify, type ExecutorDeps } from '../../src/spine/executor.js';
@@ -646,5 +649,54 @@ describe('executeProposal — forward_brand on writes', () => {
   it('adds nothing for a hand without forward_brand', async () => {
     const { url } = await run('ad-manager', '/api/x');
     expect(url).toBe('https://am.example/api/x');
+  });
+});
+
+describe('executeProposal: built-in feedback hand (design_feedback)', () => {
+  const FEEDBACK = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'design-feedback.json'), 'utf8')) as { body: Record<string, unknown> }).body;
+  let db: Database.Database;
+  let root: string;
+  const file = (actionType = 'design_feedback', body: Record<string, unknown> = FEEDBACK) => insertProposal(db, {
+    agent: 'costing', brand_id: 'dearborn-denim', action_type: actionType,
+    action_payload: { hand: 'feedback', method: 'POST', path: '/feedback', body },
+    reason: 'r', evidence: {}, cost_usd: 0, reversible: true, level_required: 2, expires_at: '2026-09-09T00:00:00.000Z',
+  }, NOW).id;
+  const fdeps = (): ExecutorDeps => ({ ...deps(vi.fn()), feedbackRoot: root });
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); root = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-exec-')); });
+  afterEach(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }); });
+
+  it('appends the row and emits design_feedback_executed with the routing fields flattened', async () => {
+    const id = file();
+    const r = await executeProposal(db, id, fdeps());
+    const rel = 'designer/feedback/dearborn-denim/fall-workwear-2027.json';
+    const notify = 'Feedback to designer from costing: cost_out_of_band (revise) on fall-workwear-2027 fall-workwear-2027-maya#2.';
+    expect(r).toEqual({ ok: true, http_status: 200, body: { ok: true, rows: 1, path: rel, notify }, recorded: true });
+    expect(getProposalById(db, id)!.status).toBe('executed');
+    expect(JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'))).toEqual([{ ...FEEDBACK, received_at: NOW, proposal_id: id }]);
+    const events = selectEvents(db);
+    expect(events.map((e) => [e.event_type, e.urgent, e.source_hand])).toEqual([['design_feedback_executed', 1, 'spine']]);
+    expect(JSON.parse(events[0]!.payload)).toEqual({
+      proposal_id: id, agent: 'costing', action_type: 'design_feedback', hand: 'feedback', path: '/feedback',
+      response: { ok: true, rows: 1, path: rel, notify }, ok: true, rows: 1, notify,
+      to_agent: 'designer', brand: 'dearborn-denim', prompt: 'fall-workwear-2027', collection: 'fall-workwear-2027-maya',
+      revision: 3, severity: 'revise', kind: 'cost_out_of_band', product_index: 2, from: 'costing',
+    });
+  });
+
+  it('a second execution of the same proposal appends nothing', async () => {
+    const id = file();
+    await executeProposal(db, id, fdeps());
+    db.prepare("UPDATE proposals SET status = 'approved' WHERE id = ?").run(id);
+    const r = await executeProposal(db, id, fdeps());
+    expect(r.ok && (r.body as { rows: number }).rows).toBe(1);
+  });
+
+  it('only design_feedback may write the store, and an edited bad body fails', async () => {
+    const other = await executeProposal(db, file('note_report'), fdeps());
+    expect(other).toMatchObject({ ok: false, error: expect.stringMatching(/only executes action_type 'design_feedback'/) });
+    const bad = await executeProposal(db, file('design_feedback', { ...FEEDBACK, severity: 'urgent' }), fdeps());
+    expect(bad).toMatchObject({ ok: false, error: expect.stringMatching(/severity/) });
+    expect(fs.readdirSync(root)).toEqual([]);
+    expect(selectEvents(db)).toHaveLength(0);
   });
 });

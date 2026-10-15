@@ -6,6 +6,9 @@ import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.j
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
 import { copyScalarKeys, isPlainObject } from './json-object.js';
+import {
+  appendFeedbackRow, validateFeedbackPayload, FEEDBACK_ACTION_TYPE, FEEDBACK_EVENT_KEYS, FEEDBACK_HAND,
+} from './feedback-hand.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -19,6 +22,12 @@ export interface ExecutorDeps {
    * doing nothing. Wired in `wiring.ts`; tests inject a stub.
    */
   sendEmail?: (req: EmailHandRequest) => Promise<EmailHandResult>;
+  /**
+   * Root of the built-in `feedback` hand's store (`FEEDBACK_DIR`). Absent
+   * means "this deployment has no feedback store" and a `design_feedback`
+   * proposal fails rather than silently doing nothing.
+   */
+  feedbackRoot?: string;
 }
 
 export type ExecutionResult =
@@ -214,6 +223,15 @@ function emitExecutedEvent(
 
   copyScalarKeys(truncated, eventPayload, FIXED_EVENT_KEYS);
 
+  // design_feedback: the addressed agent's wake reads who, what and how bad
+  // straight off the event; the body is authoritative for these keys.
+  if (row.action_type === FEEDBACK_ACTION_TYPE && isPlainObject(payload.body)) {
+    for (const key of FEEDBACK_EVENT_KEYS) {
+      const value = payload.body[key];
+      if (typeof value === 'string' || typeof value === 'number') eventPayload[key] = value;
+    }
+  }
+
   if (isPlainObject(payload.body)) {
     for (const key of BODY_FALLBACK_KEYS) {
       if (FIXED_EVENT_KEYS.has(key) || key in eventPayload) continue;
@@ -286,6 +304,29 @@ export async function executeProposal(
     const recorded = recordExecution(db, id, 'executed', result);
     if (recorded) emitExecutedEvent(db, row, payload, payload.body, deps);
     return { ok: true, http_status: 200, body: payload.body, recorded };
+  }
+
+  // Built-in "feedback" hand (design workflow spec §4.1): append one row to
+  // the addressed agent's feedback store. No HTTP request. Only
+  // `design_feedback` may write it; the body is re-validated so an edited
+  // card cannot smuggle a malformed row in.
+  if (payload.hand === FEEDBACK_HAND && !Object.hasOwn(brand.hands, FEEDBACK_HAND)) {
+    if (row.action_type !== FEEDBACK_ACTION_TYPE) {
+      return fail(`Hand '${FEEDBACK_HAND}' only executes action_type '${FEEDBACK_ACTION_TYPE}', not '${row.action_type}'`);
+    }
+    const valid = validateFeedbackPayload(payload, row.brand_id);
+    if (!valid.ok) return fail(valid.error);
+    if (!deps.feedbackRoot) return fail('Feedback store is not configured on this instance');
+    let body: unknown;
+    try {
+      const r = appendFeedbackRow(deps.feedbackRoot, valid.body, row.id, deps.now());
+      body = { ok: true, rows: r.rows, path: r.path, notify: r.notify };
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+    const recorded = recordExecution(db, id, 'executed', { http_status: 200, body, at: deps.now() });
+    if (recorded) emitExecutedEvent(db, row, payload, body, deps);
+    return { ok: true, http_status: 200, body, recorded };
   }
 
   // Built-in "graph" hand: an approved chat dispatch becomes spine events for
