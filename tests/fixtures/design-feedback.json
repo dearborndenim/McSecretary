@@ -1,0 +1,9 @@
+{
+  "_comment": "Spec 2026-10-15 §4.1 design_feedback body, filled in the way Costing's pre-check files it.",
+  "body": {
+    "to_agent": "designer", "brand": "dearborn-denim", "prompt": "fall-workwear-2027", "collection": "fall-workwear-2027-maya",
+    "revision": 3, "product_index": 2, "from": "costing", "kind": "cost_out_of_band", "severity": "revise",
+    "detail": { "estimate": 61.2, "band": [38, 52], "driver": "labour: 41 SAM at the flat rate" },
+    "suggestion": "Drop the welt pockets or move this to a statement role."
+  }
+}
