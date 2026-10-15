@@ -9,6 +9,7 @@ import { copyScalarKeys, isPlainObject } from './json-object.js';
 import {
   appendFeedbackRow, validateFeedbackPayload, FEEDBACK_ACTION_TYPE, FEEDBACK_EVENT_KEYS, FEEDBACK_HAND,
 } from './feedback-hand.js';
+import { SAMPLE_ACTION_TYPE, sampleEventKeys, validateSamplePayload } from './sample-approval.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
 export interface ExecutorDeps {
@@ -258,6 +259,12 @@ function emitExecutedEvent(
     }
   }
 
+  // sample_approval (build C5): techpack_id, verdict and the PACK's brand,
+  // whatever the response flattened, so the event reads the same either verdict.
+  if (row.action_type === SAMPLE_ACTION_TYPE) {
+    Object.assign(eventPayload, sampleEventKeys(payload.body, truncated, row.brand_id));
+  }
+
   if (isPlainObject(payload.body)) {
     for (const key of BODY_FALLBACK_KEYS) {
       if (FIXED_EVENT_KEYS.has(key) || key in eventPayload) continue;
@@ -421,6 +428,15 @@ export async function executeProposal(
     const recorded = recordExecution(db, id, 'executed', result);
     if (recorded) emitExecutedEvent(db, row, payload, sent.body, deps);
     return { ok: true, http_status: sent.http_status, body: sent.body, recorded };
+  }
+
+  // sample_approval (build C5): only ever the pack's own design-module
+  // `/proven` route, with a known verdict — an agent's filing or Robert's
+  // edit cannot point the sample gate anywhere else.
+  if (row.action_type === SAMPLE_ACTION_TYPE) {
+    const valid = validateSamplePayload(payload);
+    if (!valid.ok) return fail(valid.error);
+    payload = { ...payload, body: valid.body };
   }
 
   let target: { url: string; bearer: string };

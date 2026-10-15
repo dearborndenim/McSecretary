@@ -9,6 +9,7 @@ import { parseEdit, applyEdit, markTextEdited } from './edits.js';
 import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
 import { endSentence, extractNotify, failureDetail, type ExecutionResult } from './executor.js';
 import { rejectProposal } from './decision-events.js';
+import { SAMPLE_ACTION_TYPE, withVerdict } from './sample-approval.js';
 import { cap, safeJsonObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
 
@@ -243,6 +244,43 @@ function renderPatternDraftCard(p: ProposalRow, payload: ActionPayload): string 
 }
 
 /**
+ * `sample_approval` (Pattern Maker, `design-module` `/proven`, build C5): the card
+ * is the sample request. It names the pack, pieces, critic and the callouts a
+ * passing sample proves, and says what each button does — Approve passes the
+ * sample, Reject fails it, Edit `notes=`/`fail_notes=` passes/fails it with
+ * notes. Read defensively.
+ */
+function renderSampleApprovalCard(p: ProposalRow, payload: ActionPayload): string {
+  const evidence = safeJsonObject(p.evidence);
+  const body = asPlainObject(payload.body) ?? {};
+  const garment = asString(evidence.garment) ?? asString(body.techpack_id) ?? 'techpack';
+  const revision = asFiniteNumber(body.revision) ?? asFiniteNumber(evidence.revision);
+  const pieces = asFiniteNumber(body.pieces) ?? asFiniteNumber(evidence.pieces);
+  const archetype = asString(evidence.archetype);
+  const critic = asPlainObject(body.critic);
+  const score = critic ? asFiniteNumber(critic.score) : null;
+  const defects = critic ? asFiniteNumber(critic.defects) : null;
+  const callouts = asString(evidence.drafted_callouts);
+
+  const lines = [
+    `#${p.id} ${p.agent} · ${p.brand_id}`,
+    `Sew a sample: ${garment} r${revision ?? '?'}${pieces !== null ? ` · ${pieces} pieces` : ''}${archetype ? ` · ${archetype}` : ''}`,
+  ];
+  if (score !== null) lines.push(`Critic ${score}/100${defects !== null ? ` — ${defects} defect(s)` : ''}`);
+  if (callouts && callouts !== '[]') lines.push(cap(`A pass proves: ${callouts}`, REASON_CAP));
+  lines.push(cap(p.reason, REASON_CAP));
+  if (p.execution_result) {
+    const result = asPlainObject(safeJsonObject(p.execution_result).body) ?? {};
+    const verdict = asString(result.verdict);
+    if (verdict) lines.push(`Verdict: ${verdict}`);
+  }
+  lines.push('Approve = sample passed · Reject = sample failed · Edit notes=<text> passes with notes · Edit fail_notes=<text> fails with notes.');
+  lines.push('Pinned — level 1 — Robert decides.');
+  lines.push(`Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`);
+  return lines.join('\n');
+}
+
+/**
  * Five-ish lines, phone-readable (spec §4.2). `agentIsUser`: the proposal was
  * filed by a person (staff action), which alone allows the requester line.
  */
@@ -251,6 +289,9 @@ export function renderProposalCard(p: ProposalRow, agentIsUser = false): string 
 
   if (p.action_type === 'pattern_draft') {
     return renderPatternDraftCard(p, payload);
+  }
+  if (p.action_type === SAMPLE_ACTION_TYPE) {
+    return renderSampleApprovalCard(p, payload);
   }
 
   // notes proposals carry the human-readable text in the payload body
@@ -407,6 +448,42 @@ async function approveAndExecute(
   return { ok: true, message: status };
 }
 
+/**
+ * Reject on a `sample_approval` card is a verdict, not a refusal (build C5): the
+ * sewn sample failed. The body's verdict becomes `rejected`, the row is decided
+ * `approved_with_edit` (the edit is the verdict) and executes, so design-module
+ * records the failed sample on the pack and flips nothing. The trust ledger
+ * records the tap as a rejection; the type is pinned, so that moves no level.
+ */
+async function rejectSample(
+  db: Database.Database,
+  p: ProposalRow,
+  by: string,
+  deps: CardDeps,
+): Promise<CallbackResult> {
+  const payload = withVerdict(JSON.parse(p.action_payload) as ActionPayload, 'rejected');
+  // One transaction: the verdict edit and the claim land together or not at all.
+  const claimed = db.transaction(() => {
+    if (!updateActionPayload(db, p.id, payload)) return false;
+    if (!decideProposal(db, p.id, 'approved_with_edit', by, deps.now())) throw new Error('lost the claim');
+    return true;
+  });
+  let ok = false;
+  try { ok = claimed(); } catch { ok = false; }
+  if (!ok) {
+    await safeReply(deps, `#${p.id} was already decided.`);
+    return { ok: false, message: `#${p.id} was already decided` };
+  }
+  appendEdit(db, p.id, { at: deps.now(), note: 'verdict=rejected (Reject on a sample card)' });
+  recordTrustDecision(db, trustKey(p), 'rejected', deps.now());
+  const r = await deps.execute(p.id);
+  await safeReply(deps, r.ok
+    ? `Sample rejected #${p.id} — recorded on the pack (${r.http_status}); no callout changes maturity.`
+    : endSentence(`Sample rejected #${p.id} — recording failed${r.http_status ? ` (${r.http_status})` : ''}${failureDetail(r)}`));
+  await safeDecided(deps, p.id);
+  return { ok: true, message: 'sample_rejected' };
+}
+
 export async function handleProposalCallback(
   db: Database.Database,
   cb: { action: CallbackAction; id: number },
@@ -421,6 +498,9 @@ export async function handleProposalCallback(
 
   if (cb.action === 'approve') {
     return approveAndExecute(db, p, 'approved', by, deps);
+  }
+  if (cb.action === 'reject' && p.action_type === SAMPLE_ACTION_TYPE) {
+    return rejectSample(db, p, by, deps);
   }
   if (cb.action === 'reject') {
     if (!rejectProposal(db, p.id, by, deps.now())) {
