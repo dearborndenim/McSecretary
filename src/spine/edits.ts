@@ -66,3 +66,18 @@ export function applyEdit(
   }
   return { ok: true, payload: { ...payload, body } };
 }
+
+/**
+ * cs-desk's send-draft applies an edited reply only when the body says
+ * `edited: true` beside `text` (a bare `text` is ignored and the stored draft
+ * goes out). So when an edit changes `text`, mark the body edited — but only
+ * for a cs-desk proposal or a body that already carries an `edited` key; no
+ * other hand's body gains a key. Any other edit leaves `edited` as filed.
+ */
+export function markTextEdited(before: ActionPayload, after: ActionPayload): ActionPayload {
+  const prev = before.body as Record<string, unknown>;
+  const next = after.body as Record<string, unknown>;
+  if (prev.text === next.text) return after;
+  if (after.hand !== 'cs-desk' && !Object.hasOwn(prev, 'edited')) return after;
+  return { ...after, body: { ...next, edited: true } };
+}

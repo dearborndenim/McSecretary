@@ -80,6 +80,32 @@ export function extractNotify(body: unknown): string | undefined {
 }
 
 /**
+ * The hand's own explanation of a failed execution: a string `notify` on a
+ * 4xx/5xx JSON body (cs-desk's 409 `{error:'superseded', notify}` is the
+ * motivating case), cleaned and capped exactly like a success's notify. No
+ * `title: summary` fallback — that shape belongs to a successful note.
+ */
+export function extractFailureNotify(r: ExecutionResult): string | undefined {
+  if (r.ok || r.http_status === undefined || r.http_status < 400) return undefined;
+  const body = r.body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+  const notify = (body as Record<string, unknown>).notify;
+  return typeof notify === 'string' ? cleanNotify(notify) : undefined;
+}
+
+/** `text` closed with a full stop, unless it already ends a sentence (a hand's notify usually does). */
+export function endSentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/** `: <error> — <hand notify>` (whichever exist) for a failed execution's report line, else ''. */
+export function failureDetail(r: ExecutionResult): string {
+  if (r.ok) return '';
+  const parts = [r.error, extractFailureNotify(r)].filter((s): s is string => typeof s === 'string' && s.length > 0);
+  return parts.length ? `: ${parts.join(' — ')}` : '';
+}
+
+/**
  * Resolve a hand-relative path against the hand's base URL; refuse anything
  * that leaves the hand's origin and base path. `path` is agent-supplied, so
  * it is never concatenated raw — `@`, `//`, `:port`, `?`, `#`, `\\` and `..`

@@ -5,9 +5,9 @@ import {
   findEditRequestedForChat, appendEdit, updateActionPayload,
 } from '../db/proposal-queries.js';
 import { recordTrustDecision } from '../db/trust-queries.js';
-import { parseEdit, applyEdit } from './edits.js';
+import { parseEdit, applyEdit, markTextEdited } from './edits.js';
 import { validateDispatchPlan, renderPlanReason, ESTIMATE_PREFIX } from './graph-plan.js';
-import { extractNotify, type ExecutionResult } from './executor.js';
+import { endSentence, extractNotify, failureDetail, type ExecutionResult } from './executor.js';
 import { rejectProposal } from './decision-events.js';
 import { cap, safeJsonObject } from './json-object.js';
 import type { ActionPayload, ProposalRow } from './types.js';
@@ -33,6 +33,8 @@ const REASON_CAP = 500;
 const EVIDENCE_VALUE_CAP = 80;
 /** An RFQ body is longer than a reason; Robert still has to read it on a phone. */
 const EMAIL_PREVIEW_CAP = 1200;
+/** cs-desk refuses a reply or note text longer than this (its own 1–20,000 limit). */
+export const CS_DESK_TEXT_MAX = 20000;
 /** A dispatch plan is one line per brief; 500 would cut the card mid-brief. */
 const GRAPH_PLAN_CAP = 1600;
 /** Up to this many briefs, the card also shows what Robert actually asked for. */
@@ -289,6 +291,26 @@ export function renderProposalCard(p: ProposalRow, agentIsUser = false): string 
     return lines.join('\n');
   }
 
+  // A staff reply on cs-desk is a customer email: Robert approves the text
+  // itself, so show it (from the body, so a text= edit shows through), not an
+  // 80-character evidence slice.
+  // An internal note (cs_staff_note) carries text too but never reaches the customer; its card says so.
+  if (payload.hand === 'cs-desk' && typeof (payload.body as { text?: unknown }).text === 'string') {
+    const body = payload.body as { text: string; close?: unknown };
+    const note = p.action_type === 'cs_staff_note';
+    return [
+      `#${p.id} ${p.agent} · ${p.brand_id}`,
+      requesterLine(p, agentIsUser),
+      cap(p.reason, REASON_CAP),
+      note ? 'Internal note (not sent to the customer):' : null,
+      cap(body.text, EMAIL_PREVIEW_CAP),
+      body.close === true ? 'Closes the ticket after sending.' : null,
+      note ? 'Edit: text=<new note text>' : 'Edit: text=<new reply text>',
+      `Cost: ${money(p.cost_usd)}${p.reversible ? ' · reversible' : ' · NOT reversible'}`,
+      `Expires ${p.expires_at.slice(0, 16).replace('T', ' ')}Z`,
+    ].filter((l): l is string => l !== null).join('\n');
+  }
+
   // graph proposals carry a whole dispatch plan: Robert is approving briefs
   // and vendor contacts, so render the plan itself rather than a 500-char
   // slice of `reason`. Rendered from the body, so an Edit to `summary` shows
@@ -380,7 +402,7 @@ async function approveAndExecute(
   const r = await deps.execute(p.id);
   await safeReply(deps, r.ok
     ? `Approved #${p.id} — executed (${r.http_status}).${notifySuffix(r)}`
-    : `Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${r.error ? `: ${r.error}` : ''}.`);
+    : endSentence(`Approved #${p.id} — execution failed${r.http_status ? ` (${r.http_status})` : ''}${failureDetail(r)}`));
   await safeDecided(deps, p.id);
   return { ok: true, message: status };
 }
@@ -443,13 +465,22 @@ export async function handleEditReply(
   }
   const parsed = parseEdit(text);
   if (!parsed.ok) { await safeReply(deps, `Still editing #${p.id}. ${parsed.reason}`); return true; }
-  const applied = applyEdit(JSON.parse(p.action_payload) as ActionPayload, parsed.fields);
-  if (!applied.ok) { await safeReply(deps, `Still editing #${p.id}. ${applied.reason}`); return true; }
-  if (!updateActionPayload(db, p.id, applied.payload)) {
+  const original = JSON.parse(p.action_payload) as ActionPayload;
+  const edit = applyEdit(original, parsed.fields);
+  if (!edit.ok) { await safeReply(deps, `Still editing #${p.id}. ${edit.reason}`); return true; }
+  const payload = markTextEdited(original, edit.payload);
+  // An edit skips the catalogue's param checks, so hold a cs-desk text to cs-desk's own limit here rather than
+  // approving a payload the hand would refuse.
+  const editedText = (payload.body as { text?: unknown }).text;
+  if (payload.hand === 'cs-desk' && typeof editedText === 'string' && editedText.length > CS_DESK_TEXT_MAX) {
+    await safeReply(deps, `Still editing #${p.id}. That text is ${editedText.length} characters; cs-desk takes at most ${CS_DESK_TEXT_MAX}.`);
+    return true;
+  }
+  if (!updateActionPayload(db, p.id, payload)) {
     await safeReply(deps, `#${p.id} was already decided.`);
     return true;
   }
   appendEdit(db, p.id, { at: deps.now(), note: text.trim() });
-  await approveAndExecute(db, { ...p, action_payload: JSON.stringify(applied.payload) }, 'approved_with_edit', by, deps);
+  await approveAndExecute(db, { ...p, action_payload: JSON.stringify(payload) }, 'approved_with_edit', by, deps);
   return true;
 }

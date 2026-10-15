@@ -23,6 +23,7 @@ import {
   BUILT_IN_HANDS, checkValue, getCatalogue,
   type ParamSpec, type StaffAction, type StaffCatalogue,
 } from './catalogue.js';
+import { renderRead } from './render.js';
 import { staffActionIdsForUser, unsatisfiedBindings, type StaffUser } from './tools.js';
 
 export const REQUEST_TEXT_CAP = 300;
@@ -36,6 +37,7 @@ const HAND_LABELS: Record<string, string> = {
   'kanban-purchaser': 'purchasing system',
   'purchase-order-receiver': 'customer order system',
   'piece-work-scanner': 'piece-work scanner',
+  'cs-desk': 'customer-service desk',
 };
 
 function label(hand: string): string {
@@ -291,7 +293,15 @@ export function buildWriteProposal(
 export function refusalDetail(body: unknown, fallback?: string): string {
   if (isObj(body)) {
     const parts: string[] = [];
-    if (typeof body.error === 'string') parts.push(body.error);
+    // cs-desk's 409s: a merged ticket names the survivor; a ticket with no customer address cannot be answered.
+    if (body.error === 'merged' && (typeof body.into === 'number' || typeof body.into === 'string')) {
+      parts.push(`ticket was merged into #${body.into}; use ticket ${body.into} instead`);
+    } else if (body.error === 'no_customer') {
+      parts.push('the ticket has no customer email address, so no reply can be sent from here');
+    } else if (body.error === 'request with this idempotency_key is in progress') {
+      // The first run of this same request is still going on cs-desk: its email may already be out.
+      parts.push('the same request is still running on the customer-service desk and may already have gone out; check the ticket before asking again');
+    } else if (typeof body.error === 'string') parts.push(body.error);
     if (Array.isArray(body.candidates) && body.candidates.length > 0) {
       const names = body.candidates.slice(0, 8).map((c) => {
         if (typeof c === 'string') return c;
@@ -328,8 +338,11 @@ export interface StaffExecDeps {
   limiter: WriteLimiter;
 }
 
-async function runRead(d: StaffExecDeps, action: StaffAction, params: Values, brand: BrandConfig): Promise<string> {
-  const values = { ...params };
+async function runRead(d: StaffExecDeps, action: StaffAction, params: Values, user: StaffUser, brand: BrandConfig): Promise<string> {
+  // A read's bindings (brand, the user's own id) come from the user row, never from input.
+  const bound = bindValues(action, user, brand);
+  if (!bound.ok) return `Cannot look that up: ${bound.error}`;
+  const values = { ...params, ...bound.values };
   const c = resolveCase(action, values);
   const filled = fillPath(c.path, values, 'read');
   if (!filled.ok) return `Cannot look that up: ${filled.error}.`;
@@ -342,6 +355,10 @@ async function runRead(d: StaffExecDeps, action: StaffAction, params: Values, br
     let body: unknown = r.text;
     try { body = JSON.parse(r.text); } catch { /* keep text */ }
     return `The ${label(action.hand)} answered ${r.status}: ${refusalDetail(body)}`;
+  }
+  if (action.render) {
+    const text = renderRead(action.render, r.text);
+    if (text !== null) return text;
   }
   return r.capped;
 }
@@ -410,7 +427,7 @@ export async function executeStaffAction(
     const unavailable = handAvailability(brand, action.hand, d.env);
     if (unavailable) return unavailable;
 
-    if (action.kind === 'read') return await runRead(d, action, params.values, brand);
+    if (action.kind === 'read') return await runRead(d, action, params.values, user, brand);
 
     const nowIso = d.now();
     const built = buildWriteProposal(action, params.values, user, brand, requestText, nowIso);
