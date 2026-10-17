@@ -12,6 +12,7 @@ import type { InboxTransport } from '../../src/spine/telegram-card.js';
 import fs from 'node:fs';
 import { loadCatalogue, parseCatalogue, type StaffCatalogue } from '../../src/staff/catalogue.js';
 import { renderCsThread, renderRead, RENDER_CAP } from '../../src/staff/render.js';
+import { staffActionIdsForUser } from '../../src/staff/tools.js';
 import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
@@ -54,13 +55,23 @@ function base(): Record<string, any> {
   };
 }
 
+const arrayParam = { type: 'array', required: true, max: 5, description: 'p', items: { po_number: { type: 'integer', required: true, description: 'n' } } };
+
 describe('staff-action catalogue validator (spec §5)', () => {
   it('accepts the shipped catalogue with every v1 action', () => {
     expect(Object.keys(cat.actions).sort()).toEqual([
       'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_note', 'cs_reply', 'cs_search', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
-      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive',
+      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_approve', 'vendor_po_lookup', 'vendor_po_receive',
+      'vendor_po_waiting',
     ]);
+    expect(cat.groups.office).toContain('vendor_po_waiting');
+    // Only Robert approves money: the approve action is in no group, so only an admin has it.
+    expect(Object.values(cat.groups).flat()).not.toContain('vendor_po_approve');
+    // Approving sends the PO: irreversible, starts at level 2 (runs and reports), and the filing goes stale in an hour.
+    const approve = cat.actions.vendor_po_approve!;
+    expect([approve.hand, approve.action_type, approve.reversible, approve.cost_usd, approve.level_required, approve.initial_level, approve.expires_hours])
+      .toEqual(['kanban-purchaser', 'vendor_po_approve', false, 0, 1, 2, 1]);
     expect(cat.groups.cs).toEqual(['cs_my_queue', 'cs_search', 'cs_ticket', 'cs_reply', 'cs_note', 'cs_close', 'cs_assign_me', 'ops_note']);
     // An email cannot be unsent: cs_reply is irreversible and starts at level 1 (a card) until Robert promotes it.
     const levels = Object.fromEntries(['cs_reply', 'cs_note', 'cs_close', 'cs_assign_me'].map((id) => {
@@ -88,6 +99,9 @@ describe('staff-action catalogue validator (spec §5)', () => {
     ['an undeclared {param} in the summary', (c: any) => { c.actions.set.summary = 'Set {qty}'; }, /\{qty\} is not a declared/],
     ['a write with GET', (c: any) => { c.actions.set.method = 'GET'; }, /write may not use GET/],
     ['a binding that shadows a param', (c: any) => { c.actions.set.params.location_id = { type: 'string', description: 'x' }; }, /shadows a param/],
+    ['an array count outside the summary', (c: any) => { c.actions.set.params.pos = arrayParam; c.actions.set.body.n = '{#pos}'; }, /\{#pos\} is not a declared/],
+    ['an array field the items do not declare', (c: any) => { c.actions.set.params.pos = arrayParam; c.actions.set.summary = 'Set {pos.vendor}'; }, /\{pos\.vendor\} is not a declared/],
+    ['an array count of a scalar param', (c: any) => { c.actions.set.summary = 'Set {#sku}'; }, /\{#sku\} is not a declared/],
   ])('rejects %s', (_label, mutate, err) => {
     const c = base();
     mutate(c);
@@ -183,6 +197,72 @@ describe('staff-action params and payloads (spec §7.2)', () => {
     for (const id of reads) await executeStaffAction(d, cat, user, id, spoof, 'r');
     expect(urls).toHaveLength(reads.length);
     for (const u of urls) expect(new URL(u).searchParams.getAll('brand')).toEqual(['knits']);
+  });
+});
+
+describe('vendor_po_approve (purchasing Build 6b)', () => {
+  const robert = (): User => kristina({ id: 'robert-mcmillan', name: 'Robert', role: 'admin', grants_json: '[]', location_id: null });
+  const two = { pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: '1005', total_usd: '368.40', version: ' 9f8e7d6c ', vendor: 'YKK' }], approved_by: 'Kristina' };
+
+  it('passes the confirmed POs through as a list of objects, binds the approver and key, and names the POs in the summary', () => {
+    const action = cat.actions.vendor_po_approve!;
+    const v = validateParams(action, two);
+    const r = buildWriteProposal(action, (v as any).values, robert(), brand, 'approve all POs', NOW) as any;
+    expect(r.built.input.action_payload).toEqual({
+      hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/pos/approve',
+      body: {
+        pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }],
+        approved_by: 'Robert', idempotency_key: '{{proposal.id}}',
+      },
+    });
+    expect(r.built.summary).toBe('Approve 2 vendor PO(s): 1003, 1005');
+    expect(r.built.input.expires_at).toBe('2026-10-08T16:00:00.000Z');
+    const withReason = buildWriteProposal(action, { ...(v as any).values, reason: 'in chat' }, robert(), brand, 'r', NOW) as any;
+    expect(withReason.built.input.action_payload.body.reason).toBe('in chat');
+    expect(validateParams(action, { pos: [{ po_number: 1003, version: 'a1b2c3d4' }] })).toEqual({ ok: false, error: 'pos[0].total_usd is required' });
+    expect(validateParams(action, { pos: [{ po_number: 1003, total_usd: 342 }] })).toEqual({ ok: false, error: 'pos[0].version is required' });
+    expect(validateParams(action, { pos: [{ po_number: 999, total_usd: 1, version: 'v' }] })).toEqual({ ok: false, error: 'pos[0].po_number must be at least 1001' });
+  });
+
+  it('is listed for an admin and refused for a member, even one in every group', async () => {
+    const everyGroup = kristina({ grants_json: JSON.stringify(Object.keys(cat.groups)) });
+    expect(staffActionIdsForUser(cat, robert())).toContain('vendor_po_approve');
+    expect(staffActionIdsForUser(cat, everyGroup)).not.toContain('vendor_po_approve');
+    const file = vi.fn();
+    const d: StaffExecDeps = { db: new Database(':memory:'), loadBrand: () => brand, env: {}, handFetch: vi.fn() as never, file, now: () => NOW, limiter: createWriteLimiter() };
+    expect(await executeStaffAction(d, cat, everyGroup, 'vendor_po_approve', two, 'approve all POs'))
+      .toBe('The action vendor_po_approve is not available to you. Nothing was done; ask Robert if you need it.');
+    expect(file).not.toHaveBeenCalled();
+  });
+
+  it("files as the user, runs at level 2 and hands kanban's notify back to the chat and Robert's report", async () => {
+    const db = new Database(':memory:'); initializeSchema(db);
+    createUser(db, { id: 'robert-mcmillan', name: 'Robert', email: 'r@dd.com', role: 'admin', telegram_chat_id: '555' });
+    const sent: string[] = [];
+    const transport: InboxTransport = { async sendCard() { return { message_id: 1 }; }, async sendText(_c, text) { sent.push(text); } };
+    const notify = 'Approved 1 PO: PO 1003 Cone Denim $342.00 (sent by email). Not approved: PO 1005, total changed.';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ results: [], notify }), { status: 200 }));
+    const env = { KANBAN_PURCHASER_URL: 'https://kp.example', KANBAN_PURCHASER_KEY: 'kpkey' };
+    const spine = buildSpine({ db, transport, now: () => NOW, env, brandsDir: BRANDS, agentKeys: new Map(), fetch: fetchMock as never });
+    const d: StaffExecDeps = { db, loadBrand: spine.loadBrand, env, handFetch: spine.handFetch, file: spine.file, now: () => NOW, limiter: createWriteLimiter() };
+    const reply = await executeStaffAction(d, cat, getUserById(db, 'robert-mcmillan')!, 'vendor_po_approve', two, 'approve all POs');
+    expect(reply).toBe(`Done: ${notify}`);
+    expect(sent).toEqual([`Executed #1 robert-mcmillan vendor_po_approve (level 2, 200). ${notify}`]);
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(url).toBe('https://kp.example/api/integration/pos/approve');
+    expect(JSON.parse(init.body as string)).toEqual({
+      pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }], approved_by: 'Robert', idempotency_key: '1',
+    });
+
+    // The look-up: vendor goes in the query when given and is left out when not.
+    fetchMock.mockClear();
+    await executeStaffAction(d, cat, getUserById(db, 'robert-mcmillan')!, 'vendor_po_waiting', { vendor: 'Cone Denim' }, 'cone POs');
+    await executeStaffAction(d, cat, getUserById(db, 'robert-mcmillan')!, 'vendor_po_waiting', {}, 'all POs');
+    expect(fetchMock.mock.calls.map((c) => (c as unknown[])[0])).toEqual([
+      'https://kp.example/api/integration/pos?status=waiting&vendor=Cone+Denim',
+      'https://kp.example/api/integration/pos?status=waiting',
+    ]);
+    db.close();
   });
 });
 

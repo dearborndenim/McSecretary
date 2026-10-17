@@ -20,7 +20,7 @@ import type { Routed } from '../spine/router.js';
 import type { DedupeMode } from '../db/proposal-queries.js';
 import type { ProposalInput } from '../spine/types.js';
 import {
-  BUILT_IN_HANDS, checkValue, getCatalogue,
+  ARRAY_COUNT_RE, ARRAY_FIELD_RE, BUILT_IN_HANDS, checkValue, getCatalogue,
   type ParamSpec, type StaffAction, type StaffCatalogue,
 } from './catalogue.js';
 import { renderRead } from './render.js';
@@ -161,9 +161,24 @@ function textOf(v: unknown): string {
   return String(v);
 }
 
-/** Interpolate `{name}` into display text (summary, note title). */
+/**
+ * Interpolate `{name}` into display text (summary, note title). For an array
+ * value a summary may also say `{#name}` (how many entries) and
+ * `{name.field}` (that field of every entry, joined with ", ").
+ */
 export function fillText(template: string, values: Values): string {
-  return template.replace(/\{([^{}]*)\}/g, (_m, name: string) => textOf(values[name]));
+  return template.replace(/\{([^{}]*)\}/g, (_m, name: string) => {
+    if (Object.hasOwn(values, name)) return textOf(values[name]);
+    const count = ARRAY_COUNT_RE.exec(name);
+    if (count) { const v = values[count[1]!]; return Array.isArray(v) ? String(v.length) : ''; }
+    const field = ARRAY_FIELD_RE.exec(name);
+    if (field) {
+      const v = values[field[1]!];
+      if (!Array.isArray(v)) return '';
+      return v.map((item) => (isObj(item) ? textOf(item[field[2]!]) : '')).filter((t) => t !== '').join(', ');
+    }
+    return '';
+  });
 }
 
 const WHOLE_PLACEHOLDER = /^\{([^{}]+)\}$/;
