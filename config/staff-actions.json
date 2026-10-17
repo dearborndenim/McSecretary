@@ -4,7 +4,7 @@
     "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
     "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "ops_note"],
     "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
-    "office": ["vendor_po_lookup", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"],
+    "office": ["vendor_po_lookup", "vendor_po_waiting", "vendor_po_approve", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"],
     "cs": ["cs_my_queue", "cs_search", "cs_ticket", "cs_reply", "cs_note", "cs_close", "cs_assign_me", "ops_note"]
   },
   "actions": {
@@ -123,6 +123,45 @@
       "level_required": 1,
       "expires_hours": 24,
       "summary": "Receive {lines} on vendor PO {po_id}"
+    },
+    "vendor_po_waiting": {
+      "kind": "read",
+      "description": "List the vendor POs waiting for Robert's approval: our purchase orders to vendors (fabric, thread, trims) that purchasing drafted and nobody has approved yet, each with its PO number, vendor, total in USD, number of lines, when it started waiting and whether it is on hold. vendor narrows the list to one vendor (its code or part of its name); leave it out for every waiting PO. Always call this before vendor_po_approve and show the POs with their totals; approve nothing from memory. Not for customer orders.",
+      "params": {
+        "vendor": { "type": "string", "required": false, "max": 60, "description": "Vendor code or part of the vendor name, e.g. \"Cone Denim\"; leave out for all vendors." }
+      },
+      "hand": "kanban-purchaser",
+      "method": "GET",
+      "path": "/api/integration/pos?status=waiting&vendor={vendor}"
+    },
+    "vendor_po_approve": {
+      "kind": "write",
+      "description": "Approve vendor POs that are waiting for approval, so purchasing sends them to the vendors (our purchase orders to vendors; an approved vendor PO goes out and cannot be taken back from here). The rule: first call vendor_po_waiting, show the person each PO's number, vendor and total plus the grand total, and only after they confirm call this with exactly those PO numbers and the totals that look-up returned. \"Approve all\" means every PO the look-up returned; \"approve the Cone Denim POs\" means every PO the look-up with vendor=Cone Denim returned. A PO marked on hold cannot be approved: leave it out and say so. Never guess, round or remember a total: if a PO is not in the latest look-up, look it up again. Purchasing approves a PO only when it is still waiting and its total still matches to the cent; relay its answer as it comes. Not for customer orders.",
+      "params": {
+        "pos": {
+          "type": "array",
+          "required": true,
+          "max": 40,
+          "description": "The confirmed vendor POs, one entry each, copied from vendor_po_waiting: {po_number, total_usd}.",
+          "items": {
+            "po_number": { "type": "integer", "required": true, "min": 1001, "max": 999999, "description": "The PO number from vendor_po_waiting, e.g. 1003." },
+            "total_usd": { "type": "number", "required": true, "min": 0, "max": 1000000, "description": "That PO's total_usd exactly as vendor_po_waiting returned it." }
+          }
+        },
+        "reason": { "type": "string", "max": 200, "description": "Optional note on the approval, e.g. \"approved in chat\"." }
+      },
+      "bind": { "approved_by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "kanban-purchaser",
+      "method": "POST",
+      "path": "/api/integration/pos/approve",
+      "body": { "pos": "{pos}", "approved_by": "{approved_by}", "idempotency_key": "{idempotency_key}", "reason": "{reason}" },
+      "action_type": "vendor_po_approve",
+      "reversible": false,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 2,
+      "expires_hours": 1,
+      "summary": "Approve {#pos} vendor PO(s): {pos.po_number}"
     },
     "customer_order_lookup": {
       "kind": "read",

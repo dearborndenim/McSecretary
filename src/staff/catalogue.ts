@@ -203,11 +203,24 @@ function stringsIn(v: unknown, out: string[] = []): string[] {
   return out;
 }
 
-function checkTemplates(where: string, strings: string[], names: Set<string>): void {
+/**
+ * Display-text forms of an array param (summary only): `{#name}` is the
+ * number of entries, `{name.field}` the entries' values of one item field
+ * joined with ", ".
+ */
+export const ARRAY_COUNT_RE = /^#([a-z][a-z0-9_]*)$/;
+export const ARRAY_FIELD_RE = /^([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)$/;
+
+function checkTemplates(where: string, strings: string[], names: Set<string>, arrays?: Record<string, ParamSpec>): void {
   for (const s of strings) {
     if (s.includes('{{') || s.includes('}}')) fail(where, 'double braces are reserved for the executor; bind proposal.id instead');
     for (const p of placeholders(s)) {
-      if (!names.has(p)) fail(where, `{${p}} is not a declared param or binding`);
+      if (names.has(p)) continue;
+      const count = ARRAY_COUNT_RE.exec(p);
+      const field = ARRAY_FIELD_RE.exec(p);
+      if (arrays && count && arrays[count[1]!]) continue;
+      if (arrays && field && arrays[field[1]!]?.items && Object.hasOwn(arrays[field[1]!]!.items!, field[2]!)) continue;
+      fail(where, `{${p}} is not a declared param or binding`);
     }
   }
 }
@@ -259,6 +272,7 @@ function parseAction(id: string, raw: unknown): StaffAction {
     }
   }
   const names = new Set([...Object.keys(params), ...Object.keys(bind)]);
+  const arrays = Object.fromEntries(Object.entries(params).filter(([, p]) => p.type === 'array'));
 
   const action: StaffAction = {
     id, kind, description: raw.description, params, bind, hand: raw.hand, method: method as StaffAction['method'],
@@ -288,7 +302,8 @@ function parseAction(id: string, raw: unknown): StaffAction {
         if (kind === 'read' || typeof c.summary !== 'string') fail(where, `switch case ${value}: summary must be text on a write`);
         sc.summary = c.summary;
       }
-      checkTemplates(`${where} case ${value}`, stringsIn([sc.path, sc.body, sc.summary]), names);
+      checkTemplates(`${where} case ${value}`, stringsIn([sc.path, sc.body]), names);
+      checkTemplates(`${where} case ${value}`, stringsIn([sc.summary]), names, arrays);
       if (!sc.path && action.path === undefined) fail(where, `switch case ${value} has no path and there is no base path`);
       cases[value] = sc;
     }
@@ -341,7 +356,8 @@ function parseAction(id: string, raw: unknown): StaffAction {
     if (raw.initial_level > 1 && isPinned(action.action_type!)) fail(where, 'a pinned action_type cannot start above level 1');
     action.initial_level = raw.initial_level;
   }
-  checkTemplates(where, stringsIn([action.path, action.body, action.summary]), names);
+  checkTemplates(where, stringsIn([action.path, action.body]), names);
+  checkTemplates(where, stringsIn([action.summary]), names, arrays);
   return action;
 }
 
