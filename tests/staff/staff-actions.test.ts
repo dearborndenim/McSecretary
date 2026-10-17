@@ -202,7 +202,7 @@ describe('staff-action params and payloads (spec §7.2)', () => {
 
 describe('vendor_po_approve (purchasing Build 6b)', () => {
   const robert = (): User => kristina({ id: 'robert-mcmillan', name: 'Robert', role: 'admin', grants_json: '[]', location_id: null });
-  const two = { pos: [{ po_number: 1003, total_usd: 342 }, { po_number: '1005', total_usd: '368.40', vendor: 'YKK' }], approved_by: 'Kristina' };
+  const two = { pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: '1005', total_usd: '368.40', version: ' 9f8e7d6c ', vendor: 'YKK' }], approved_by: 'Kristina' };
 
   it('passes the confirmed POs through as a list of objects, binds the approver and key, and names the POs in the summary', () => {
     const action = cat.actions.vendor_po_approve!;
@@ -211,7 +211,7 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
     expect(r.built.input.action_payload).toEqual({
       hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/pos/approve',
       body: {
-        pos: [{ po_number: 1003, total_usd: 342 }, { po_number: 1005, total_usd: 368.4 }],
+        pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }],
         approved_by: 'Robert', idempotency_key: '{{proposal.id}}',
       },
     });
@@ -219,8 +219,9 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
     expect(r.built.input.expires_at).toBe('2026-10-08T16:00:00.000Z');
     const withReason = buildWriteProposal(action, { ...(v as any).values, reason: 'in chat' }, robert(), brand, 'r', NOW) as any;
     expect(withReason.built.input.action_payload.body.reason).toBe('in chat');
-    expect(validateParams(action, { pos: [{ po_number: 1003 }] })).toEqual({ ok: false, error: 'pos[0].total_usd is required' });
-    expect(validateParams(action, { pos: [{ po_number: 999, total_usd: 1 }] })).toEqual({ ok: false, error: 'pos[0].po_number must be at least 1001' });
+    expect(validateParams(action, { pos: [{ po_number: 1003, version: 'a1b2c3d4' }] })).toEqual({ ok: false, error: 'pos[0].total_usd is required' });
+    expect(validateParams(action, { pos: [{ po_number: 1003, total_usd: 342 }] })).toEqual({ ok: false, error: 'pos[0].version is required' });
+    expect(validateParams(action, { pos: [{ po_number: 999, total_usd: 1, version: 'v' }] })).toEqual({ ok: false, error: 'pos[0].po_number must be at least 1001' });
   });
 
   it('is listed for an admin and refused for a member, even one in every group', async () => {
@@ -250,7 +251,7 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe('https://kp.example/api/integration/pos/approve');
     expect(JSON.parse(init.body as string)).toEqual({
-      pos: [{ po_number: 1003, total_usd: 342 }, { po_number: 1005, total_usd: 368.4 }], approved_by: 'Robert', idempotency_key: '1',
+      pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }], approved_by: 'Robert', idempotency_key: '1',
     });
 
     // The look-up: vendor goes in the query when given and is left out when not.
