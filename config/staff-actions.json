@@ -4,7 +4,7 @@
     "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
     "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "ops_note"],
     "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
-    "office": ["vendor_po_lookup", "vendor_po_waiting", "vendor_po_approve", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"],
+    "office": ["vendor_po_lookup", "vendor_po_waiting", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "ops_note"],
     "cs": ["cs_my_queue", "cs_search", "cs_ticket", "cs_reply", "cs_note", "cs_close", "cs_assign_me", "ops_note"]
   },
   "actions": {

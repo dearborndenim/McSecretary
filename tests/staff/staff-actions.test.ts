@@ -12,6 +12,7 @@ import type { InboxTransport } from '../../src/spine/telegram-card.js';
 import fs from 'node:fs';
 import { loadCatalogue, parseCatalogue, type StaffCatalogue } from '../../src/staff/catalogue.js';
 import { renderCsThread, renderRead, RENDER_CAP } from '../../src/staff/render.js';
+import { staffActionIdsForUser } from '../../src/staff/tools.js';
 import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
@@ -64,7 +65,9 @@ describe('staff-action catalogue validator (spec §5)', () => {
       'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_approve', 'vendor_po_lookup', 'vendor_po_receive',
       'vendor_po_waiting',
     ]);
-    expect(cat.groups.office).toEqual(expect.arrayContaining(['vendor_po_waiting', 'vendor_po_approve']));
+    expect(cat.groups.office).toContain('vendor_po_waiting');
+    // Only Robert approves money: the approve action is in no group, so only an admin has it.
+    expect(Object.values(cat.groups).flat()).not.toContain('vendor_po_approve');
     // Approving sends the PO: irreversible, starts at level 2 (runs and reports), and the filing goes stale in an hour.
     const approve = cat.actions.vendor_po_approve!;
     expect([approve.hand, approve.action_type, approve.reversible, approve.cost_usd, approve.level_required, approve.initial_level, approve.expires_hours])
@@ -218,6 +221,17 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
     expect(withReason.built.input.action_payload.body.reason).toBe('in chat');
     expect(validateParams(action, { pos: [{ po_number: 1003 }] })).toEqual({ ok: false, error: 'pos[0].total_usd is required' });
     expect(validateParams(action, { pos: [{ po_number: 999, total_usd: 1 }] })).toEqual({ ok: false, error: 'pos[0].po_number must be at least 1001' });
+  });
+
+  it('is listed for an admin and refused for a member, even one in every group', async () => {
+    const everyGroup = kristina({ grants_json: JSON.stringify(Object.keys(cat.groups)) });
+    expect(staffActionIdsForUser(cat, robert())).toContain('vendor_po_approve');
+    expect(staffActionIdsForUser(cat, everyGroup)).not.toContain('vendor_po_approve');
+    const file = vi.fn();
+    const d: StaffExecDeps = { db: new Database(':memory:'), loadBrand: () => brand, env: {}, handFetch: vi.fn() as never, file, now: () => NOW, limiter: createWriteLimiter() };
+    expect(await executeStaffAction(d, cat, everyGroup, 'vendor_po_approve', two, 'approve all POs'))
+      .toBe('The action vendor_po_approve is not available to you. Nothing was done; ask Robert if you need it.');
+    expect(file).not.toHaveBeenCalled();
   });
 
   it("files as the user, runs at level 2 and hands kanban's notify back to the chat and Robert's report", async () => {
