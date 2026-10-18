@@ -10,15 +10,44 @@ export function getTrustRow(db: Database.Database, k: TrustKey): TrustRow | unde
   ).get(k.agent, k.brand_id, k.action_type) as TrustRow | undefined;
 }
 
-/** Level 1 when no row exists (spec §4.4: every agent starts at 1). */
+/** The one wildcard token in a ledger row's `agent` or `action_type`. No globs. */
+export const TRUST_WILDCARD = '*';
+
+/**
+ * The effective level for a key (spec §4.4 plus wildcard rows). First match wins:
+ * 1. the exact row (agent, brand, action_type)
+ * 2. (agent, brand, '*')
+ * 3. ('*', brand, action_type)
+ * 4. ('*', brand, '*')
+ * 5. level 1 (every agent starts at 1)
+ * A pinned action type (§6) never resolves above 1, whatever any wildcard row
+ * says: wildcards never lift a human gate. An exact pinned row below 1 (level 0)
+ * keeps its level.
+ */
 export function getTrustLevel(db: Database.Database, k: TrustKey): number {
-  return getTrustRow(db, k)?.level ?? 1;
+  const exact = getTrustRow(db, k);
+  if (isPinned(k.action_type)) return Math.min(exact?.level ?? 1, 1);
+  if (exact) return exact.level;
+  const W = TRUST_WILDCARD;
+  const candidates: Array<[string, string]> = [[k.agent, W], [W, k.action_type], [W, W]];
+  for (const [agent, action_type] of candidates) {
+    const row = getTrustRow(db, { agent, brand_id: k.brand_id, action_type });
+    if (row) return row.level;
+  }
+  return 1;
 }
 
+/**
+ * Create the exact row when missing, seeded at the currently effective level
+ * (wildcard- and pin-aware), so counting a decision on a key covered by a
+ * wildcard never silently lowers its level.
+ */
 function ensureRow(db: Database.Database, k: TrustKey): void {
+  if (getTrustRow(db, k)) return;
+  const level = getTrustLevel(db, k);
   db.prepare(`
-    INSERT OR IGNORE INTO trust_ledger (agent, brand_id, action_type, level) VALUES (?, ?, ?, 1)
-  `).run(k.agent, k.brand_id, k.action_type);
+    INSERT OR IGNORE INTO trust_ledger (agent, brand_id, action_type, level) VALUES (?, ?, ?, ?)
+  `).run(k.agent, k.brand_id, k.action_type, level);
 }
 
 /**
@@ -37,8 +66,9 @@ export function ensureInitialTrust(db: Database.Database, k: TrustKey, level: 1 
 }
 
 /**
- * Count a human decision. A rejection at level >= 2 demotes to 1 (automatic,
- * spec §4.4). Returns whether that happened.
+ * Count a human decision on the exact row. A rejection at an effective level
+ * >= 2 (exact or wildcard) writes the exact row to 1 (automatic, spec §4.4).
+ * Returns whether that happened.
  */
 export function recordTrustDecision(
   db: Database.Database,
@@ -46,6 +76,7 @@ export function recordTrustDecision(
   decision: 'approved' | 'approved_with_edit' | 'rejected',
   nowIso: string,
 ): { demoted: boolean } {
+  const effective = getTrustLevel(db, k);
   ensureRow(db, k);
   // `col` is chosen from three literals in code, never from input — the only
   // reason interpolating it into SQL below is safe. Keep it that way.
@@ -53,7 +84,7 @@ export function recordTrustDecision(
     : decision === 'approved_with_edit' ? 'approved_with_edit' : 'rejected';
   db.prepare(`UPDATE trust_ledger SET ${col} = ${col} + 1, last_change_at = ? WHERE agent = ? AND brand_id = ? AND action_type = ?`)
     .run(nowIso, k.agent, k.brand_id, k.action_type);
-  if (decision === 'rejected' && getTrustLevel(db, k) >= 2) {
+  if (decision === 'rejected' && effective >= 2) {
     db.prepare(`
       UPDATE trust_ledger SET level = 1, last_change_at = ?, last_change_by = 'auto-demote'
       WHERE agent = ? AND brand_id = ? AND action_type = ?
@@ -63,6 +94,11 @@ export function recordTrustDecision(
   return { demoted: false };
 }
 
+/**
+ * Set a ledger row's level. `agent` and/or `action_type` may be `*` (a wildcard
+ * row; see getTrustLevel). A `*` action_type may be raised above 1: pinned types
+ * are held at 1 by the resolver, not by refusing the wildcard.
+ */
 export function promoteTrust(
   db: Database.Database,
   k: TrustKey,

@@ -140,6 +140,16 @@ describe('fileProposal', () => {
     expect(r.routed).toBe('card');
   });
 
+  it("a ('*', brand, '*') row at 2 auto-executes a non-pinned proposal and still cards a pinned one", async () => {
+    promoteTrust(db, { agent: '*', brand_id: K.brand_id, action_type: '*' }, 2, 'robert', NOW);
+    const d = deps();
+    const a = await fileProposal(db, input(), d);
+    expect(a.routed).toBe('executed');
+    const b = await fileProposal(db, input({ action_type: 'ad_launch' }), d);
+    expect(b.routed).toBe('card');
+    expect(d.executed).toEqual([a.id]);
+  });
+
   it('level_required above the ledger level gets a card', async () => {
     promoteTrust(db, K, 2, 'robert', NOW);
     const d = deps();

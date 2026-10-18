@@ -25,6 +25,23 @@ describe('promote command', () => {
     expect(getTrustLevel(db, { agent: 'a', brand_id: 'dearborn-denim', action_type: 'creative_request' })).toBe(2);
   });
 
+  it('parses and runs the three wildcard forms', () => {
+    db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert','R','r@dd.com','admin')").run();
+    const lines: Array<[string, string]> = [
+      ['promote * * 2 brand=knits', '* * → level 2 (knits). Exact rows and pinned gates still win.'],
+      ['promote technical-designer * 2 brand=knits', 'technical-designer * → level 2 (knits). Exact rows and pinned gates still win.'],
+      ['promote * techpack_draft 2 brand=knits', '* techpack_draft → level 2 (knits). Exact rows and pinned gates still win.'],
+    ];
+    for (const [text, reply] of lines) {
+      const cmd = parsePromoteCommand(text);
+      expect(cmd, text).not.toBeNull();
+      expect(runPromoteCommand(db, cmd!, 'dearborn-denim', () => true, 'robert', NOW)).toBe(reply);
+    }
+    expect(parsePromoteCommand('promote * * 2')).toEqual({ agent: '*', action_type: '*', level: 2, brand_id: undefined });
+    expect(getTrustLevel(db, { agent: 'designer', brand_id: 'knits', action_type: 'design_feedback' })).toBe(2);
+    expect(getTrustLevel(db, { agent: 'designer', brand_id: 'knits', action_type: 'techpack_signoff' })).toBe(1);
+  });
+
   it('refuses pinned actions with a reason', () => {
     db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert','R','r@dd.com','admin')").run();
     const msg = runPromoteCommand(db, { agent: 'a', action_type: 'ad_launch', level: 2, brand_id: undefined }, 'dearborn-denim', () => true, 'robert', NOW);
