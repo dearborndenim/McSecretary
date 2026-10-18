@@ -1,10 +1,14 @@
 import type Database from 'better-sqlite3';
 import { getUserById } from '../db/user-queries.js';
-import { promoteTrust } from '../db/trust-queries.js';
+import { promoteTrust, TRUST_WILDCARD } from '../db/trust-queries.js';
 import type { TrustLevel } from './types.js';
 
 export interface PromoteCommand { agent: string; action_type: string; level: TrustLevel; brand_id: string | undefined }
 
+/**
+ * `promote <agent> <action_type> <0-3> [brand=<id>]`. `*` is legal for agent
+ * and/or action_type (a wildcard row): `promote * * 2 brand=knits`.
+ */
 export function parsePromoteCommand(text: string): PromoteCommand | null {
   const m = /^promote\s+(\S+)\s+(\S+)\s+([0-3])(?:\s+brand=(\S+))?\s*$/i.exec(text.trim());
   if (!m) return null;
@@ -30,5 +34,6 @@ export function runPromoteCommand(
       ? `${cmd.action_type} is a pinned human gate and stays at level 1.`
       : 'Level must be 0–3.';
   }
-  return `${cmd.agent} ${cmd.action_type} → level ${r.level} (${brand_id}).`;
+  const wildcard = cmd.agent === TRUST_WILDCARD || cmd.action_type === TRUST_WILDCARD;
+  return `${cmd.agent} ${cmd.action_type} → level ${r.level} (${brand_id}).${wildcard ? ' Exact rows and pinned gates still win.' : ''}`;
 }

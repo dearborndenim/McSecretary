@@ -568,6 +568,19 @@ describe('spine routes', () => {
       await h(fakeReq('POST', '/spine/trust/promote', { agent: '', action_type: 'x', level: 2 }, `Bearer ${ADMIN_TOKEN}`), r.res);
       expect(r.out.status).toBe(400);
     });
+
+    it('accepts * for agent and action_type and refuses other junk as before', async () => {
+      const h = handlerWithToken(ADMIN_TOKEN);
+      let r = fakeRes();
+      await h(fakeReq('POST', '/spine/trust/promote', { agent: '*', action_type: '*', level: 2, brand_id: 'knits' }, `Bearer ${ADMIN_TOKEN}`), r.res);
+      expect(r.out.status).toBe(200);
+      expect(JSON.parse(r.out.body)).toMatchObject({ agent: '*', brand_id: 'knits', action_type: '*', level: 2 });
+      for (const action_type of ['**', 'creative_*', 'Bad-Type', '']) {
+        r = fakeRes();
+        await h(fakeReq('POST', '/spine/trust/promote', { agent: '*', action_type, level: 2 }, `Bearer ${ADMIN_TOKEN}`), r.res);
+        expect(r.out.status, action_type).toBe(400);
+      }
+    });
   });
 
   it('rejects a body over 64 KB with 413 and destroys the request', async () => {

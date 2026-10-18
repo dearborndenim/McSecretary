@@ -95,4 +95,43 @@ describe('trust ledger', () => {
     expect(getTrustLevel(db, patternDraft)).toBe(2);
     expect(promoteTrust(db, patternDraft, 3, 'robert', NOW)).toEqual({ ok: true, level: 3 });
   });
+
+  describe('wildcard rows', () => {
+    const W = (agent: string, action_type: string) => ({ agent, brand_id: K.brand_id, action_type });
+
+    it('resolves exact, then (agent, *), then (*, action), then (*, *), then 1', () => {
+      expect(getTrustLevel(db, K)).toBe(1);
+      promoteTrust(db, W('*', '*'), 2, 'robert', NOW);
+      expect(getTrustLevel(db, K)).toBe(2);
+      promoteTrust(db, W('*', K.action_type), 3, 'robert', NOW);
+      expect(getTrustLevel(db, K)).toBe(3);
+      promoteTrust(db, W(K.agent, '*'), 0, 'robert', NOW);
+      expect(getTrustLevel(db, K)).toBe(0);
+      promoteTrust(db, K, 1, 'robert', NOW);
+      expect(getTrustLevel(db, K)).toBe(1);
+      // Another brand sees none of it.
+      expect(getTrustLevel(db, { ...K, brand_id: 'knits' })).toBe(1);
+    });
+
+    it('a pinned type stays at 1 under (*, *) at 3', () => {
+      promoteTrust(db, W('*', '*'), 3, 'robert', NOW);
+      expect(getTrustLevel(db, { ...K, action_type: 'ad_launch' })).toBe(1);
+    });
+
+    it('a rejection under a wildcard writes the exact row to 1 and reports the demotion', () => {
+      promoteTrust(db, W('*', '*'), 2, 'robert', NOW);
+      expect(getTrustRow(db, K)).toBeUndefined();
+      expect(recordTrustDecision(db, K, 'rejected', NOW)).toEqual({ demoted: true });
+      expect(getTrustRow(db, K)).toMatchObject({ level: 1, rejected: 1, last_change_by: 'auto-demote' });
+      expect(getTrustLevel(db, K)).toBe(1);
+      expect(getTrustRow(db, W('*', '*'))!.level).toBe(2);
+    });
+
+    it('an approval under a wildcard seeds the exact row at the effective level', () => {
+      promoteTrust(db, W(K.agent, '*'), 3, 'robert', NOW);
+      recordTrustDecision(db, K, 'approved', NOW);
+      expect(getTrustRow(db, K)).toMatchObject({ level: 3, approved_as_proposed: 1 });
+      expect(getTrustLevel(db, K)).toBe(3);
+    });
+  });
 });

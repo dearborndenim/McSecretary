@@ -13,7 +13,7 @@ import { insertEvent, drainEvents, countPendingByType, countEventsSince } from '
 import { insertOutcome } from '../db/outcome-queries.js';
 import { countProposalsSince } from '../db/proposal-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
-import { listTrustRowsForAgent, promoteTrust, getTrustRow } from '../db/trust-queries.js';
+import { listTrustRowsForAgent, promoteTrust, getTrustRow, TRUST_WILDCARD } from '../db/trust-queries.js';
 import type { Routed } from './router.js';
 import type { OutcomeInput, ProposalInput, RunIndexInput, SpineEventInput, TrustLevel } from './types.js';
 
@@ -204,7 +204,8 @@ function validateRun(b: Record<string, unknown>): string | null {
 
 function validatePromoteBody(b: Record<string, unknown>): string | null {
   if (typeof b.agent !== 'string' || b.agent.length === 0 || b.agent.length > NAME_MAX) return `agent must be a string of 1–${NAME_MAX} chars`;
-  if (typeof b.action_type !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(b.action_type)) return 'action_type must be a snake_case identifier';
+  // `*` (TRUST_WILDCARD) is a wildcard row for agent and/or action_type; see getTrustLevel.
+  if (typeof b.action_type !== 'string' || !(b.action_type === TRUST_WILDCARD || /^[a-z][a-z0-9_]{0,63}$/.test(b.action_type))) return 'action_type must be a snake_case identifier or *';
   if (!Number.isInteger(b.level) || (b.level as number) < 0 || (b.level as number) > 3) return 'level must be an integer 0–3';
   if (b.brand_id !== undefined && (typeof b.brand_id !== 'string' || !BRAND_ID_RE.test(b.brand_id))) return 'brand_id must be a lowercase slug';
   return null;
