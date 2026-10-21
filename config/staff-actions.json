@@ -4,7 +4,7 @@
     "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
     "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "pickup_status", "pickup_mark_ready", "ops_note"],
     "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
-    "office": ["vendor_po_lookup", "vendor_po_waiting", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "pickup_status", "pickup_mark_ready", "pickup_reschedule", "ops_note"],
+    "office": ["vendor_po_lookup", "vendor_po_waiting", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "pickup_status", "pickup_mark_ready", "pickup_reschedule", "ops_note", "ap_aging", "ap_bills_due", "ap_vendor_status", "ap_exceptions"],
     "driver": ["pickup_status", "pickup_collected", "ops_note"],
     "cs": ["cs_my_queue", "cs_search", "cs_ticket", "cs_reply", "cs_note", "cs_close", "cs_assign_me", "ops_note"]
   },
@@ -496,6 +496,45 @@
       "initial_level": 2,
       "expires_hours": 72,
       "summary": "Note to Robert ({urgency}): {text}"
+    },
+    "ap_aging": {
+      "kind": "read",
+      "description": "What Dearborn owes its vendors (accounts payable): open vendor bills captured from invoices emailed to payables@, by how late they are (current = not yet due, 1-30, 31-60, 61-90, 90+ days past due), with a row per vendor and its critical flag. Affiliates (McMillan Manufacturing and the other related companies) are listed apart under intercompany and are never in the totals. Answers \"what do we owe\". vendor narrows it to one vendor. Read-only; nothing here pays anyone.",
+      "params": {
+        "vendor": { "type": "string", "required": false, "max": 80, "description": "Part of a vendor name, e.g. \"Cone\"; leave out for every vendor." }
+      },
+      "hand": "quickbooks-sync",
+      "method": "GET",
+      "path": "/api/integration/ap/aging?vendor={vendor}"
+    },
+    "ap_bills_due": {
+      "kind": "read",
+      "description": "List open vendor bills (accounts payable) due before a date, overdue ones included, earliest due first: vendor, invoice number, invoice and due dates, total, balance, PO number, match state (MATCHED, VARIANCE, NO_PO, NO_RECEIPT, DUPLICATE, UNMATCHED_VENDOR), state (CAPTURED, POSTED to QuickBooks, HELD) and days overdue. Answers \"what's due this week\": pass due_before as the day after the week ends. Read-only; it schedules and pays nothing.",
+      "params": {
+        "due_before": { "type": "string", "required": false, "max": 10, "description": "YYYY-MM-DD; bills due before this date. Leave out for every open bill." },
+        "vendor": { "type": "string", "required": false, "max": 80, "description": "Part of a vendor name; leave out for every vendor." }
+      },
+      "hand": "quickbooks-sync",
+      "method": "GET",
+      "path": "/api/integration/ap/bills?state=OPEN&due_before={due_before}&vendor={vendor}"
+    },
+    "ap_vendor_status": {
+      "kind": "read",
+      "description": "One vendor's payables status: open balance and open bills, last payment seen in QuickBooks, its terms and critical/affiliate flags, and kanban POs received with no invoice yet. next_payment is filled only when an approved pay run holds the vendor; when it is empty, promise the vendor no payment date.",
+      "params": {
+        "name": { "type": "string", "required": true, "max": 80, "description": "The vendor's name, e.g. \"Komar\" or \"Cranston Trucking\"." }
+      },
+      "hand": "quickbooks-sync",
+      "method": "GET",
+      "path": "/api/integration/ap/vendor?name={name}"
+    },
+    "ap_exceptions": {
+      "kind": "read",
+      "description": "The payables exceptions queue: vendor bills that need a person (amount off the PO, no PO, billed before the goods were received, duplicate, vendor not in QuickBooks, low-confidence reading, held, or waiting for extraction), each with its reasons; invoices that failed to read; duplicates refused in the last 30 days; and bills paid from the bank that are still open in QuickBooks. Clearing them happens on the /cfo/ap page. Read-only.",
+      "params": {},
+      "hand": "quickbooks-sync",
+      "method": "GET",
+      "path": "/api/integration/ap/exceptions"
     }
   }
 }
