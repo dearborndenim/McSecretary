@@ -62,9 +62,15 @@ describe('staff-action catalogue validator (spec §5)', () => {
     expect(Object.keys(cat.actions).sort()).toEqual([
       'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_note', 'cs_reply', 'cs_search', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
+      'pickup_approve', 'pickup_collected', 'pickup_hold', 'pickup_mark_ready', 'pickup_release', 'pickup_reschedule', 'pickup_status',
       'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_approve', 'vendor_po_lookup', 'vendor_po_receive',
       'vendor_po_waiting',
     ]);
+    // Inbound pickups (kanban Build P1): Robert alone approves a quote (cost bound to it), holds and releases; the driver group marks collected.
+    for (const admin of ['pickup_approve', 'pickup_hold', 'pickup_release']) expect(Object.values(cat.groups).flat()).not.toContain(admin);
+    expect(cat.groups.driver).toEqual(['pickup_status', 'pickup_collected', 'ops_note']);
+    const pa = cat.actions.pickup_approve!;
+    expect([pa.reversible, pa.cost_usd, pa.initial_level]).toEqual([false, { param: 'quote_usd', unit_usd: 1 }, 1]);
     expect(cat.groups.office).toContain('vendor_po_waiting');
     // Only Robert approves money: the approve action is in no group, so only an admin has it.
     expect(Object.values(cat.groups).flat()).not.toContain('vendor_po_approve');
