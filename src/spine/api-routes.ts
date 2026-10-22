@@ -30,6 +30,8 @@ export interface SpineRouterDeps {
   agentPolicy?: AgentPolicy;
   /** Root of the built-in `feedback` hand's store; absent = reads answer 404. */
   feedbackRoot?: string;
+  /** Called after an event is queued over HTTP (SPINE_WAKE_HOOKS); must not throw or block. */
+  wake?: (eventType: string, eventId: number) => void;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -429,6 +431,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         }
         const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now(), agent);
         json(res, 200, { id });
+        deps.wake?.(eventType as string, id);
         return true;
       }
 
