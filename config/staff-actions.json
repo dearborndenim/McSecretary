@@ -4,7 +4,7 @@
     "store": ["inventory_lookup", "pos_status", "store_inventory_set", "inventory_transfer", "ops_note"],
     "receiving": ["vendor_po_lookup", "inventory_lookup", "vendor_po_receive", "material_request", "pickup_status", "pickup_mark_ready", "ops_note"],
     "floor-lead": ["production_lookup", "customer_order_lookup", "material_request", "ops_note"],
-    "office": ["vendor_po_lookup", "vendor_po_waiting", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "pickup_status", "pickup_mark_ready", "pickup_reschedule", "ops_note", "ap_aging", "ap_bills_due", "ap_vendor_status", "ap_exceptions"],
+    "office": ["vendor_po_lookup", "vendor_po_waiting", "customer_order_lookup", "inventory_lookup", "pos_status", "production_lookup", "material_request", "pickup_status", "pickup_mark_ready", "pickup_reschedule", "ops_note", "ap_aging", "ap_bills_due", "ap_vendor_status", "ap_exceptions", "ap_pay_run_waiting", "ap_bill_hold", "ap_bill_release"],
     "driver": ["pickup_status", "pickup_collected", "ops_note"],
     "cs": ["cs_my_queue", "cs_search", "cs_ticket", "cs_reply", "cs_note", "cs_close", "cs_assign_me", "ops_note"]
   },
@@ -535,6 +535,92 @@
       "hand": "quickbooks-sync",
       "method": "GET",
       "path": "/api/integration/ap/exceptions"
+    },
+    "ap_pay_run_waiting": {
+      "kind": "read",
+      "description": "The weekly pay run waiting for Robert's approval (proposed Tuesday morning, paid Wednesday): its id, pay day, totals by bucket (must = overdue or due before the next run, discount = early-pay discounts worth taking, can_wait, hold = exceptions and held bills), cash before and after against the cash floor, any shortfall, every bill with vendor, invoice number, amount and reason, and the intercompany bills that are never in a run. Approving only marks the run approved; Robert pays from the bank. Read-only.",
+      "params": {},
+      "hand": "quickbooks-sync",
+      "method": "GET",
+      "path": "/api/integration/ap/pay-runs?status=waiting"
+    },
+    "ap_pay_run_approve": {
+      "kind": "write",
+      "description": "Approve the waiting pay run (\"approve the pay run\"). First call ap_pay_run_waiting, show the person the pay day, the total to pay and the largest bills, and only after they confirm call this with exactly that run's id. Approving moves no money: it marks the run approved and lists what Robert pays from the bank, and only then may a vendor be told a payment date.",
+      "params": {
+        "pay_run_id": { "type": "string", "required": true, "max": 40, "description": "The pay run id from ap_pay_run_waiting, e.g. \"pr-20261020-a1b2c3\"." }
+      },
+      "bind": { "approved_by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "quickbooks-sync",
+      "method": "POST",
+      "path": "/api/integration/ap/pay-runs/{pay_run_id}/approve",
+      "body": { "approved_by": "{approved_by}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "ap_pay_run_approve",
+      "reversible": false,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 1,
+      "expires_hours": 24,
+      "summary": "Approve pay run {pay_run_id}"
+    },
+    "ap_bill_hold": {
+      "kind": "write",
+      "description": "Put a vendor bill on hold (\"hold the BNS bill\"): it stays out of every pay run until released, for a dispute, a wrong amount or goods not received. Get the bill id from ap_bills_due or ap_vendor_status. Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "bill_id": { "type": "string", "required": true, "max": 60, "description": "The bill id from ap_bills_due or ap_vendor_status, e.g. \"cap_1a2b3c4d5e6f7a8b\"." },
+        "reason": { "type": "string", "required": true, "max": 300, "description": "Why it is held, in the person's words." }
+      },
+      "bind": { "by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "quickbooks-sync",
+      "method": "POST",
+      "path": "/api/integration/ap/bills/{bill_id}/hold",
+      "body": { "reason": "{reason}", "by": "{by}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "ap_bill_hold",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 2,
+      "expires_hours": 24,
+      "summary": "Hold bill {bill_id}: {reason}"
+    },
+    "ap_bill_release": {
+      "kind": "write",
+      "description": "Release a held vendor bill so it can be in a pay run again. Get the bill id from ap_bills_due or ap_exceptions (held bills show there). Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "params": {
+        "bill_id": { "type": "string", "required": true, "max": 60, "description": "The bill id of the held bill." },
+        "reason": { "type": "string", "required": true, "max": 300, "description": "Why it is released, in the person's words." }
+      },
+      "bind": { "by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "quickbooks-sync",
+      "method": "POST",
+      "path": "/api/integration/ap/bills/{bill_id}/release",
+      "body": { "reason": "{reason}", "by": "{by}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "ap_bill_release",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 2,
+      "expires_hours": 24,
+      "summary": "Release bill {bill_id}: {reason}"
+    },
+    "ap_match_accept": {
+      "kind": "write",
+      "description": "Accept a recognised payment: a bank payment already booked as an expense that the payables agent matched to open vendor bills. Accepting records the bill payment in QuickBooks from the same bank account and deletes the duplicate expense, so the bill shows paid and the cost is not counted twice. It cannot be undone from here. Use the match id from the payment-match card or the /cfo/ap page; never guess it.",
+      "params": {
+        "match_id": { "type": "integer", "required": true, "min": 1, "max": 2147483647, "description": "The recognised-payment match id." }
+      },
+      "bind": { "by": "user.name", "idempotency_key": "proposal.id" },
+      "hand": "quickbooks-sync",
+      "method": "POST",
+      "path": "/api/integration/ap/matches/{match_id}/apply",
+      "body": { "by": "{by}", "idempotency_key": "{idempotency_key}" },
+      "action_type": "ap_match_accept",
+      "reversible": false,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 1,
+      "expires_hours": 24,
+      "summary": "Accept payment match {match_id}"
     }
   }
 }
