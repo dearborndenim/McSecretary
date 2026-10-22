@@ -4,7 +4,7 @@ import { PINNED_ACTION_TYPES, isPinned } from '../../src/spine/gates.js';
 describe('gates', () => {
   it('pins every action type from spec §6', () => {
     for (const t of [
-      'ad_spend_step_over_cap', 'po_draft_over_threshold', 'ap_pay_run', 'ap_payment_match', 'vendor_add', 'hire_flag',
+      'ad_spend_step_over_cap', 'po_draft_over_threshold', 'ap_pay_run', 'vendor_add', 'hire_flag',
       'storefront_publish', 'organic_post', 'ad_launch', 'price_change',
       'fabric_pick', 'sample_approval', 'techpack_signoff', 'shopify_execute',
       'policy_change',
@@ -15,6 +15,8 @@ describe('gates', () => {
 
   it('does not pin routine actions', () => {
     expect(isPinned('creative_request')).toBe(false);
+    // ap_payment_match starts at level 1 but Robert may promote it to 3 (payables spec §0c).
+    expect(isPinned('ap_payment_match')).toBe(false);
     expect(isPinned('noop')).toBe(false);
   });
 
