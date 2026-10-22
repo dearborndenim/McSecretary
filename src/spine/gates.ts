@@ -7,6 +7,8 @@ export const PINNED_ACTION_TYPES: ReadonlyArray<string> = Object.freeze([
   // money
   'ad_spend_step_over_cap',
   'po_draft_over_threshold',
+  'ap_pay_run',          // payables: Robert approves every pay run (payables spec money rule 1)
+  'ap_payment_match',    // payables: a BillPayment + deleted expense in QuickBooks
   'vendor_add',
   'hire_flag',
   // customer-facing

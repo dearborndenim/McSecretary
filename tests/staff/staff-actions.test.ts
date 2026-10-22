@@ -60,7 +60,8 @@ const arrayParam = { type: 'array', required: true, max: 5, description: 'p', it
 describe('staff-action catalogue validator (spec §5)', () => {
   it('accepts the shipped catalogue with every v1 action', () => {
     expect(Object.keys(cat.actions).sort()).toEqual([
-      'ap_aging', 'ap_bills_due', 'ap_exceptions', 'ap_vendor_status',
+      'ap_aging', 'ap_bill_hold', 'ap_bill_release', 'ap_bills_due', 'ap_exceptions', 'ap_match_accept',
+      'ap_pay_run_approve', 'ap_pay_run_waiting', 'ap_vendor_status',
       'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_note', 'cs_reply', 'cs_search', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
       'pickup_approve', 'pickup_collected', 'pickup_hold', 'pickup_mark_ready', 'pickup_release', 'pickup_reschedule', 'pickup_status',
@@ -74,9 +75,23 @@ describe('staff-action catalogue validator (spec §5)', () => {
     expect([pa.reversible, pa.cost_usd, pa.initial_level]).toEqual([false, { param: 'quote_usd', unit_usd: 1 }, 1]);
     expect(cat.groups.office).toContain('vendor_po_waiting');
     // Payables (quickbooks-sync F1) are reads only, for the office group and admins.
-    for (const id of ['ap_aging', 'ap_bills_due', 'ap_vendor_status', 'ap_exceptions']) {
+    for (const id of ['ap_aging', 'ap_bills_due', 'ap_vendor_status', 'ap_exceptions', 'ap_pay_run_waiting']) {
       expect([cat.actions[id]!.kind, cat.actions[id]!.hand, cat.groups.office.includes(id)]).toEqual(['read', 'quickbooks-sync', true]);
     }
+    // Payables writes (F2): only Robert approves a pay run or accepts a payment match (admin only, a card at level 1;
+    // the agent's own ap_pay_run / ap_payment_match proposals are the pinned gates, which staff may never file);
+    // the office group may hold and release bills at level 2.
+    for (const admin of ['ap_pay_run_approve', 'ap_match_accept']) expect(Object.values(cat.groups).flat()).not.toContain(admin);
+    const apLevels = Object.fromEntries(['ap_pay_run_approve', 'ap_match_accept', 'ap_bill_hold', 'ap_bill_release'].map((id) => {
+      const a = cat.actions[id]!;
+      return [id, [a.kind, a.hand, a.action_type, a.reversible, a.level_required, a.initial_level ?? 1, cat.groups.office.includes(id)]];
+    }));
+    expect(apLevels).toEqual({
+      ap_pay_run_approve: ['write', 'quickbooks-sync', 'ap_pay_run_approve', false, 1, 1, false],
+      ap_match_accept: ['write', 'quickbooks-sync', 'ap_match_accept', false, 1, 1, false],
+      ap_bill_hold: ['write', 'quickbooks-sync', 'ap_bill_hold', true, 1, 2, true],
+      ap_bill_release: ['write', 'quickbooks-sync', 'ap_bill_release', true, 1, 2, true],
+    });
     // Only Robert approves money: the approve action is in no group, so only an admin has it.
     expect(Object.values(cat.groups).flat()).not.toContain('vendor_po_approve');
     // Approving sends the PO: irreversible, starts at level 2 (runs and reports), and the filing goes stale in an hour.
