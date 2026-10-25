@@ -58,8 +58,19 @@ describe('brand config', () => {
     expect(() => resolveHand(k, 'ad-manager', { AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'k' })).toThrow(/AD_MANAGER_KNITS_URL/);
     // Factory hands share Dearborn's services and env names exactly.
     const dd = loadBrandConfig(DIR, 'dearborn-denim');
-    for (const h of ['product-dev', 'design-module', 'piece-work-scanner', 'purchase-order-receiver', 'kanban-purchaser', 'quickbooks-sync']) {
+    for (const h of ['product-dev', 'design-module', 'piece-work-scanner', 'purchase-order-receiver', 'kanban-purchaser', 'quickbooks-sync', 'cutroom']) {
       expect(k.hands[h], h).toEqual(dd.hands[h]);
+    }
+  });
+
+  it('registers the cutroom hand (pattern PC) on both brands, one instance, no forwarded brand', () => {
+    for (const id of ['dearborn-denim', 'knits']) {
+      const b = loadBrandConfig(DIR, id);
+      expect(b.hands.cutroom, id).toEqual({ url_env: 'CUTROOM_URL', key_env: 'CUTROOM_KEY' });
+      expect(forwardBrandKey(b, 'cutroom')).toBeUndefined(); // cutroom reads the brand from bodies
+      expect(resolveHand(b, 'cutroom', { CUTROOM_URL: 'https://pattern-pc.example.ts.net', CUTROOM_KEY: 'k' }))
+        .toEqual({ url: 'https://pattern-pc.example.ts.net', bearer: 'k' });
+      expect(() => resolveHand(b, 'cutroom', {})).toThrow(/CUTROOM_URL/);
     }
   });
 

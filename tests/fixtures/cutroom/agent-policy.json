@@ -1,0 +1,11 @@
+{
+  "cutroom": {
+    "propose": { "hands": ["cutroom"], "action_types": ["queue_release"] },
+    "events": { "post_types": ["cut_job_*", "pattern_landed"], "drain_types": ["queue_release_rejected"], "source_hand": "self" },
+    "hands_proxy": false,
+    "outcomes": false,
+    "brands": false,
+    "runs": false,
+    "rate": { "events_per_hour": 120, "proposals_per_hour": 30 }
+  }
+}
