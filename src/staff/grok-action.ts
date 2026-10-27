@@ -209,7 +209,8 @@ async function checkLimits(
     const a = await readPath(d, brand, action.hand, l.po_receipt.read_path);
     if (!a.ok || a.status < 200 || a.status >= 300) {
       const p = handProblem(action.hand, a, 'read the PO');
-      return { ok: false, outcome: { ...p, status: 'refused', reason: `${p.reason} Without the open quantities nothing was received.` } };
+      // A network error or 5xx stays `failed` (an outage, for the desk); a 4xx is `refused` (handProblem decides).
+      return { ok: false, outcome: { ...p, reason: `${p.reason} Without the open quantities nothing was received.` } };
     }
     const po = findOpenPo(parseBody(a.text), poId);
     if (!po) return { ok: false, outcome: refused(`Vendor PO id ${poId} is not open for receiving (not ordered or partly received). Nothing was received.`) };

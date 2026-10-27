@@ -769,6 +769,19 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     expect(events('grok_task_chief')).toHaveLength(1);
   });
 
+  it('reports a kanban outage on the PO pre-read as failed, a 4xx as refused, and writes nothing (review #6)', async () => {
+    const receive = (key: string) => post({ idempotency_key: key, action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: 41, quantity: 37 }] } }).done;
+    answers['GET kp /api/integration/pos'] = () => new Response('upstream down', { status: 503 });
+    expect((await receive('p1'))!.status).toBe('failed');
+    answers['GET kp /api/integration/pos'] = () => { throw new TypeError('fetch failed'); };
+    expect((await receive('p2'))!.status).toBe('failed');
+    answers['GET kp /api/integration/pos'] = () => new Response('{"error":"status must be waiting, ordered or received"}', { status: 400 });
+    expect((await receive('p3'))!.status).toBe('refused');
+    answers['GET kp /api/integration/pos'] = () => new Response('{"pos":[]}', { status: 200 });
+    expect((await receive('p4'))!.reason).toMatch(/not open for receiving/);
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
   it('runs a resend of the same request_id under a new idempotency_key once (review #4)', async () => {
     const params = { sku: 'MICA-32-30', quantity: 24, reason: 'recount' };
     const first = post({ action: 'store_inventory_set', params });
