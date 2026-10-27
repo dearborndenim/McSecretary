@@ -66,10 +66,30 @@ export interface StaffAction {
   summary?: string;
   /** Trust level a user's ledger row starts at on their first filing (default 1; staff admin UI spec §4). */
   initial_level?: 1 | 2 | 3;
-  /** OPERATOR direct actions (spec 2026-10-27): true = a Grok `grok_action` may run it. */
-  operator?: boolean;
+  /** OPERATOR direct actions (spec 2026-10-27): present = a Grok `grok_action` may run it. */
+  operator?: OperatorSpec;
   /** write only: limits and checks McSecretary applies on the OPERATOR path (none = runs as asked). */
   limits?: ActionLimits;
+}
+
+/**
+ * How an action differs on the OPERATOR path (`"operator": true` = not at all).
+ * The Telegram staff path never reads this.
+ * - params: extra params on this path; omit: Telegram params not taken here
+ *   (an omitted switch param drops the switch, so `body` must replace it).
+ * - locations: params that name a brand location (key or alias, `locations`
+ *   in the brand file); each is replaced by that location's gid before the
+ *   body is filled. An optional one defaults to the person's own location.
+ * - body: write only, replaces the Telegram body.
+ * - levels_by_location: read only; the answer's variants gain
+ *   `levels_by_location` keyed by location key, for every registered location.
+ */
+export interface OperatorSpec {
+  params: Record<string, ParamSpec>;
+  omit: string[];
+  locations: string[];
+  body?: Record<string, unknown>;
+  levels_by_location?: boolean;
 }
 
 /**
@@ -336,14 +356,11 @@ function parseAction(id: string, raw: unknown): StaffAction {
     action.render = raw.render;
   }
 
-  if (raw.operator !== undefined) {
-    if (typeof raw.operator !== 'boolean') fail(where, 'operator must be true or false');
-    if (raw.operator) action.operator = true;
-  }
 
   if (kind === 'read') {
     for (const k of WRITE_ONLY_KEYS) if (raw[k] !== undefined) fail(where, `${k} is for writes only`);
     checkTemplates(where, stringsIn([action.path]), names);
+    if (raw.operator !== undefined && raw.operator !== false) action.operator = parseOperator(where, raw.operator, action, kind);
     return action;
   }
 
@@ -378,9 +395,69 @@ function parseAction(id: string, raw: unknown): StaffAction {
     action.initial_level = raw.initial_level;
   }
   if (raw.limits !== undefined) action.limits = parseLimits(where, raw.limits, params);
+  if (raw.operator !== undefined && raw.operator !== false) action.operator = parseOperator(where, raw.operator, action, kind);
   checkTemplates(where, stringsIn([action.path, action.body]), names);
   checkTemplates(where, stringsIn([action.summary]), names, arrays);
   return action;
+}
+
+const OPERATOR_KEYS = new Set(['params', 'omit', 'locations', 'body', 'levels_by_location']);
+
+function parseOperator(where: string, raw: unknown, action: StaffAction, kind: 'read' | 'write'): OperatorSpec {
+  const spec: OperatorSpec = { params: {}, omit: [], locations: [] };
+  if (raw === true) return spec;
+  if (!isObj(raw)) fail(where, 'operator must be true or an object');
+  for (const k of Object.keys(raw)) if (!OPERATOR_KEYS.has(k)) fail(where, `operator: unknown field ${k}`);
+  if (raw.omit !== undefined) {
+    if (!Array.isArray(raw.omit) || !raw.omit.every((n) => typeof n === 'string' && Object.hasOwn(action.params, n))) fail(where, 'operator.omit must name declared params');
+    spec.omit = [...(raw.omit as string[])];
+  }
+  if (raw.params !== undefined) {
+    if (!isObj(raw.params)) fail(where, 'operator.params must be an object');
+    for (const [name, p] of Object.entries(raw.params)) {
+      if (!NAME_RE.test(name)) fail(where, `operator param name ${name} is invalid`);
+      if ((Object.hasOwn(action.params, name) && !spec.omit.includes(name)) || Object.hasOwn(action.bind, name)) fail(where, `operator param ${name} shadows a param or binding`);
+      spec.params[name] = parseParam(`${where} operator param ${name}`, p, false);
+    }
+  }
+  if (raw.locations !== undefined) {
+    if (!Array.isArray(raw.locations) || !raw.locations.every((n) => typeof n === 'string' && spec.params[n]?.type === 'string')) {
+      fail(where, 'operator.locations must name string operator params');
+    }
+    spec.locations = [...(raw.locations as string[])];
+  }
+  if (raw.levels_by_location !== undefined) {
+    if (kind !== 'read' || typeof raw.levels_by_location !== 'boolean') fail(where, 'operator.levels_by_location is true/false on a read');
+    spec.levels_by_location = raw.levels_by_location;
+  }
+  if (raw.body !== undefined) {
+    if (kind !== 'write' || !isObj(raw.body)) fail(where, 'operator.body is an object on a write');
+    spec.body = raw.body;
+  }
+  if (action.switch && spec.omit.includes(action.switch.param) && !spec.body) fail(where, 'operator omits the switch param, so it needs its own body');
+  if (action.switch && spec.body && !spec.omit.includes(action.switch.param)) fail(where, 'operator.body replaces the switch body; omit the switch param too');
+  const view = operatorView({ ...action, operator: spec });
+  checkTemplates(`${where} operator`, stringsIn([view.path, view.body]), new Set([...Object.keys(view.params), ...Object.keys(action.bind)]));
+  return spec;
+}
+
+/**
+ * The action as the OPERATOR path runs it: operator params added, omitted
+ * ones (and a switch on one) dropped, the operator body in place, and only the
+ * bindings its path and body still use (so a recount at a named location does
+ * not need the person's own location).
+ */
+export function operatorView(action: StaffAction): StaffAction {
+  const op = action.operator;
+  if (!op) return action;
+  const params: Record<string, ParamSpec> = {};
+  for (const [n, p] of Object.entries(action.params)) if (!op.omit.includes(n)) params[n] = p;
+  Object.assign(params, op.params);
+  const sw = action.switch && !op.omit.includes(action.switch.param) ? action.switch : undefined;
+  const body = op.body ?? action.body;
+  const used = new Set(stringsIn([action.path, body, sw ? Object.values(sw.cases).map((c) => [c.path, c.body]) : []]).flatMap(placeholders));
+  const bind = Object.fromEntries(Object.entries(action.bind).filter(([n]) => used.has(n)));
+  return { ...action, params, bind, body, switch: sw };
 }
 
 function positive(where: string, v: unknown, name: string, max = Number.MAX_SAFE_INTEGER): number {

@@ -10,7 +10,7 @@
   },
   "actions": {
     "inventory_lookup": {
-      "operator": true,
+      "operator": { "levels_by_location": true },
       "kind": "read",
       "description": "Look up Shopify stock for a product at the Factory and at the Andersonville store. Search by product name, color, size or SKU; returns up to 25 variants with their SKU, levels {factory, store} (null = not stocked at that location), sku_class and whether the product is on POS. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all.",
       "params": {
@@ -32,9 +32,13 @@
       "path": "/api/integration/pos-status?q={q}"
     },
     "store_inventory_set": {
-      "operator": true,
+      "operator": {
+        "params": { "location": { "type": "string", "max": 40, "description": "Where the count was taken: a location key or alias from the brand's locations (e.g. andersonville or store, factory). Defaults to the person's own location." } },
+        "locations": ["location"],
+        "body": { "sku": "{sku}", "location_id": "{location}", "quantity": "{quantity}", "reason": "{reason}", "idempotency_key": "{idempotency_key}" }
+      },
       "kind": "write",
-      "description": "Set the on-hand count of one SKU at your store to a counted number (a recount, not a move). Use inventory_lookup first to get the exact SKU. Moving stock between the Factory and the store is inventory_transfer, never this. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "description": "Set the on-hand count of one SKU at your store to a counted number (a recount, not a move). Use inventory_lookup first to get the exact SKU. Moving stock between the Factory and the store is inventory_transfer, never this. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. On Telegram it files a request that runs once Robert approves (or right away if he has promoted you on it); from OPERATOR it runs at once.",
       "params": {
         "sku": { "type": "string", "required": true, "max": 64, "description": "Exact SKU from inventory_lookup." },
         "quantity": { "type": "integer", "required": true, "min": 0, "max": 9999, "description": "The counted quantity now at the store." },
@@ -54,9 +58,17 @@
       "summary": "Set {sku} to {quantity} at the store"
     },
     "inventory_transfer": {
-      "operator": true,
+      "operator": {
+        "params": {
+          "from": { "type": "string", "required": true, "max": 40, "description": "Where the goods left: a location key or alias (e.g. factory, andersonville or store)." },
+          "to": { "type": "string", "required": true, "max": 40, "description": "Where the goods arrived: a location key or alias." }
+        },
+        "omit": ["direction"],
+        "locations": ["from", "to"],
+        "body": { "sku": "{sku}", "quantity": "{quantity}", "from_location_id": "{from}", "to_location_id": "{to}", "reason": "{reason}", "idempotency_key": "{idempotency_key}" }
+      },
       "kind": "write",
-      "description": "Record goods physically moved between the Factory and your store: subtracts the quantity at one location and adds it at the other. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. Use inventory_lookup first to get the exact SKU. Files a request; it runs once Robert approves (or right away if he has promoted you on it).",
+      "description": "Record goods physically moved between the Factory and your store: subtracts the quantity at one location and adds it at the other. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. Use inventory_lookup first to get the exact SKU. On Telegram it files a request that runs once Robert approves (or right away if he has promoted you on it); from OPERATOR it runs at once.",
       "params": {
         "sku": { "type": "string", "required": true, "max": 64, "description": "Exact SKU from inventory_lookup." },
         "quantity": { "type": "integer", "required": true, "min": 1, "max": 9999, "description": "How many units moved." },
@@ -100,9 +112,11 @@
       "path": "/api/integration/materials"
     },
     "vendor_po_receive": {
-      "operator": true,
+      "operator": {
+        "body": { "lines": "{lines}", "received_by": "{received_by}", "note": "{note}", "idempotency_key": "{idempotency_key}", "allow_over": true }
+      },
       "kind": "write",
-      "description": "Receive materials that arrived from a vendor against a vendor PO (our purchase order to that vendor). Get the vendor PO id and its line ids from vendor_po_lookup first; partial quantities are fine. Never for customer orders. Files a request; it runs once Robert approves.",
+      "description": "Receive materials that arrived from a vendor against a vendor PO (our purchase order to that vendor). Get the vendor PO id and its line ids from vendor_po_lookup first; partial quantities are fine. Never for customer orders. On Telegram it files a request that runs once Robert approves; from OPERATOR it runs at once, and a line received short or over the PO is flagged to Robert.",
       "params": {
         "po_id": { "type": "string", "required": true, "max": 64, "description": "The vendor PO id from vendor_po_lookup (not the customer order number)." },
         "lines": {

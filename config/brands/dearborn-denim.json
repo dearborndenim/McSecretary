@@ -6,6 +6,10 @@
   "shopify_store": "dearborn-denim-apparel.myshopify.com",
   "location_id": "gid://shopify/Location/30653830",
   "store_location_id": "gid://shopify/Location/5526519911",
+  "locations": {
+    "factory": { "location_id": "gid://shopify/Location/30653830", "name": "the Factory" },
+    "andersonville": { "location_id": "gid://shopify/Location/5526519911", "name": "Andersonville", "aliases": ["store"] }
+  },
   "meta_ad_account": "1560973277494547",
   "silent_budget_usd": 500,
   "exploration_share": 0.2,

@@ -46,6 +46,40 @@ export interface BrandConfig {
   /** ESP list name -> list id. */
   esp_lists?: Record<string, string>;
   features?: Record<string, boolean>;
+  /**
+   * Named Shopify locations (OPERATOR direct actions): key → {location_id, name, aliases}.
+   * A request names a location by key or alias ("store", "factory"); adding a
+   * store is one entry here. Internal; not served by publicBrandEntry.
+   */
+  locations?: Record<string, BrandLocation>;
+}
+
+export interface BrandLocation {
+  location_id: string;
+  /** How staff and bots hear it, e.g. "Andersonville". */
+  name: string;
+  /** Other words for it, lowercase, e.g. ["store"]. */
+  aliases?: string[];
+}
+
+export const LOCATION_GID_RE = /^gid:\/\/shopify\/Location\/\d+$/;
+const LOCATION_KEY_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const ALIAS_RE = /^[a-z0-9][a-z0-9 -]{0,39}$/;
+
+/** A location key or alias (case and surrounding space ignored) to its registry entry, or null. */
+export function resolveLocation(brand: BrandConfig, ref: string): (BrandLocation & { key: string }) | null {
+  const want = ref.trim().toLowerCase();
+  for (const [key, loc] of Object.entries(brand.locations ?? {})) {
+    if (key === want || (loc.aliases ?? []).includes(want)) return { key, ...loc };
+  }
+  return null;
+}
+
+/** The registry entry whose gid this is (a staff user's own location), or null. */
+export function locationForGid(brand: BrandConfig, gid: string | null | undefined): (BrandLocation & { key: string }) | null {
+  if (!gid) return null;
+  const hit = Object.entries(brand.locations ?? {}).find(([, l]) => l.location_id === gid);
+  return hit ? { key: hit[0], ...hit[1] } : null;
 }
 
 /**
@@ -118,6 +152,31 @@ function validateIdentity(parsed: BrandConfig, file: string): void {
   if (p.ad_accounts !== undefined && !isStringMap(p.ad_accounts, nonEmpty)) fail('ad_accounts', 'an object of non-empty strings');
   if (p.esp_lists !== undefined && !isStringMap(p.esp_lists, nonEmpty)) fail('esp_lists', 'an object of non-empty strings');
   if (p.features !== undefined && !isStringMap(p.features, (x) => typeof x === 'boolean')) fail('features', 'an object of true/false flags');
+  if (p.locations !== undefined) validateLocations(p.locations, file);
+}
+
+/** Keys and aliases are one namespace (a word names one place); gids are unique. Throws naming the problem. */
+function validateLocations(raw: unknown, file: string): void {
+  const fail = (msg: string) => { throw new Error(`locations: ${msg} in ${file}`); };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) fail('must be an object of named locations');
+  const words = new Set<string>();
+  const gids = new Set<string>();
+  for (const [key, l] of Object.entries(raw as Record<string, unknown>)) {
+    if (!LOCATION_KEY_RE.test(key)) fail(`key ${key} must be lowercase letters, digits and -`);
+    if (typeof l !== 'object' || l === null || Array.isArray(l)) fail(`${key} must be an object`);
+    const loc = l as Record<string, unknown>;
+    for (const k of Object.keys(loc)) if (!['location_id', 'name', 'aliases'].includes(k)) fail(`${key}: unknown field ${k}`);
+    if (typeof loc.location_id !== 'string' || !LOCATION_GID_RE.test(loc.location_id)) fail(`${key}.location_id must be a Shopify Location gid`);
+    if (gids.has(loc.location_id as string)) fail(`${key}.location_id is already another location's`);
+    gids.add(loc.location_id as string);
+    if (typeof loc.name !== 'string' || !loc.name.trim()) fail(`${key}.name is required`);
+    const aliases = loc.aliases ?? [];
+    if (!Array.isArray(aliases) || !aliases.every((a) => typeof a === 'string' && ALIAS_RE.test(a))) fail(`${key}.aliases must be lowercase words`);
+    for (const w of [key, ...(aliases as string[])]) {
+      if (words.has(w)) fail(`${w} names two locations`);
+      words.add(w);
+    }
+  }
 }
 
 export function isBrandActive(brand: BrandConfig): boolean {

@@ -10,6 +10,7 @@ import { runExpirySweep } from '../../src/spine/jobs.js';
 import { loadBrandConfig } from '../../src/spine/brand-config.js';
 import type { InboxTransport } from '../../src/spine/telegram-card.js';
 import fs from 'node:fs';
+import os from 'node:os';
 import { loadCatalogue, parseCatalogue, type StaffCatalogue } from '../../src/staff/catalogue.js';
 import { renderCsThread, renderRead, RENDER_CAP } from '../../src/staff/render.js';
 import { staffActionIdsForUser } from '../../src/staff/tools.js';
@@ -17,7 +18,7 @@ import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
 import { checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
-import { createGrokActionHandler, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
+import { createGrokActionHandler, withLevelsByLocation, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
 import { getAuditById } from '../../src/db/operator-queries.js';
 import { registerOriginBot } from '../../src/staff/admin-commands.js';
 import { setCatalogue } from '../../src/staff/catalogue.js';
@@ -541,6 +542,20 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
       'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
   });
 
+  it('validates the operator block and the brand locations registry at boot', () => {
+    const r = base();
+    r.actions.set.switch = undefined;
+    r.actions.set.operator = { omit: ['sku'], params: { where: { type: 'string', description: 'w' } }, locations: ['where'] };
+    expect(() => parseCatalogue(r)).toThrow(/\{sku\} is not a declared param/);
+    r.actions.set.operator = { params: { sku: { type: 'string', description: 'x' } } };
+    expect(() => parseCatalogue(r)).toThrow(/shadows a param/);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loc-'));
+    const raw = JSON.parse(fs.readFileSync(path.join(BRANDS, 'dearborn-denim.json'), 'utf8'));
+    raw.locations.factory.aliases = ['store'];
+    fs.writeFileSync(path.join(dir, 'dearborn-denim.json'), JSON.stringify(raw));
+    expect(() => loadBrandConfig(dir, 'dearborn-denim')).toThrow(/locations: store names two locations/);
+  });
+
   it('transfer 25 runs, 26 is refused', () => {
     const l = cat.actions.inventory_transfer!.limits!.per_sku!;
     expect(checkPerSku(25, 'H201-M', l).ok).toBe(true);
@@ -599,6 +614,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     answers = {
       'GET ff /api/integration/inventory': () => new Response(lookup(25), { status: 200 }),
       'POST ff /api/integration/inventory/set': () => new Response('{"ok":true,"notify":"MICA-32-30 set to 24"}', { status: 200 }),
+      'POST ff /api/integration/inventory/transfer': () => new Response('{"ok":true}', { status: 200 }),
       'GET kp /api/integration/pos': () => new Response(pos, { status: 200 }),
       'POST kp /api/integration/pos/7/receive': () => new Response('{"po_number":1003,"notify":"PO 1003: received 37 zippers"}', { status: 200 }),
     };
@@ -638,7 +654,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const r = (await a.done)!;
     expect(r).toEqual({
       request_id: 'OP-1', origin: { person: 'k@dd.com', bot: 'kristina-assistant' }, action: 'inventory_lookup',
-      status: 'ok', result: JSON.parse(lookup(25)), audit_id: r.audit_id, reason: null,
+      status: 'ok', result: withLevelsByLocation(JSON.parse(lookup(25)), brand), audit_id: r.audit_id, reason: null,
     });
     const [task] = events('grok_task_chief');
     expect(task!.payload).toEqual({ task_id: `action-result-${r.audit_id}`, kind: 'action_result', args: r, notify: false, due: null, filed_by: 'mcsecretary', reply_type: null });
@@ -657,6 +673,44 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const row = getAuditById(db, r.audit_id)!;
     expect([row.person, row.user_id, row.origin_bot, row.via, row.request_id, row.status, row.hand_status])
       .toEqual(['k@dd.com', 'kristina', 'kristina-assistant', 'grok-operator', 'OP-1', 'ok', 200]);
+  });
+
+  it('maps a named location: recount at the factory, transfer by from/to keys or aliases, with allow_over on receipts', async () => {
+    const set = (await post({ idempotency_key: 'l1', action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 4, reason: 'r', location: 'Factory' } }).done)!;
+    expect(set.status).toBe('ok');
+    registerOriginBot(db, 'kristina-assistant', 'k@dd.com', 'reads,store_inventory_set,inventory_transfer,vendor_po_receive', NOW);
+    const t = (await post({ idempotency_key: 'l2', action: 'inventory_transfer', params: { sku: 'MICA-32-30', quantity: 25, from: 'factory', to: 'store', reason: 'restock' } }).done)!;
+    expect(t.status).toBe('ok');
+    const over = (await post({ idempotency_key: 'l3', action: 'inventory_transfer', params: { sku: 'MICA-32-30', quantity: 26, from: 'factory', to: 'andersonville', reason: 'restock' } }).done)!;
+    expect([over.status, over.reason]).toEqual(['refused', '26 × MICA-32-30 is more than the 25 units per SKU allowed per request. Nothing was moved.']);
+    const same = (await post({ idempotency_key: 'l4', action: 'inventory_transfer', params: { sku: 'X', quantity: 1, from: 'store', to: 'andersonville', reason: 'r' } }).done)!;
+    expect(same.reason).toBe('From and to are both andersonville; nothing would move.');
+    await post({ idempotency_key: 'l5', action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 96 }] } }).done;
+    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body as Record<string, unknown>);
+    expect(posts[0]).toMatchObject({ location_id: FACTORY, quantity: 4 });
+    expect(posts[1]).toEqual({ sku: 'MICA-32-30', quantity: 25, from_location_id: FACTORY, to_location_id: STORE, reason: 'restock', idempotency_key: `grok-action-${t.audit_id}` });
+    expect(posts[2]).toMatchObject({ allow_over: true, lines: [{ line_id: '41', quantity: 96 }] });
+    expect(posts).toHaveLength(3);
+  });
+
+  it('asks which location when the request names none and the person has none; refuses an unknown name', async () => {
+    db.prepare("UPDATE users SET location_id = NULL WHERE id = 'kristina'").run();
+    const none = (await post({ idempotency_key: 'w1', action: 'store_inventory_set', params: { sku: 'X', quantity: 1, reason: 'r' } }).done)!;
+    expect(none.reason).toBe('Which location? Kristina has no registered location of their own; name one of: factory, andersonville (store).');
+    const bad = (await post({ idempotency_key: 'w2', action: 'store_inventory_set', params: { sku: 'X', quantity: 1, reason: 'r', location: 'Wicker Park' } }).done)!;
+    expect(bad.reason).toMatch(/^Unknown location "Wicker Park"/);
+    expect(calls).toEqual([]);
+  });
+
+  it('gives inventory_lookup levels for every registered location and asks factory-fenix for all of them', async () => {
+    const r = (await post({}).done)!;
+    expect((r.result as any).variants[0].levels_by_location).toEqual({ factory: 40, andersonville: 25 });
+    expect((r.result as any).locations).toEqual({ factory: 'the Factory', andersonville: 'Andersonville' });
+    expect(new URL(calls[0]!.url).searchParams.get('locations')).toBe(`${FACTORY},${STORE}`);
+    // Once factory-fenix answers per gid, a third registered store needs no code change.
+    const three = { ...brand, locations: { ...brand.locations, wicker: { location_id: 'gid://shopify/Location/9', name: 'Wicker Park' } } };
+    const body = { variants: [{ sku: 'A', levels: { factory: 1, store: 2 }, levels_by_location: { 'gid://shopify/Location/9': 7 } }] };
+    expect((withLevelsByLocation(body, three) as any).variants[0].levels_by_location).toEqual({ factory: 1, andersonville: 2, wicker: 7 });
   });
 
   it('runs any recount change: 4 → 6, 100 → 104, 100 → 106', async () => {

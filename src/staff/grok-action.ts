@@ -23,19 +23,19 @@ import {
 } from '../db/operator-queries.js';
 import { getUserByEmail, type User } from '../db/user-queries.js';
 import { SLUG_RE } from '../spine/agent-policy.js';
-import { forwardBrandKey, resolveHand, type BrandConfig } from '../spine/brand-config.js';
+import { forwardBrandKey, locationForGid, resolveHand, resolveLocation, type BrandConfig } from '../spine/brand-config.js';
 import { PROPOSAL_ID_PLACEHOLDER, resolveHandUrl, withForwardedBrand } from '../spine/executor.js';
 import { readHandPath } from '../spine/hand-read.js';
 import { cap, isPlainObject as isObj } from '../spine/json-object.js';
 import type { SpineEventInput } from '../spine/types.js';
-import type { StaffAction, StaffCatalogue } from './catalogue.js';
+import { operatorView, type OperatorSpec, type StaffAction, type StaffCatalogue } from './catalogue.js';
 import {
   bindValues, buildWriteProposal, fillPath, handAvailability, label, refusalDetail, resolveCase, validateParams,
 } from './execute.js';
 import {
   checkPerSku, checkPoReceipt, findOpenPo, type LimitCheck, type ReceiptLine,
 } from './limits.js';
-import { staffActionIdsForUser } from './tools.js';
+import { grantedActionIds } from './tools.js';
 
 export const GROK_ACTION_EVENT = 'grok_action';
 /** The only key and source allowed to post one (OPERATOR). */
@@ -159,13 +159,14 @@ type HandAnswer = { ok: true; status: number; text: string } | { ok: false; erro
 
 async function readAction(
   d: GrokActionDeps, action: StaffAction, params: Record<string, unknown>, user: User, brand: BrandConfig,
+  extraQuery: [string, string][] = [],
 ): Promise<HandAnswer> {
   const bound = bindValues(action, user, brand);
   if (!bound.ok) return { ok: false, error: bound.error };
   const values = { ...params, ...bound.values };
   const filled = fillPath(resolveCase(action, values).path, values, 'read');
   if (!filled.ok) return { ok: false, error: filled.error };
-  return readPath(d, brand, action.hand, filled.path, filled.query);
+  return readPath(d, brand, action.hand, filled.path, [...filled.query, ...extraQuery]);
 }
 
 async function readPath(d: GrokActionDeps, brand: BrandConfig, hand: string, path: string, query: [string, string][] = []): Promise<HandAnswer> {
@@ -262,16 +263,13 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, auditId: number
   if (reg.user_id !== user.id) return refused(`The bot ${o.bot} is not registered to ${user.name}; a bot acts only for its own person.`, { user });
 
   const cat = d.catalogue();
-  const action = Object.hasOwn(cat.actions, req.action) ? cat.actions[req.action]! : undefined;
-  if (!action) return refused(`${req.action} is not a catalogue action.`, { escalate: 'unknown_action', user });
-  if (!action.operator) return refused(`${req.action} is not on the OPERATOR path; it goes to Robert another way.`, { user });
-  if (!staffActionIdsForUser(cat, user).includes(action.id)) {
-    const held = action.bind && Object.values(action.bind).includes('user.location_id') && !user.location_id;
-    return refused(held
-      ? `${user.name} has no store or location set, so ${action.id} cannot run.`
-      : `${action.id} is not allowed for ${user.name}'s groups.`, { user });
-  }
-  if (!originBotActions(reg).includes(action.id)) return refused(`The bot ${o.bot} may not use ${action.id}.`, { user });
+  const found = Object.hasOwn(cat.actions, req.action) ? cat.actions[req.action]! : undefined;
+  if (!found) return refused(`${req.action} is not a catalogue action.`, { escalate: 'unknown_action', user });
+  if (!found.operator) return refused(`${req.action} is not on the OPERATOR path; it goes to Robert another way.`, { user });
+  // Groups only: on this path a location comes from the request, not from a binding on the person's row.
+  if (!grantedActionIds(cat, user).includes(found.id)) return refused(`${found.id} is not allowed for ${user.name}'s groups.`, { user });
+  if (!originBotActions(reg).includes(found.id)) return refused(`The bot ${o.bot} may not use ${found.id}.`, { user });
+  const action = operatorView(found);
 
   const params = validateParams(action, req.params);
   if (!params.ok) return refused(`Invalid params: ${params.error}.`, { escalate: 'invalid_params', user });
@@ -282,16 +280,85 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, auditId: number
   const unavailable = handAvailability(brand, action.hand, d.env);
   if (unavailable) return { ...failed(unavailable), user };
 
+  const located = resolveLocationParams(found.operator!, params.values, user, brand);
+  if (!located.ok) return { ...located.outcome, user };
+
   if (action.kind === 'read') {
-    const a = await readAction(d, action, params.values, user, brand);
+    const registry = Object.entries(brand.locations ?? {});
+    // Asking for every registered location lets factory-fenix answer for a new store without a code change here.
+    const extra: [string, string][] = found.operator!.levels_by_location && registry.length
+      ? [['locations', registry.map(([, l]) => l.location_id).join(',')]] : [];
+    const a = await readAction(d, action, params.values, user, brand, extra);
     if (!a.ok || a.status < 200 || a.status >= 300) return { ...handProblem(action.hand, a, 'read'), user };
-    return { status: 'ok', reason: null, result: parseBody(a.text), hand_status: a.status, hand_text: null, user };
+    const body = parseBody(a.text);
+    return {
+      status: 'ok', reason: null, hand_status: a.status, hand_text: null, user,
+      result: found.operator!.levels_by_location ? withLevelsByLocation(body, brand) : body,
+    };
   }
 
   const limit = await checkLimits(d, action, params.values, brand);
   if (!limit.ok) return { ...limit.outcome, user };
   const out = await runWrite(d, action, params.values, user, brand, req, auditId);
-  return { ...out, limit: limit.check, flags: out.status === 'ok' && limit.check.ok ? limit.check.flags : [], user };
+  return {
+    ...out, limit: { ...limit.check, locations: located.named }, user,
+    flags: out.status === 'ok' && limit.check.ok ? limit.check.flags : [],
+  };
+}
+
+/**
+ * Each location param (a key or alias) → that location's gid, in place. An
+ * optional one left out takes the person's own location when it is a
+ * registered one; otherwise the answer asks which location.
+ */
+export function resolveLocationParams(
+  op: OperatorSpec, values: Record<string, unknown>, user: Pick<User, 'location_id' | 'name'>, brand: BrandConfig,
+): { ok: true; named: Record<string, string> } | { ok: false; outcome: Outcome } {
+  const named: Record<string, string> = {};
+  const known = Object.entries(brand.locations ?? {}).map(([k, l]) => (l.aliases?.length ? `${k} (${l.aliases.join(', ')})` : k)).join(', ');
+  for (const p of op.locations) {
+    const ref = values[p];
+    let hit = typeof ref === 'string' && ref ? resolveLocation(brand, ref) : null;
+    if (typeof ref === 'string' && ref && !hit) {
+      return { ok: false, outcome: refused(`Unknown location "${ref}". Known locations: ${known || 'none registered'}.`, { escalate: 'invalid_params' }) };
+    }
+    hit ??= locationForGid(brand, user.location_id);
+    if (!hit) return { ok: false, outcome: refused(`Which location? ${user.name} has no registered location of their own; name one of: ${known || 'none registered'}.`) };
+    values[p] = hit.location_id;
+    named[p] = hit.key;
+  }
+  const keys = Object.values(named);
+  if (op.locations.length === 2 && keys[0] === keys[1]) {
+    return { ok: false, outcome: refused(`From and to are both ${keys[0]}; nothing would move.`) };
+  }
+  return { ok: true, named };
+}
+
+/**
+ * factory-fenix's lookup answer with `levels_by_location` on every variant,
+ * keyed by registry key for every registered location. Its own
+ * `levels_by_location` (by gid) wins when present; until it sends one, the
+ * Factory and the store come from `levels.factory` / `levels.store` and any
+ * other location reads null (not reported).
+ */
+export function withLevelsByLocation(body: unknown, brand: BrandConfig): unknown {
+  if (!isObj(body) || !Array.isArray(body.variants)) return body;
+  const registry = Object.entries(brand.locations ?? {});
+  const variants = body.variants.map((v) => {
+    if (!isObj(v)) return v;
+    const byGid = isObj(v.levels_by_location) ? v.levels_by_location : null;
+    const levels = isObj(v.levels) ? v.levels : {};
+    const out: Record<string, number | null> = {};
+    for (const [key, loc] of registry) {
+      const own = byGid && Object.hasOwn(byGid, loc.location_id) ? byGid[loc.location_id] : undefined;
+      const legacy = loc.location_id === brand.location_id ? levels.factory
+        : loc.location_id === brand.store_location_id ? levels.store : undefined;
+      const n = own !== undefined ? own : legacy;
+      out[key] = typeof n === 'number' ? n : null;
+    }
+    return { ...v, levels_by_location: out };
+  });
+  return { ...body, variants, locations: Object.fromEntries(registry.map(([k, l]) => [k, l.name])) };
 }
 
 function escalationText(req: GrokActionRequest, r: ActionResult, why: NonNullable<Escalate>): string {
