@@ -16,7 +16,7 @@ ${Object.entries(cat.groups).map(([g, ids]) => html`<h2>${g}</h2>
 ${ids.map((id) => {
     const a = cat.actions[id]!;
     const write = a.kind === 'write';
-    return html`<tr><td data-k="action"><code>${id}</code><div class="small mute">${a.description}</div></td>
+    return html`<tr><td data-k="action"><code>${id}</code><div class="small mute">${a.description}</div>${a.operator?.description ? html`<div class="small mute">OPERATOR: ${a.operator.description}</div>` : ''}</td>
 <td data-k="kind">${a.kind}</td><td data-k="hand">${a.hand}</td>
 <td data-k="reversible">${write ? (a.reversible ? 'yes' : 'no') : '—'}</td>
 <td data-k="starts at">${write ? `level ${a.initial_level ?? 1}` : '—'}</td></tr>`;

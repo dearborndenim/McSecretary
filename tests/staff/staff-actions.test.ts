@@ -798,6 +798,95 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     expect(handIdempotencyKey('grok-bots', 'OP 1/x')).not.toBe(handIdempotencyKey('grok-bots', 'OP_1_x'));
   });
 
+  describe('vendor_po_lookup with PO details (kanban GET /pos?status=ordered)', () => {
+    const fixture = fs.readFileSync(path.join(process.cwd(), 'tests', 'fixtures', 'kanban', 'pos-ordered.json'), 'utf8');
+    beforeEach(() => { answers['GET kp /api/integration/pos'] = () => new Response(fixture, { status: 200 }); });
+    const lookup = async (params: Record<string, unknown>, key = 'pl') => (await post({ idempotency_key: key, action: 'vendor_po_lookup', params }).done)!;
+
+    it('maps each PO and line: ordered, received, open = ordered − received floored at 0, other fields passed through', async () => {
+      const r = await lookup({ po: '1003' });
+      expect(r.status).toBe('ok');
+      const u = new URL(calls[0]!.url);
+      expect([u.pathname, u.searchParams.get('status'), u.searchParams.has('vendor')]).toEqual(['/api/integration/pos', 'ordered', false]);
+      const res = r.result as any;
+      expect([res.as_of, res.count, res.match]).toEqual(['2026-10-27T14:05:11.402Z', 1, { po: '1003' }]);
+      expect(res.pos[0]).toEqual({
+        po_id: 7, po_number: 1003, vendor: 'YKK USA', vendor_code: 'YKK', status: 'PARTIALLY_RECEIVED', total_usd: '412.50',
+        ordered_at: '2026-10-14T16:22:03.118Z', expected_delivery: '2026-10-30', vendor_confirmation: 'SO-88214', carrier: 'UPS',
+        tracking_number: '1Z999AA10123456784', shipped_at: '2026-10-22T19:00:00.000Z', last_received_at: '2026-10-24T15:10:44.900Z',
+        lines: [
+          { line_id: 41, sku: 'ZIP-5', name: 'zippers', unit: 'units', ordered: 95, received: 0, open: 95, unit_cost: 1.5, line_total: 142.5 },
+          { line_id: 42, sku: 'THR-1', name: 'thread cones', unit: 'cones', ordered: 10, received: 4, open: 6, unit_cost: 27, line_total: 270 },
+          { line_id: 43, sku: 'RIV-AB', name: 'antique brass rivets', unit: 'boxes', ordered: 2, received: 3, open: 0, unit_cost: 0, line_total: 0 },
+        ],
+      });
+      expect(res.message).toBeUndefined();
+    });
+
+    it('answers an unfiltered lookup as a compact list without lines', async () => {
+      const res = (await lookup({})).result as any;
+      expect(res.pos).toEqual([
+        { po_id: 7, po_number: 1003, vendor: 'YKK USA', status: 'PARTIALLY_RECEIVED', expected_delivery: '2026-10-30', open_lines: 2, open_units: 101 },
+        { po_id: 5, po_number: 1001, vendor: 'Cone Denim', status: 'ORDERED', expected_delivery: null, open_lines: 1, open_units: 1500 },
+      ]);
+      expect(res.message).toBe('2 open POs; name one with po for its lines.');
+    });
+
+    it('keeps 200 POs as valid JSON under the result cap: unfiltered summaries, and a filtered answer sheds the oldest lines first', async () => {
+      const big = JSON.parse(fixture);
+      const line = big.pos[0].lines[0];
+      big.pos = Array.from({ length: 200 }, (_, i) => ({ ...big.pos[0], id: 1000 + i, po_number: 5000 - i, vendor: i % 4 ? 'YKK USA' : 'Cone Denim',
+        lines: Array.from({ length: 6 }, (_, j) => ({ ...line, line_id: i * 10 + j })) }));
+      answers['GET kp /api/integration/pos'] = () => new Response(JSON.stringify(big), { status: 200 });
+      const all = await lookup({}, 'c1');
+      expect(all.status).toBe('ok');
+      expect((all.result as any).truncated).toBeUndefined();
+      expect(JSON.stringify(all.result).length).toBeLessThan(32_000);
+      expect((all.result as any).pos).toHaveLength(200);
+      expect((all.result as any).pos[0]).not.toHaveProperty('lines');
+      // 50 Cone POs with 6 lines each are ~80 KB in full: the newest keep their lines, the oldest become summaries.
+      const cone = (await lookup({ q: 'Cone Denim' }, 'c2')).result as any;
+      expect(JSON.stringify(cone).length).toBeLessThan(32_000);
+      expect(cone.pos).toHaveLength(50);
+      expect(cone.pos[0].lines).toHaveLength(6);
+      expect(cone.pos.at(-1)).toEqual(expect.objectContaining({ po_number: 5000 - 196, open_lines: 6, open_units: 570 }));
+      expect(cone.pos.at(-1)).not.toHaveProperty('lines');
+      expect(cone.partial).toMatch(/name one with po for its lines\.$/);
+    });
+
+    it('filters by po (number, "PO 1003", or kanban id) and by q (vendor, line name or SKU)', async () => {
+      const nums = async (params: Record<string, unknown>, key: string) => ((await lookup(params, key)).result as any).pos.map((p: any) => p.po_number);
+      expect(await nums({ po: '1003' }, 'f1')).toEqual([1003]);
+      expect(await nums({ po: 'PO #1001' }, 'f2')).toEqual([1001]);
+      expect(await nums({ po: '7' }, 'f3')).toEqual([1003]);
+      expect(await nums({ q: 'Cone Denim' }, 'f4')).toEqual([1001]);
+      expect(await nums({ q: 'cone' }, 'f8')).toEqual([1003, 1001]); // "thread cones" matches too
+      expect(await nums({ q: 'brass rivet' }, 'f5')).toEqual([1003]);
+      expect(await nums({ q: 'thr-1' }, 'f6')).toEqual([1003]);
+      const none = (await lookup({ po: '1003', q: 'denim' }, 'f7')).result as any;
+      expect([none.count, none.message]).toEqual([0, 'PO 1003 is open, but nothing on it matches "denim".']);
+    });
+
+    it('answers a PO that is not open plainly, as ok and not a failure', async () => {
+      const r = await lookup({ po: 'PO 1004' });
+      expect([r.status, r.reason]).toEqual(['ok', null]);
+      expect(r.result).toEqual({ as_of: '2026-10-27T14:05:11.402Z', match: { po: 'PO 1004' }, count: 0, pos: [], message: "PO 1004 isn't open for receiving." });
+      expect(events('grok_report')).toEqual([]);
+    });
+
+    it('reads again by vendor when kanban\'s list is cut at 200, and says the list is partial for a PO it cannot reach', async () => {
+      const full = { as_of: 'x', pos: Array.from({ length: 200 }, (_, i) => ({ id: 1000 + i, po_number: 5000 - i, vendor: 'Other', lines: [] })) };
+      const old = { as_of: 'x', pos: [{ id: 3, po_number: 1000, vendor: 'Cone Denim', vendor_code: 'CONE', lines: [] }] };
+      // The handFetch stub records the call before answering, so the last call is this request.
+      answers['GET kp /api/integration/pos'] = () => new Response(JSON.stringify(new URL(calls.at(-1)!.url).searchParams.get('vendor') === 'cone' ? old : full), { status: 200 });
+      const q = await lookup({ q: 'cone' }, 't1');
+      expect(calls.map((c) => new URL(c.url).searchParams.get('vendor'))).toEqual([null, 'cone']);
+      expect((q.result as any).pos.map((p: any) => p.po_number)).toEqual([1000]);
+      const po = (await lookup({ po: '999' }, 't2')).result as any;
+      expect([po.message, po.partial]).toEqual(["PO 999 isn't open for receiving.", 'kanban lists only the newest 200 open POs, so an older open PO would not show here.']);
+    });
+  });
+
   it('takes grok_action only from the grok-bots key as grok-operator', () => {
     expect(post({}, { agent: 'marketing-manager' }).status).toBe(403);
     expect(post({}, { source: 'grok-gina' }).status).toBe(403);

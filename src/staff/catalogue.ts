@@ -83,6 +83,13 @@ export interface StaffAction {
  * - body: write only, replaces the Telegram body.
  * - levels_by_location: read only; the answer's variants gain
  *   `levels_by_location` keyed by location key, for every registered location.
+ * - path: read only, replaces the Telegram path on this path.
+ * - answer: read only, how McSecretary shapes the hand's answer. `open_pos`:
+ *   kanban's open-PO list (`GET /api/integration/pos?status=ordered`) filtered
+ *   by the optional `po` / `q` params, each line with ordered/received/open
+ *   (src/staff/po-lookup.ts).
+ * - description: what the action does on this path, when it differs from the
+ *   Telegram description (the OPERATOR contract text for that action).
  */
 export interface OperatorSpec {
   params: Record<string, ParamSpec>;
@@ -90,7 +97,13 @@ export interface OperatorSpec {
   locations: string[];
   body?: Record<string, unknown>;
   levels_by_location?: boolean;
+  path?: string;
+  answer?: OperatorAnswer;
+  description?: string;
 }
+
+export const OPERATOR_ANSWERS = ['open_pos'] as const;
+export type OperatorAnswer = typeof OPERATOR_ANSWERS[number];
 
 /**
  * On an OPERATOR write (spec 2026-10-27), one kind per action:
@@ -401,7 +414,7 @@ function parseAction(id: string, raw: unknown): StaffAction {
   return action;
 }
 
-const OPERATOR_KEYS = new Set(['params', 'omit', 'locations', 'body', 'levels_by_location']);
+const OPERATOR_KEYS = new Set(['params', 'omit', 'locations', 'body', 'levels_by_location', 'path', 'answer', 'description']);
 
 function parseOperator(where: string, raw: unknown, action: StaffAction, kind: 'read' | 'write'): OperatorSpec {
   const spec: OperatorSpec = { params: {}, omit: [], locations: [] };
@@ -434,6 +447,21 @@ function parseOperator(where: string, raw: unknown, action: StaffAction, kind: '
     if (kind !== 'write' || !isObj(raw.body)) fail(where, 'operator.body is an object on a write');
     spec.body = raw.body;
   }
+  if (raw.path !== undefined) {
+    if (kind !== 'read' || action.switch) fail(where, 'operator.path replaces the path of a read without a switch');
+    spec.path = checkPath(`${where} operator`, raw.path, 'read');
+  }
+  if (raw.answer !== undefined) {
+    if (kind !== 'read' || !(OPERATOR_ANSWERS as readonly unknown[]).includes(raw.answer)) fail(where, `operator.answer is one of ${OPERATOR_ANSWERS.join(', ')} on a read`);
+    spec.answer = raw.answer as OperatorAnswer;
+    if (spec.answer === 'open_pos') {
+      for (const n of ['po', 'q']) if (spec.params[n]?.type !== 'string' || spec.params[n]!.required) fail(where, `operator.answer open_pos needs an optional string operator param ${n}`);
+    }
+  }
+  if (raw.description !== undefined) {
+    if (typeof raw.description !== 'string' || !raw.description.trim()) fail(where, 'operator.description must be text');
+    spec.description = raw.description;
+  }
   if (action.switch && spec.omit.includes(action.switch.param) && !spec.body) fail(where, 'operator omits the switch param, so it needs its own body');
   if (action.switch && spec.body && !spec.omit.includes(action.switch.param)) fail(where, 'operator.body replaces the switch body; omit the switch param too');
   const view = operatorView({ ...action, operator: spec });
@@ -455,9 +483,10 @@ export function operatorView(action: StaffAction): StaffAction {
   Object.assign(params, op.params);
   const sw = action.switch && !op.omit.includes(action.switch.param) ? action.switch : undefined;
   const body = op.body ?? action.body;
-  const used = new Set(stringsIn([action.path, body, sw ? Object.values(sw.cases).map((c) => [c.path, c.body]) : []]).flatMap(placeholders));
+  const path = op.path ?? action.path;
+  const used = new Set(stringsIn([path, body, sw ? Object.values(sw.cases).map((c) => [c.path, c.body]) : []]).flatMap(placeholders));
   const bind = Object.fromEntries(Object.entries(action.bind).filter(([n]) => used.has(n)));
-  return { ...action, params, bind, body, switch: sw };
+  return { ...action, params, bind, path, body, switch: sw, description: op.description ?? action.description };
 }
 
 function positive(where: string, v: unknown, name: string, max = Number.MAX_SAFE_INTEGER): number {

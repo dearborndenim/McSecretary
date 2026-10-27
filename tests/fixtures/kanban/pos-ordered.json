@@ -1,0 +1,45 @@
+{
+  "as_of": "2026-10-27T14:05:11.402Z",
+  "status": "ordered",
+  "since": null,
+  "pos": [
+    {
+      "id": 7,
+      "po_number": 1003,
+      "vendor": "YKK USA",
+      "vendor_code": "YKK",
+      "status": "PARTIALLY_RECEIVED",
+      "total_usd": "412.50",
+      "ordered_at": "2026-10-14T16:22:03.118Z",
+      "expected_delivery": "2026-10-30",
+      "vendor_confirmation": "SO-88214",
+      "carrier": "UPS",
+      "tracking_number": "1Z999AA10123456784",
+      "shipped_at": "2026-10-22T19:00:00.000Z",
+      "last_received_at": "2026-10-24T15:10:44.900Z",
+      "lines": [
+        { "line_id": 41, "sku": "ZIP-5", "name": "zippers", "unit": "units", "quantity": 95, "received_quantity": 0, "unit_cost": 1.5, "line_total": 142.5 },
+        { "line_id": 42, "sku": "THR-1", "name": "thread cones", "unit": "cones", "quantity": 10, "received_quantity": 4, "unit_cost": 27, "line_total": 270 },
+        { "line_id": 43, "sku": "RIV-AB", "name": "antique brass rivets", "unit": "boxes", "quantity": 2, "received_quantity": 3, "unit_cost": 0, "line_total": 0 }
+      ]
+    },
+    {
+      "id": 5,
+      "po_number": 1001,
+      "vendor": "Cone Denim",
+      "vendor_code": "CONE",
+      "status": "ORDERED",
+      "total_usd": "8925.00",
+      "ordered_at": "2026-10-09T13:00:00.000Z",
+      "expected_delivery": null,
+      "vendor_confirmation": null,
+      "carrier": null,
+      "tracking_number": null,
+      "shipped_at": null,
+      "last_received_at": null,
+      "lines": [
+        { "line_id": 30, "sku": "S-ICED-3725Y", "name": "Iced Indigo 3725Y Interstate", "unit": "yards", "quantity": 1500, "received_quantity": 0, "unit_cost": 5.95, "line_total": 8925 }
+      ]
+    }
+  ]
+}
