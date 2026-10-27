@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import type Database from 'better-sqlite3';
 import { agentForBearer } from './agent-keys.js';
-import { matchesType, mayPropose, sourceHandAllowed, type AgentPolicy } from './agent-policy.js';
+import { matchesType, mayPropose, sourceHandAllowed, type AgentPolicy, type AgentPolicyEntry } from './agent-policy.js';
 import { forwardBrandKey, isBrandActive, listBrandIds, loadBrandConfig, publicBrandEntry, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
@@ -56,6 +56,20 @@ const NOTES_SUMMARY_MAX = 2000;
 const NOTES_NOTIFY_MAX = 600;
 const DEFAULT_BRAND_ID = 'dearborn-denim';
 const PROMOTE_FIELDS = ['agent', 'action_type', 'level'];
+/**
+ * Queues only a key with an AGENT_POLICY entry granting them may drain or count
+ * (Robert, 2026-10-27): Robert's Grok tasks (grok-bots) and purchasing jobs
+ * (grok-purchasing). A key with no entry keeps every other type.
+ */
+const RESERVED_DRAIN_TYPES = ['grok_task_*', 'purchasing_job'];
+
+/** The first of `types` the caller may not drain or count, or undefined. */
+function refusedDrainType(policy: AgentPolicyEntry | null, types: string[]): string | undefined {
+  const allowed = (t: string) => (policy
+    ? matchesType(policy.events.drain_types, t)
+    : !matchesType(RESERVED_DRAIN_TYPES, t));
+  return types.find((t) => !allowed(t));
+}
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -445,7 +459,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       if (req.method === 'GET' && pathname === '/spine/events/drain') {
         const types = (params.get('types') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-        const refused = policy ? types.find((t) => !matchesType(policy.events.drain_types, t)) : undefined;
+        const refused = refusedDrainType(policy, types);
         if (refused !== undefined) return refuse(res, agent, 'drain', refused);
         const brand = optionalBrandParam(params);
         if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }
@@ -461,7 +475,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           json(res, 400, { error: `types must be at most ${MAX_PENDING_TYPES} names of at most ${NAME_MAX} chars` });
           return true;
         }
-        const refused = policy ? types.find((t) => !matchesType(policy.events.drain_types, t)) : undefined;
+        const refused = refusedDrainType(policy, types);
         if (refused !== undefined) return refuse(res, agent, 'read pending', refused);
         const brand = optionalBrandParam(params);
         if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }

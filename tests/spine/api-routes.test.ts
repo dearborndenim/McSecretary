@@ -743,6 +743,7 @@ describe('agent policy', () => {
   const BOTS = 'b'.repeat(24);
   const INBOX = 'i'.repeat(24);
   const TASK = 'q'.repeat(24);
+  const PURCH = 'p'.repeat(24);
   // Spec §7 verbatim, except events_per_hour: 3 and proposals_per_hour: 2 so the caps are testable.
   const POLICY_JSON = `{
   "grok-bots":  { "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_signal", "grok_report", "grok_cs_case"] },
@@ -750,7 +751,8 @@ describe('agent policy', () => {
                   "hands_proxy": false, "outcomes": false, "rate": { "events_per_hour": 3, "proposals_per_hour": 2 } },
   "grok-inbox": { "events": { "drain_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "post_types": [] },
                   "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_cs_case", "grok_result", "grok_drafts_waiting", "grok_inbox_rejects"] }, "hands_proxy": false },
-  "grok-task":  { "events": { "post_types": ["grok_task_*"], "source_hand": "self", "drain_types": [] }, "propose": null, "hands_proxy": false }
+  "grok-task":  { "events": { "post_types": ["grok_task_*"], "source_hand": "self", "drain_types": [] }, "propose": null, "hands_proxy": false },
+  "grok-purchasing": { "events": { "post_types": [], "drain_types": ["purchasing_job"] }, "propose": null, "hands_proxy": false }
 }`;
   const note = (action_type: string, hand = 'notes', title = 't') => ({
     brand_id: 'dearborn-denim', action_type,
@@ -767,7 +769,7 @@ describe('agent policy', () => {
   beforeEach(() => {
     db = new Database(':memory:'); initializeSchema(db); filed = [];
     handFetch = vi.fn(async () => new Response('{}'));
-    const agentKeys = new Map([[KEY, 'marketing-manager'], [BOTS, 'grok-bots'], [INBOX, 'grok-inbox'], [TASK, 'grok-task']]);
+    const agentKeys = new Map([[KEY, 'marketing-manager'], [BOTS, 'grok-bots'], [INBOX, 'grok-inbox'], [TASK, 'grok-task'], [PURCH, 'grok-purchasing']]);
     policy = parseAgentPolicy(POLICY_JSON, agentKeys.values());
     handle = createSpineRouter({
       db, now: () => NOW, agentKeys, agentPolicy: policy,
@@ -890,6 +892,27 @@ describe('agent policy', () => {
     expect(await call('POST', '/spine/proposals', TASK, note('grok_lead')))
       .toEqual({ status: 403, body: { error: 'policy: grok-task may not file proposals' } });
     expect(filed).toHaveLength(0);
+  });
+
+  it('a key with no policy entry may not drain or count grok_task_* or purchasing_job; their owners still drain', async () => {
+    insertEvent(db, ev('grok_task_chief', 'grok-task'), NOW);
+    insertEvent(db, ev('purchasing_job', 'kanban-purchaser'), NOW);
+    insertEvent(db, ev('po_received', 'po-receiver'), NOW);
+    for (const t of ['grok_task_chief', 'purchasing_job']) {
+      expect(await call('GET', `/spine/events/drain?types=${t}`, KEY))
+        .toEqual({ status: 403, body: { error: `policy: marketing-manager may not drain ${t}` } });
+      expect(await call('GET', `/spine/events/pending?types=${t}`, KEY))
+        .toEqual({ status: 403, body: { error: `policy: marketing-manager may not read pending ${t}` } });
+    }
+    // A reserved type alongside an allowed one refuses the whole call and drains nothing.
+    expect((await call('GET', '/spine/events/drain?types=po_received,grok_task_chief', KEY)).status).toBe(403);
+    expect(undrained('po_received')).toBe(1);
+    expect(undrained('grok_task_chief')).toBe(1);
+    expect(undrained('purchasing_job')).toBe(1);
+    // Everything else stays open to a business key.
+    expect((await call('GET', '/spine/events/drain?types=po_received', KEY)).body.events).toHaveLength(1);
+    expect((await call('GET', '/spine/events/drain?types=grok_task_chief', BOTS)).body.events).toHaveLength(1);
+    expect((await call('GET', '/spine/events/drain?types=purchasing_job', PURCH)).body.events).toHaveLength(1);
   });
 
   it('GET /spine/policy/self returns the caller\'s own entry', async () => {
