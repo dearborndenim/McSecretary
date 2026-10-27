@@ -73,6 +73,14 @@ export function capMarked(s: string, max: number): string {
   return `${s.slice(0, max - mark.length)}${mark}`;
 }
 
+/**
+ * factory-fenix refuses a recount at the Factory unless the body carries
+ * `allow_factory_set: true` (Robert, 2026-10-27: OPERATOR only). The Telegram
+ * staff path never sends it, so a Telegram recount at the Factory stays refused.
+ */
+const FACTORY_SET_ACTION = 'store_inventory_set';
+const FACTORY_SET_FLAG = 'allow_factory_set';
+
 export type ActionStatus = 'ok' | 'refused' | 'failed';
 
 /** The `args` of an action_result task (spec Flow step 5). */
@@ -294,7 +302,7 @@ export function handIdempotencyKey(postedBy: string, requestId: string): string 
 /** The write itself, straight to the hand with the hand's bearer, keyed by the OPERATOR request. */
 async function runWrite(
   d: GrokActionDeps, action: StaffAction, params: Record<string, unknown>, user: User, brand: BrandConfig,
-  req: GrokActionRequest, postedBy: string,
+  req: GrokActionRequest, postedBy: string, extraBody: Record<string, unknown> = {},
 ): Promise<Outcome> {
   const built = buildWriteProposal(action, params, user, brand, `OPERATOR ${req.request_id} via ${String((req.origin as { bot?: unknown }).bot)}`, d.now());
   if (!built.ok) return refused(built.error, { escalate: 'invalid_params' });
@@ -306,7 +314,7 @@ async function runWrite(
   if (!resolved.ok) return refused(resolved.error, { escalate: 'invalid_params' });
   const href = withForwardedBrand(resolved.href, forwardBrandKey(brand, payload.hand), user.brand_id);
   const key = handIdempotencyKey(postedBy, req.request_id);
-  const body = JSON.stringify(payload.body).split(PROPOSAL_ID_PLACEHOLDER).join(key);
+  const body = JSON.stringify({ ...payload.body, ...extraBody }).split(PROPOSAL_ID_PLACEHOLDER).join(key);
   let answer: HandAnswer;
   try {
     const res = await d.handFetch(href, {
@@ -353,7 +361,7 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: strin
   if (!originBotActions(reg).includes(found.id)) return refused(`The bot ${o.bot} may not use ${found.id}.`, { user });
   const action = operatorView(found);
 
-  const params = validateParams(action, req.params);
+  const params = validateParams(action, wholeNumbersAsText(action, req.params));
   if (!params.ok) return refused(`Invalid params: ${params.error}.`, { escalate: 'invalid_params', user });
 
   let brand: BrandConfig;
@@ -385,11 +393,26 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: strin
 
   const limit = await checkLimits(d, action, params.values, brand);
   if (!limit.ok) return { ...limit.outcome, user };
-  const out = await runWrite(d, action, params.values, user, brand, req, postedBy);
+  const factorySet = found.id === FACTORY_SET_ACTION && params.values.location === brand.location_id;
+  const out = await runWrite(d, action, params.values, user, brand, req, postedBy, factorySet ? { [FACTORY_SET_FLAG]: true } : {});
   return {
     ...out, limit: { ...limit.check, locations: located.named }, user,
     flags: out.status === 'ok' && limit.check.ok ? limit.check.flags : [],
   };
+}
+
+/**
+ * OPERATOR may send a text param as a JSON number (`{po: 1003}`, `{po_id: 7}`):
+ * a whole number becomes its text before validation. Other numbers are left
+ * for validateParams to refuse.
+ */
+export function wholeNumbersAsText(action: StaffAction, input: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...input };
+  for (const [name, spec] of Object.entries(action.params)) {
+    const v = out[name];
+    if (spec.type === 'string' && typeof v === 'number' && Number.isSafeInteger(v)) out[name] = String(v);
+  }
+  return out;
 }
 
 /**
