@@ -57,7 +57,7 @@ describe('parseAgentPolicy', () => {
     expect(p.get('grok-task')).toEqual({
       propose: null,
       events: { post_types: ['grok_task_*'], drain_types: [], source_hand: 'self' },
-      hands_proxy: false, outcomes: false, brands: false, runs: false, rate: null,
+      hands_proxy: false, outcomes: false, brands: false, runs: false, files: false, rate: null,
     });
   });
 });

@@ -8,7 +8,12 @@ export class BodyTooLarge extends Error {}
  * overflow reading stops and the promise rejects with BodyTooLarge; the caller
  * writes the 413 and destroys the socket once that response has flushed.
  */
-export function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
+export async function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
+  return (await readBodyBytes(req, maxBytes)).toString('utf8');
+}
+
+/** readBody's raw form: the whole body as bytes, or BodyTooLarge past maxBytes. */
+export function readBodyBytes(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -28,7 +33,7 @@ export function readBody(req: http.IncomingMessage, maxBytes: number): Promise<s
     req.on('end', () => {
       if (settled) return;
       settled = true;
-      resolve(Buffer.concat(chunks).toString('utf8'));
+      resolve(Buffer.concat(chunks));
     });
     req.on('error', (err) => {
       if (settled) return;

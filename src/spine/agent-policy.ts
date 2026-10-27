@@ -18,7 +18,9 @@ export interface AgentPolicyEntry {
   outcomes: boolean;
   brands: boolean;
   runs: boolean;
-  rate: { events_per_hour: number | null; proposals_per_hour: number | null } | null;
+  /** POST/GET /spine/files (the file drop). A restricted agent reads back only its own uploads. */
+  files: boolean;
+  rate: { events_per_hour: number | null; proposals_per_hour: number | null; files_per_hour: number | null } | null;
 }
 export type AgentPolicy = Map<string, AgentPolicyEntry>;
 
@@ -26,10 +28,10 @@ export type AgentPolicy = Map<string, AgentPolicyEntry>;
 export const RESTRICTED_PREFIXES = ['grok-'];
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
-const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'runs', 'rate'];
+const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'runs', 'files', 'rate'];
 const PROPOSE_FIELDS = ['hands', 'action_types'];
 const EVENTS_FIELDS = ['post_types', 'drain_types', 'source_hand'];
-const RATE_FIELDS = ['events_per_hour', 'proposals_per_hour'];
+const RATE_FIELDS = ['events_per_hour', 'proposals_per_hour', 'files_per_hour'];
 const ITEM_MAX = 128;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -105,9 +107,9 @@ function parseEntry(agent: string, raw: unknown): AgentPolicyEntry {
       if (!Number.isInteger(n) || (n as number) < 1) throw new Error(`AGENT_POLICY ${agent}: rate.${name} must be an integer >= 1`);
       return n as number;
     };
-    rate = { events_per_hour: cap('events_per_hour'), proposals_per_hour: cap('proposals_per_hour') };
-    if (rate.events_per_hour === null && rate.proposals_per_hour === null) {
-      throw new Error(`AGENT_POLICY ${agent}: rate must set events_per_hour or proposals_per_hour`);
+    rate = { events_per_hour: cap('events_per_hour'), proposals_per_hour: cap('proposals_per_hour'), files_per_hour: cap('files_per_hour') };
+    if (rate.events_per_hour === null && rate.proposals_per_hour === null && rate.files_per_hour === null) {
+      throw new Error(`AGENT_POLICY ${agent}: rate must set events_per_hour, proposals_per_hour or files_per_hour`);
     }
   }
 
@@ -118,6 +120,7 @@ function parseEntry(agent: string, raw: unknown): AgentPolicyEntry {
     outcomes: parseFlag(agent, 'outcomes', raw.outcomes),
     brands: parseFlag(agent, 'brands', raw.brands),
     runs: parseFlag(agent, 'runs', raw.runs),
+    files: parseFlag(agent, 'files', raw.files),
     rate,
   };
 }

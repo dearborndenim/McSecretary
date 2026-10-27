@@ -8,7 +8,13 @@ import { validateEmailPayload } from './email-hand.js';
 import {
   FEEDBACK_ACTION_TYPE, FEEDBACK_HAND, FEEDBACK_TO_AGENTS, feedbackRelPath, readFeedbackRows, validateFeedbackPayload,
 } from './feedback-hand.js';
-import { BodyTooLarge, readBody, readCapped } from '../http-util.js';
+import { BodyTooLarge, readBody, readBodyBytes, readCapped } from '../http-util.js';
+import fs from 'node:fs';
+import nodePath from 'node:path';
+import {
+  acceptedContentType, cleanFileName, countFilesSince, DEFAULT_FILES_PER_HOUR, FILE_ID_RE, FILE_MAX_BYTES,
+  getSpineFile, pruneExpiredFiles, storeSpineFile,
+} from './files.js';
 import { insertEvent, drainEvents, countPendingByType, countEventsSince } from '../db/event-queries.js';
 import { insertOutcome } from '../db/outcome-queries.js';
 import { countProposalsSince } from '../db/proposal-queries.js';
@@ -32,6 +38,8 @@ export interface SpineRouterDeps {
   feedbackRoot?: string;
   /** Called after an event is queued over HTTP (SPINE_WAKE_HOOKS); must not throw or block. */
   wake?: (eventType: string, eventId: number) => void;
+  /** Volume dir of the file drop (`/spine/files`); absent = those routes answer 404. */
+  filesDir?: string;
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -488,6 +496,63 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       if (req.method === 'GET' && pathname === '/spine/trust') {
         json(res, 200, { rows: listTrustRowsForAgent(deps.db, agent) });
+        return true;
+      }
+
+      if (req.method === 'POST' && pathname === '/spine/files') {
+        if (policy && !policy.files) return refuse(res, agent, 'upload', 'files');
+        if (!deps.filesDir) { json(res, 404, { error: 'File store is not configured' }); return true; }
+        const rawName = params.get('name') ?? '';
+        if (!rawName || rawName.length > 255) { json(res, 400, { error: 'name= is required (the filename, at most 255 chars)' }); return true; }
+        const name = cleanFileName(rawName);
+        const contentType = acceptedContentType(req.headers['content-type'], name);
+        if (!contentType) {
+          json(res, 415, { error: 'Content-Type must be image/* (not SVG), application/pdf, text/csv, xlsx or application/zip' });
+          return true;
+        }
+        const source = params.get('source');
+        if (source !== null && policy && !sourceHandAllowed(policy, agent, source, known)) return refuse(res, agent, 'upload as', source);
+        if (source !== null && (source.length === 0 || source.length > NAME_MAX)) { json(res, 400, { error: `source must be 1–${NAME_MAX} chars` }); return true; }
+        if (Number(req.headers['content-length']) > FILE_MAX_BYTES) throw new BodyTooLarge('Body too large');
+        const fileCap = policy?.rate?.files_per_hour ?? DEFAULT_FILES_PER_HOUR;
+        if (countFilesSince(deps.db, agent, hourAgo()) >= fileCap) {
+          json(res, 429, { error: `policy: ${agent} is over ${fileCap} files per hour` });
+          return true;
+        }
+        const bytes = await readBodyBytes(req, FILE_MAX_BYTES);
+        if (bytes.length === 0) { json(res, 400, { error: 'Body is empty; send the file as the raw body' }); return true; }
+        const now = deps.now();
+        pruneExpiredFiles(deps.db, deps.filesDir, now);
+        const row = storeSpineFile(deps.db, deps.filesDir, { name, content_type: contentType, bytes, uploaded_by: agent, source }, now);
+        json(res, 200, {
+          file_id: row.id, url: `/spine/files/${row.id}`, sha256: row.sha256, bytes: row.bytes,
+          content_type: row.content_type, name: row.name, expires_at: row.expires_at,
+        });
+        return true;
+      }
+
+      if (req.method === 'GET' && pathname.startsWith('/spine/files/')) {
+        if (policy && !policy.files) return refuse(res, agent, 'read', 'files');
+        const id = pathname.slice('/spine/files/'.length);
+        const row = deps.filesDir && FILE_ID_RE.test(id) ? getSpineFile(deps.db, id) : undefined;
+        // A restricted agent (a Grok bot) reads back only its own uploads; anyone else's id is "not found".
+        if (!row || row.expires_at <= deps.now() || (policy && row.uploaded_by !== agent)) {
+          json(res, 404, { error: 'File not found' });
+          return true;
+        }
+        let bytes: Buffer;
+        try { bytes = fs.readFileSync(nodePath.join(deps.filesDir!, row.id)); } catch {
+          json(res, 404, { error: 'File not found' });
+          return true;
+        }
+        res.writeHead(200, {
+          'Content-Type': row.content_type,
+          'Content-Length': String(bytes.length),
+          'Content-Disposition': `attachment; filename="${row.name.replace(/"/g, '')}"`,
+          'X-Content-Type-Options': 'nosniff',
+          'X-File-Sha256': row.sha256,
+        });
+        res.end(bytes);
         return true;
       }
 
