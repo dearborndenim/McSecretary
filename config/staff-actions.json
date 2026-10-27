@@ -50,7 +50,6 @@
       "cost_usd": 0,
       "level_required": 1,
       "initial_level": 2,
-      "limits": { "count": { "max_change_units": 3, "max_change_pct": 5, "max_units_counted": 25, "current_from": "inventory_lookup" } },
       "expires_hours": 24,
       "summary": "Set {sku} to {quantity} at the store"
     },
@@ -130,7 +129,7 @@
       "reversible": false,
       "cost_usd": 0,
       "level_required": 1,
-      "limits": { "po_open_quantity": { "read_path": "/api/integration/pos?status=ordered" } },
+      "limits": { "po_receipt": { "read_path": "/api/integration/pos?status=ordered" } },
       "expires_hours": 24,
       "summary": "Receive {lines} on vendor PO {po_id}"
     },

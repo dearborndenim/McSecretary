@@ -5,8 +5,8 @@
  * through a queue an agent drains:
  *
  *   resolve origin {person, bot} → check groups, bot registration and the
- *   bot's action list → validate params → enforce the catalogue `limits`
- *   (reading the hand first where needed) → call the hand directly → audit
+ *   bot's action list → validate params → apply the catalogue `limits`
+ *   (25 per SKU on a transfer; a PO receipt is read first and flagged) → call the hand directly → audit
  *   row → `action_result` task on grok_task_chief (+ wake) → for an unknown
  *   action, invalid params or a hand failure, a needs_claude report for the
  *   Chief desk.
@@ -33,7 +33,7 @@ import {
   bindValues, buildWriteProposal, fillPath, handAvailability, label, refusalDetail, resolveCase, validateParams,
 } from './execute.js';
 import {
-  checkCountChange, checkPerSku, checkPoReceipt, currentCount, findOpenPo, type LimitCheck, type ReceiptLine,
+  checkPerSku, checkPoReceipt, findOpenPo, type LimitCheck, type ReceiptLine,
 } from './limits.js';
 import { staffActionIdsForUser } from './tools.js';
 
@@ -192,37 +192,19 @@ function handProblem(hand: string, a: HandAnswer, what: string): Outcome {
   return failed(`The ${label(hand)} answered ${a.status}: ${detail}`, { hand_status: a.status, hand_text: text });
 }
 
-/** Check the action's limits, reading what it needs first. ok = may run; refused/failed otherwise. */
+/** Check the action's limits (reading the open PO first for a receipt). ok = may run, with any flags for Robert. */
 async function checkLimits(
-  d: GrokActionDeps, cat: StaffCatalogue, action: StaffAction, values: Record<string, unknown>, user: User, brand: BrandConfig,
+  d: GrokActionDeps, action: StaffAction, values: Record<string, unknown>, brand: BrandConfig,
 ): Promise<{ ok: true; check: LimitCheck } | { ok: false; outcome: Outcome }> {
   const l = action.limits;
-  if (!l) return { ok: false, outcome: refused(`${action.id} has no limits, so it cannot run on this path.`) };
+  if (!l) return { ok: true, check: { ok: true, flags: [], detail: {} } };
   if (l.per_sku) {
     const check = checkPerSku(Number(values.quantity), String(values.sku), l.per_sku);
     return check.ok ? { ok: true, check } : { ok: false, outcome: refused(check.reason, { limit: check }) };
   }
-  if (l.count) {
-    const sku = String(values.sku);
-    const level = user.location_id && user.location_id === brand.store_location_id ? 'store'
-      : user.location_id && user.location_id === brand.location_id ? 'factory' : null;
-    if (!level) return { ok: false, outcome: refused(`Cannot check the count: ${user.name}'s location is neither the store nor the Factory. Nothing was changed.`) };
-    const lookup = cat.actions[l.count.current_from]!;
-    const a = await readAction(d, lookup, { q: sku }, user, brand);
-    if (!a.ok || a.status < 200 || a.status >= 300) {
-      const p = handProblem(lookup.hand, a, 'read the current count');
-      return { ok: false, outcome: { ...p, status: 'refused', reason: `${p.reason} Without the current count nothing was changed.` } };
-    }
-    const current = currentCount(parseBody(a.text), sku, level);
-    if (current === null) {
-      return { ok: false, outcome: refused(`Cannot read the current ${level} count of ${sku} (no exact SKU match, or not stocked there). Nothing was changed.`) };
-    }
-    const check = checkCountChange(current, Number(values.quantity), l.count);
-    return check.ok ? { ok: true, check } : { ok: false, outcome: refused(check.reason, { limit: check }) };
-  }
-  if (l.po_open_quantity) {
+  if (l.po_receipt) {
     const poId = String(values.po_id);
-    const a = await readPath(d, brand, action.hand, l.po_open_quantity.read_path);
+    const a = await readPath(d, brand, action.hand, l.po_receipt.read_path);
     if (!a.ok || a.status < 200 || a.status >= 300) {
       const p = handProblem(action.hand, a, 'read the PO');
       return { ok: false, outcome: { ...p, status: 'refused', reason: `${p.reason} Without the open quantities nothing was received.` } };
@@ -306,7 +288,7 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, auditId: number
     return { status: 'ok', reason: null, result: parseBody(a.text), hand_status: a.status, hand_text: null, user };
   }
 
-  const limit = await checkLimits(d, cat, action, params.values, user, brand);
+  const limit = await checkLimits(d, action, params.values, brand);
   if (!limit.ok) return { ...limit.outcome, user };
   const out = await runWrite(d, action, params.values, user, brand, req, auditId);
   return { ...out, limit: limit.check, flags: out.status === 'ok' && limit.check.ok ? limit.check.flags : [], user };

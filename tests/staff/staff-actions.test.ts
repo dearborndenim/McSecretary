@@ -16,7 +16,7 @@ import { staffActionIdsForUser } from '../../src/staff/tools.js';
 import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
-import { checkCountChange, checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
+import { checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
 import { createGrokActionHandler, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
 import { getAuditById } from '../../src/db/operator-queries.js';
 import { registerOriginBot } from '../../src/staff/admin-commands.js';
@@ -532,44 +532,13 @@ describe('staff-action execution', () => {
 });
 
 describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', () => {
-  const count = cat.actions.store_inventory_set!.limits!.count!;
-
-  it('ships the phase-1 limits: 3 units / 5% / 25 counted, 25 per SKU, PO open quantity', () => {
-    expect(count).toMatchObject({ max_change_units: 3, max_change_pct: 5, max_units_counted: 25, current_from: 'inventory_lookup' });
+  it('ships one hard limit, 25 per SKU on a transfer, and the PO receipt read; recounts are unlimited', () => {
+    expect(cat.actions.store_inventory_set!.limits).toBeUndefined();
     expect(cat.actions.inventory_transfer!.limits).toEqual({ per_sku: { max_units: 25 } });
-    expect(cat.actions.vendor_po_receive!.limits).toEqual({ po_open_quantity: { read_path: '/api/integration/pos?status=ordered' } });
+    expect(cat.actions.vendor_po_receive!.limits).toEqual({ po_receipt: { read_path: '/api/integration/pos?status=ordered' } });
     const operator = Object.values(cat.actions).filter((a) => a.operator).map((a) => a.id).sort();
     expect(operator).toEqual(['customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'pickup_status', 'pos_status',
       'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
-  });
-
-  it('refuses an operator write with no limits block at boot', () => {
-    const r = base(); r.actions.set.operator = true;
-    expect(() => parseCatalogue(r)).toThrow(/operator write needs a limits block/);
-  });
-
-  it('count 4 → 6: within 3 units but 2 is 50% of 4, so refused', () => {
-    const c = checkCountChange(4, 6, count);
-    expect(c.ok).toBe(false);
-    expect(!c.ok && c.reason).toMatch(/more than 5% of the current 4/);
-  });
-
-  it('count 100 → 104 and → 106: both refused (over 3 units; 106 also over 5%; both over 25 counted)', () => {
-    const a = checkCountChange(100, 104, count);
-    expect(!a.ok && a.reason).toMatch(/change of 4 is more than 3 units/);
-    expect(!a.ok && a.reason).not.toMatch(/5%/);
-    const b = checkCountChange(100, 106, count);
-    expect(!b.ok && b.reason).toMatch(/more than 3 units.*more than 5% of the current 100 \(at most 5\)/);
-    expect(!b.ok && b.reason).toMatch(/106 units counted is more than the 25/);
-  });
-
-  it('count 10 can only be confirmed: ±1 is 10% of 10; a count of 20 is the smallest that moves 1', () => {
-    expect(checkCountChange(10, 10, count).ok).toBe(true);
-    expect(checkCountChange(10, 11, count).ok).toBe(false);
-    expect(checkCountChange(10, 9, count).ok).toBe(false);
-    expect(checkCountChange(19, 18, count).ok).toBe(false);
-    expect(checkCountChange(20, 19, count).ok).toBe(true);
-    expect(checkCountChange(24, 25, count).ok).toBe(true);
   });
 
   it('transfer 25 runs, 26 is refused', () => {
@@ -584,20 +553,22 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
     { line_id: 42, sku: 'THR-1', name: 'thread cones', unit: 'cones', quantity: 10, received_quantity: 4 },
   ] };
 
-  it('PO line of 95: 37 runs and is flagged to Robert, 95 runs clean, 96 is refused', () => {
-    const short = checkPoReceipt(po, [{ line_id: '41', quantity: 37 }]);
-    expect(short).toMatchObject({ ok: true, flags: ['We only got 37 of the 95 zippers ordered on PO 1003.'] });
+  it('PO line of 95: 37 runs flagged short, 95 runs clean, 96 runs flagged over', () => {
+    expect(checkPoReceipt(po, [{ line_id: '41', quantity: 37 }]))
+      .toMatchObject({ ok: true, flags: ['We only got 37 of the 95 zippers ordered on PO 1003.'] });
     expect(checkPoReceipt(po, [{ sku: 'zip-5', quantity: 95 }])).toMatchObject({ ok: true, flags: [] });
-    const over = checkPoReceipt(po, [{ line_id: '41', quantity: 96 }]);
-    expect(!over.ok && over.reason).toBe('PO 1003: 96 zippers is more than the 95 still open (95 ordered). Nothing was received; the office decides about the extra.');
+    expect(checkPoReceipt(po, [{ line_id: '41', quantity: 96 }]))
+      .toMatchObject({ ok: true, flags: ['We got 96 of the 95 zippers ordered on PO 1003.'] });
   });
 
-  it('measures a partly received line by what is still open and sums a line named twice', () => {
+  it('measures a partly received line by what is still open, sums a line named twice, refuses another unit', () => {
     expect(checkPoReceipt(po, [{ line_id: '42', quantity: 6 }])).toMatchObject({ ok: true, flags: [] });
-    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 4 }, { sku: 'THR-1', quantity: 3 }]).ok).toBe(false);
+    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 4 }, { sku: 'THR-1', quantity: 3 }]))
+      .toMatchObject({ ok: true, flags: ['We got 7 of the 6 thread cones still open (10 ordered) on PO 1003.'] });
     expect(checkPoReceipt(po, [{ line_id: '42', quantity: 2 }]))
       .toMatchObject({ flags: ['We only got 2 of the 6 thread cones still open (10 ordered) on PO 1003.'] });
-    expect(checkPoReceipt(po, [{ line_id: '41', quantity: 5, unit: 'boxes' }]).ok).toBe(false);
+    const unit = checkPoReceipt(po, [{ line_id: '41', quantity: 5, unit: 'boxes' }]);
+    expect(!unit.ok && unit.reason).toMatch(/counts zippers in units, not boxes/);
   });
 });
 
@@ -686,23 +657,14 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const row = getAuditById(db, r.audit_id)!;
     expect([row.person, row.user_id, row.origin_bot, row.via, row.request_id, row.status, row.hand_status])
       .toEqual(['k@dd.com', 'kristina', 'kristina-assistant', 'grok-operator', 'OP-1', 'ok', 200]);
-    expect(JSON.parse(row.limit_check_json!)).toMatchObject({ ok: true, detail: { current: 25, next: 24, change: 1 } });
   });
 
-  it('refuses a recount over the limit after reading the count, and writes nothing', async () => {
-    answers['GET ff /api/integration/inventory'] = () => new Response(lookup(4), { status: 200 });
-    const r = (await post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 6, reason: 'recount' } }).done)!;
-    expect([r.status, r.result]).toEqual(['refused', null]);
-    expect(r.reason).toMatch(/Count 4 → 6 refused/);
-    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
-    expect(events('grok_report')).toEqual([]); // over a limit is OPERATOR's to route, not the desk's
-  });
-
-  it('refuses a recount when the current count cannot be read', async () => {
-    answers['GET ff /api/integration/inventory'] = () => new Response('{"variants":[]}', { status: 200 });
-    const r = (await post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 6, reason: 'recount' } }).done)!;
-    expect(r.status).toBe('refused');
-    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+  it('runs any recount change: 4 → 6, 100 → 104, 100 → 106', async () => {
+    for (const [i, q] of [6, 104, 106].entries()) {
+      const r = (await post({ idempotency_key: `rc-${i}`, action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: q, reason: 'recount' } }).done)!;
+      expect(r.status).toBe('ok');
+    }
+    expect(calls.filter((c) => c.method === 'POST').map((c) => (c.body as { quantity: number }).quantity)).toEqual([6, 104, 106]);
   });
 
   it('receives a short PO line and carries the flag for Robert', async () => {

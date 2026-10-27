@@ -68,23 +68,19 @@ export interface StaffAction {
   initial_level?: 1 | 2 | 3;
   /** OPERATOR direct actions (spec 2026-10-27): true = a Grok `grok_action` may run it. */
   operator?: boolean;
-  /** write only: hard limits McSecretary enforces on the OPERATOR path. Required on an operator write. */
+  /** write only: limits and checks McSecretary applies on the OPERATOR path (none = runs as asked). */
   limits?: ActionLimits;
 }
 
 /**
- * Hard limits on an OPERATOR write (spec 2026-10-27 "First actions"). Exactly one kind per action:
- * - count: a recount; |new − current| ≤ max_change_units AND ≤ max_change_pct % of current, and
- *   at most max_units_counted units counted per request. `current_from` is the read action whose
- *   answer gives the current count (read before writing; unreadable = refused).
- * - per_sku: at most max_units of one SKU per request.
- * - po_open_quantity: each line at most its open quantity, read from `read_path` on the action's
- *   hand first; over = refused, short = runs and is flagged to Robert.
+ * On an OPERATOR write (spec 2026-10-27), one kind per action:
+ * - per_sku: at most max_units of one SKU per request (the one hard limit: transfers).
+ * - po_receipt: read the open PO from `read_path` on the action's hand first;
+ *   any quantity runs, short and over lines are flagged to Robert.
  */
 export interface ActionLimits {
-  count?: { max_change_units: number; max_change_pct: number; max_units_counted: number; current_from: string };
   per_sku?: { max_units: number };
-  po_open_quantity?: { read_path: string };
+  po_receipt?: { read_path: string };
 }
 
 export interface StaffCatalogue {
@@ -381,8 +377,7 @@ function parseAction(id: string, raw: unknown): StaffAction {
     if (raw.initial_level > 1 && isPinned(action.action_type!)) fail(where, 'a pinned action_type cannot start above level 1');
     action.initial_level = raw.initial_level;
   }
-  if (raw.limits !== undefined) action.limits = parseLimits(where, raw.limits, params, bind);
-  if (action.operator && !action.limits) fail(where, 'an operator write needs a limits block');
+  if (raw.limits !== undefined) action.limits = parseLimits(where, raw.limits, params);
   checkTemplates(where, stringsIn([action.path, action.body]), names);
   checkTemplates(where, stringsIn([action.summary]), names, arrays);
   return action;
@@ -399,43 +394,30 @@ function needParam(where: string, params: Record<string, ParamSpec>, name: strin
   return p;
 }
 
-function parseLimits(where: string, raw: unknown, params: Record<string, ParamSpec>, bind: Record<string, BindSource>): ActionLimits {
+function parseLimits(where: string, raw: unknown, params: Record<string, ParamSpec>): ActionLimits {
   if (!isObj(raw)) fail(where, 'limits must be an object');
   const kinds = Object.keys(raw);
-  if (kinds.length !== 1) fail(where, 'limits must name exactly one of count, per_sku, po_open_quantity');
+  if (kinds.length !== 1) fail(where, 'limits must name exactly one of per_sku, po_receipt');
   const kind = kinds[0]!;
   const body = raw[kind];
   if (!isObj(body)) fail(where, `limits ${kind} must be an object`);
   const only = (keys: string[]) => { for (const k of Object.keys(body)) if (!keys.includes(k)) fail(where, `limits ${kind}: unknown field ${k}`); };
   switch (kind) {
-    case 'count': {
-      only(['max_change_units', 'max_change_pct', 'max_units_counted', 'current_from']);
-      needParam(where, params, 'sku', ['string'], kind);
-      needParam(where, params, 'quantity', ['integer'], kind);
-      if (!Object.values(bind).includes('user.location_id')) fail(where, 'limits count needs the user.location_id binding (the count is per location)');
-      if (typeof body.current_from !== 'string' || !ACTION_ID_RE.test(body.current_from)) fail(where, 'limits count.current_from must name a read action');
-      return { count: {
-        max_change_units: positive(where, body.max_change_units, 'count.max_change_units'),
-        max_change_pct: positive(where, body.max_change_pct, 'count.max_change_pct', 100),
-        max_units_counted: positive(where, body.max_units_counted, 'count.max_units_counted'),
-        current_from: body.current_from,
-      } };
-    }
     case 'per_sku':
       only(['max_units']);
       needParam(where, params, 'sku', ['string'], kind);
       needParam(where, params, 'quantity', ['integer', 'number'], kind);
       return { per_sku: { max_units: positive(where, body.max_units, 'per_sku.max_units') } };
-    case 'po_open_quantity': {
+    case 'po_receipt': {
       only(['read_path']);
       needParam(where, params, 'po_id', ['string'], kind);
       const lines = needParam(where, params, 'lines', ['array'], kind);
-      if (!lines.items?.quantity?.required) fail(where, 'limits po_open_quantity needs lines items with a required quantity');
+      if (!lines.items?.quantity?.required) fail(where, 'limits po_receipt needs lines items with a required quantity');
       const rp = checkPath(`${where} limits`, body.read_path, 'read');
-      return { po_open_quantity: { read_path: rp } };
+      return { po_receipt: { read_path: rp } };
     }
     default:
-      fail(where, `limits kind ${kind} is unknown; use count, per_sku or po_open_quantity`);
+      fail(where, `limits kind ${kind} is unknown; use per_sku or po_receipt`);
   }
 }
 
@@ -449,14 +431,6 @@ export function parseCatalogue(raw: unknown): StaffCatalogue {
   if (!isObj(raw.groups) || Object.keys(raw.groups).length === 0) fail('file', 'groups must be a non-empty object');
   const actions: Record<string, StaffAction> = {};
   for (const [id, a] of Object.entries(raw.actions)) actions[id] = parseAction(id, a);
-  for (const a of Object.values(actions)) {
-    const from = a.limits?.count?.current_from;
-    if (from === undefined) continue;
-    const r = Object.hasOwn(actions, from) ? actions[from]! : undefined;
-    if (!r || r.kind !== 'read' || r.hand !== a.hand || r.params.q?.type !== 'string') {
-      fail(`action ${a.id}`, `limits count.current_from ${from} must be a read on hand ${a.hand} with a q param`);
-    }
-  }
   const groups: Record<string, string[]> = {};
   for (const [name, list] of Object.entries(raw.groups)) {
     if (!GROUP_RE.test(name)) fail(`group ${name}`, 'name must be lowercase letters, digits and -');
