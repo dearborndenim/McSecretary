@@ -35,7 +35,8 @@
       "operator": {
         "params": { "location": { "type": "string", "max": 40, "description": "Where the count was taken: a location key or alias from the brand's locations (e.g. andersonville or store, factory). Defaults to the person's own location." } },
         "locations": ["location"],
-        "body": { "sku": "{sku}", "location_id": "{location}", "quantity": "{quantity}", "reason": "{reason}", "idempotency_key": "{idempotency_key}" }
+        "body": { "sku": "{sku}", "location_id": "{location}", "quantity": "{quantity}", "reason": "{reason}", "idempotency_key": "{idempotency_key}" },
+        "description": "Set the on-hand count of one SKU at one location to a counted number (a recount, not a move): { sku, quantity, reason, location? }. location is a location key or alias (factory, andersonville or store); left out, it is the person's own location, and if they have none the answer asks \"Which location?\". A recount at the Factory is allowed from OPERATOR (runs at once, no approval); a recount at the store likewise. Use inventory_lookup first to get the exact SKU. Moving stock between the Factory and the store is inventory_transfer, never this. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all."
       },
       "kind": "write",
       "description": "Set the on-hand count of one SKU at your store to a counted number (a recount, not a move). Use inventory_lookup first to get the exact SKU. Moving stock between the Factory and the store is inventory_transfer, never this. Jeans are counted by sub-assembly at each location: all inseams of a style/wash/waist share one count, and setting one sets them all. On Telegram it files a request that runs once Robert approves (or right away if he has promoted you on it); from OPERATOR it runs at once.",
@@ -107,7 +108,7 @@
         "path": "/api/integration/pos?status=ordered",
         "answer": "open_pos",
         "params": {
-          "po": { "type": "string", "max": 32, "description": "Optional: one vendor PO, by PO number (1003, \"PO 1003\") or kanban PO id." },
+          "po": { "type": "string", "max": 32, "description": "Optional: one vendor PO, by PO number (1003 as a number or text, \"PO 1003\") or kanban PO id." },
           "q": { "type": "string", "max": 60, "description": "Optional: a vendor name or code, or a material SKU or name, to filter the open POs." }
         },
         "description": "Look up open vendor POs (ordered or partly received; our purchase orders to vendors, not customer orders) with every line. Optional po (PO number or id) returns just that PO; optional q filters by vendor name/code or material SKU/name. With neither, pos is a compact list [{po_id, po_number, vendor, status, expected_delivery, open_lines, open_units}] and message \"N open POs; name one with po for its lines.\" With a filter, answer {as_of, match, count, pos: [{po_id, po_number, vendor, vendor_code, status, ordered_at, expected_delivery, shipped_at, carrier, tracking_number, ..., lines: [{line_id, sku, name, unit, ordered, received, open, unit_cost, line_total}]}], message?, partial?}; open = ordered - received, never below 0. A PO that is not open comes back ok with no POs and message \"PO 1003 isn't open for receiving.\" If a filtered answer is too long, the oldest POs come back as compact rows and partial says so. Use po_id and line_id for vendor_po_receive."
