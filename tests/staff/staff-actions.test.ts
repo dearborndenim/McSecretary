@@ -420,6 +420,18 @@ describe('staff-action execution', () => {
     expect(handFetch).toHaveBeenCalledTimes(3);
   });
 
+  it('a Telegram recount never sends allow_factory_set, even for a person whose location is the Factory', async () => {
+    const { run } = setup();
+    db.prepare("INSERT INTO trust_ledger (agent, brand_id, action_type, level) VALUES ('kristina','dearborn-denim','store_inventory_set',2)").run();
+    db.prepare('UPDATE users SET location_id = ? WHERE id = ?').run(FACTORY, 'kristina');
+    await run('store_inventory_set', { sku: 'H201-M', quantity: 4, reason: 'recount', allow_factory_set: true });
+    db.prepare('UPDATE users SET location_id = ? WHERE id = ?').run(STORE, 'kristina');
+    await run('store_inventory_set', { sku: 'H201-M', quantity: 5, reason: 'recount' });
+    const bodies = fetchMock.mock.calls.map((c) => JSON.parse(String((c as unknown[])[1] && ((c as unknown[])[1] as RequestInit).body)));
+    expect(bodies.map((b) => b.location_id)).toEqual([FACTORY, STORE]);
+    for (const b of bodies) expect(b).not.toHaveProperty('allow_factory_set');
+  });
+
   it('ops_note goes end to end through spine.file on the built-in notes hand', async () => {
     const { run } = setup();
     atLevel1('ops_note');
@@ -730,6 +742,25 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ lines: [{ line_id: 41, quantity: 37 }], received_by: 'Kristina', idempotency_key: handIdempotencyKey('grok-bots', 'OP-1') });
   });
 
+  it('takes po_id as a whole number as well as text on a receipt', async () => {
+    const r = (await post({ action: 'vendor_po_receive', params: { po_id: 7, lines: [{ line_id: 41, quantity: 95 }] } }).done)!;
+    expect([r.status, r.reason]).toEqual(['ok', null]);
+    expect(calls.filter((c) => c.method === 'POST').map((c) => new URL(c.url).pathname)).toEqual(['/api/integration/pos/7/receive']);
+  });
+
+  it('sends allow_factory_set on an OPERATOR recount at the Factory, never at the store', async () => {
+    const at = async (key: string, location?: string) => (await post({ idempotency_key: key, action: 'store_inventory_set',
+      params: { sku: 'MICA-32-30', quantity: 4, reason: 'r', ...(location ? { location } : {}) } }).done)!;
+    expect((await at('fs1', 'factory')).status).toBe('ok');
+    expect((await at('fs2', 'store')).status).toBe('ok');
+    expect((await at('fs3')).status).toBe('ok'); // Kristina's own location: the store
+    db.prepare('UPDATE users SET location_id = ? WHERE id = ?').run(FACTORY, 'kristina');
+    expect((await at('fs4')).status).toBe('ok'); // her own location is now the Factory
+    const sets = calls.filter((c) => c.method === 'POST').map((c) => c.body as Record<string, unknown>);
+    expect(sets.map((b) => [b.location_id, b.allow_factory_set])).toEqual([[FACTORY, true], [STORE, undefined], [STORE, undefined], [FACTORY, true]]);
+    expect(sets[0]).toEqual({ sku: 'MICA-32-30', location_id: FACTORY, quantity: 4, reason: 'r', idempotency_key: handIdempotencyKey('grok-bots', 'OP-fs1'), allow_factory_set: true });
+  });
+
   it('origin checks: none, unknown bot, someone else\'s bot, an action the bot or the groups lack', async () => {
     const run = async (p: Record<string, unknown>, key: string) => (await post({ ...p, idempotency_key: key }).done)!;
     const none = await run({ origin: undefined }, 'k1');
@@ -884,6 +915,15 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
       expect((q.result as any).pos.map((p: any) => p.po_number)).toEqual([1000]);
       const po = (await lookup({ po: '999' }, 't2')).result as any;
       expect([po.message, po.partial]).toEqual(["PO 999 isn't open for receiving.", 'kanban lists only the newest 200 open POs, so an older open PO would not show here.']);
+    });
+
+    it('takes po as a whole number as well as text (regression: {po: 1003} answered "po must be text")', async () => {
+      const r = await lookup({ po: 1003 }, 'n1');
+      expect([r.status, r.reason]).toEqual(['ok', null]);
+      expect((r.result as any).match).toEqual({ po: '1003' });
+      expect((r.result as any).pos.map((p: any) => p.po_number)).toEqual([1003]);
+      const frac = await lookup({ po: 1003.5 }, 'n2');
+      expect([frac.status, frac.reason]).toEqual(['refused', 'Invalid params: po must be text.']);
     });
   });
 
