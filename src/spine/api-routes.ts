@@ -40,6 +40,8 @@ export interface SpineRouterDeps {
   wake?: (eventType: string, eventId: number) => void;
   /** Volume dir of the file drop (`/spine/files`); absent = those routes answer 404. */
   filesDir?: string;
+  /** OPERATOR direct actions (src/staff/grok-action.ts): a `grok_action` event is answered, not queued. */
+  grokAction?: (agent: string, event: SpineEventInput) => { status: number; body: unknown };
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -435,6 +437,11 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const eventCap = policy?.rate?.events_per_hour;
         if (eventCap && countEventsSince(deps.db, agent, hourAgo()) >= eventCap) {
           json(res, 429, { error: `policy: ${agent} is over ${eventCap} events per hour` });
+          return true;
+        }
+        if (eventType === 'grok_action' && deps.grokAction) {
+          const r = deps.grokAction(agent, parsed.body as unknown as SpineEventInput);
+          json(res, r.status, r.body);
           return true;
         }
         const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now(), agent);

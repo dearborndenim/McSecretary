@@ -16,6 +16,11 @@ import { staffActionIdsForUser } from '../../src/staff/tools.js';
 import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
+import { checkCountChange, checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
+import { createGrokActionHandler, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
+import { getAuditById } from '../../src/db/operator-queries.js';
+import { registerOriginBot } from '../../src/staff/admin-commands.js';
+import { setCatalogue } from '../../src/staff/catalogue.js';
 
 const NOW = '2026-10-08T15:00:00.000Z';
 const BRANDS = path.join(process.cwd(), 'config', 'brands');
@@ -523,5 +528,232 @@ describe('staff-action execution', () => {
     const r = base(); r.actions.look.initial_level = 2;
     expect(() => parseCatalogue(r)).toThrow(/initial_level is for writes only/);
     expect(cat.actions.vendor_po_receive!.initial_level).toBeUndefined();
+  });
+});
+
+describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', () => {
+  const count = cat.actions.store_inventory_set!.limits!.count!;
+
+  it('ships the phase-1 limits: 3 units / 5% / 25 counted, 25 per SKU, PO open quantity', () => {
+    expect(count).toMatchObject({ max_change_units: 3, max_change_pct: 5, max_units_counted: 25, current_from: 'inventory_lookup' });
+    expect(cat.actions.inventory_transfer!.limits).toEqual({ per_sku: { max_units: 25 } });
+    expect(cat.actions.vendor_po_receive!.limits).toEqual({ po_open_quantity: { read_path: '/api/integration/pos?status=ordered' } });
+    const operator = Object.values(cat.actions).filter((a) => a.operator).map((a) => a.id).sort();
+    expect(operator).toEqual(['customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'pickup_status', 'pos_status',
+      'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
+  });
+
+  it('refuses an operator write with no limits block at boot', () => {
+    const r = base(); r.actions.set.operator = true;
+    expect(() => parseCatalogue(r)).toThrow(/operator write needs a limits block/);
+  });
+
+  it('count 4 → 6: within 3 units but 2 is 50% of 4, so refused', () => {
+    const c = checkCountChange(4, 6, count);
+    expect(c.ok).toBe(false);
+    expect(!c.ok && c.reason).toMatch(/more than 5% of the current 4/);
+  });
+
+  it('count 100 → 104 and → 106: both refused (over 3 units; 106 also over 5%; both over 25 counted)', () => {
+    const a = checkCountChange(100, 104, count);
+    expect(!a.ok && a.reason).toMatch(/change of 4 is more than 3 units/);
+    expect(!a.ok && a.reason).not.toMatch(/5%/);
+    const b = checkCountChange(100, 106, count);
+    expect(!b.ok && b.reason).toMatch(/more than 3 units.*more than 5% of the current 100 \(at most 5\)/);
+    expect(!b.ok && b.reason).toMatch(/106 units counted is more than the 25/);
+  });
+
+  it('count 10 can only be confirmed: ±1 is 10% of 10; a count of 20 is the smallest that moves 1', () => {
+    expect(checkCountChange(10, 10, count).ok).toBe(true);
+    expect(checkCountChange(10, 11, count).ok).toBe(false);
+    expect(checkCountChange(10, 9, count).ok).toBe(false);
+    expect(checkCountChange(19, 18, count).ok).toBe(false);
+    expect(checkCountChange(20, 19, count).ok).toBe(true);
+    expect(checkCountChange(24, 25, count).ok).toBe(true);
+  });
+
+  it('transfer 25 runs, 26 is refused', () => {
+    const l = cat.actions.inventory_transfer!.limits!.per_sku!;
+    expect(checkPerSku(25, 'H201-M', l).ok).toBe(true);
+    const r = checkPerSku(26, 'H201-M', l);
+    expect(!r.ok && r.reason).toBe('26 × H201-M is more than the 25 units per SKU allowed per request. Nothing was moved.');
+  });
+
+  const po: OpenPo = { id: 7, po_number: 1003, lines: [
+    { line_id: 41, sku: 'ZIP-5', name: 'zippers', unit: 'units', quantity: 95, received_quantity: 0 },
+    { line_id: 42, sku: 'THR-1', name: 'thread cones', unit: 'cones', quantity: 10, received_quantity: 4 },
+  ] };
+
+  it('PO line of 95: 37 runs and is flagged to Robert, 95 runs clean, 96 is refused', () => {
+    const short = checkPoReceipt(po, [{ line_id: '41', quantity: 37 }]);
+    expect(short).toMatchObject({ ok: true, flags: ['We only got 37 of the 95 zippers ordered on PO 1003.'] });
+    expect(checkPoReceipt(po, [{ sku: 'zip-5', quantity: 95 }])).toMatchObject({ ok: true, flags: [] });
+    const over = checkPoReceipt(po, [{ line_id: '41', quantity: 96 }]);
+    expect(!over.ok && over.reason).toBe('PO 1003: 96 zippers is more than the 95 still open (95 ordered). Nothing was received; the office decides about the extra.');
+  });
+
+  it('measures a partly received line by what is still open and sums a line named twice', () => {
+    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 6 }])).toMatchObject({ ok: true, flags: [] });
+    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 4 }, { sku: 'THR-1', quantity: 3 }]).ok).toBe(false);
+    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 2 }]))
+      .toMatchObject({ flags: ['We only got 2 of the 6 thread cones still open (10 ordered) on PO 1003.'] });
+    expect(checkPoReceipt(po, [{ line_id: '41', quantity: 5, unit: 'boxes' }]).ok).toBe(false);
+  });
+});
+
+describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
+  let db: Database.Database;
+  let calls: { url: string; method: string; body: unknown }[];
+  let woke: [string, number][];
+  let answers: Record<string, () => Response>;
+  const env = {
+    FACTORY_FENIX_URL: 'https://ff.example', FACTORY_FENIX_KEY: 'ffkey',
+    KANBAN_PURCHASER_URL: 'https://kp.example', KANBAN_PURCHASER_KEY: 'kpkey',
+  };
+  const lookup = (store: number) => JSON.stringify({ variants: [{ sku: 'MICA-32-30', levels: { factory: 40, store } }] });
+  const pos = JSON.stringify({ pos: [{ id: 7, po_number: 1003, lines: [
+    { line_id: 41, sku: 'ZIP-5', name: 'zippers', unit: 'units', quantity: 95, received_quantity: 0 },
+  ] }] });
+
+  beforeEach(() => {
+    setCatalogue(cat);
+    db = new Database(':memory:'); initializeSchema(db);
+    createUser(db, { id: 'kristina', name: 'Kristina', email: 'k@dd.com', role: 'member', location_id: STORE });
+    setUserGrants(db, 'kristina', ['store', 'receiving']);
+    createUser(db, { id: 'olivier', name: 'Olivier', email: 'o@dd.com', role: 'member', location_id: STORE });
+    setUserGrants(db, 'olivier', ['store']);
+    registerOriginBot(db, 'kristina-assistant', 'k@dd.com', 'reads,store_inventory_set,vendor_po_receive', NOW);
+    registerOriginBot(db, 'olivier-stock', 'o@dd.com', 'inventory_lookup', NOW);
+    calls = []; woke = [];
+    answers = {
+      'GET ff /api/integration/inventory': () => new Response(lookup(25), { status: 200 }),
+      'POST ff /api/integration/inventory/set': () => new Response('{"ok":true,"notify":"MICA-32-30 set to 24"}', { status: 200 }),
+      'GET kp /api/integration/pos': () => new Response(pos, { status: 200 }),
+      'POST kp /api/integration/pos/7/receive': () => new Response('{"po_number":1003,"notify":"PO 1003: received 37 zippers"}', { status: 200 }),
+    };
+  });
+  afterEach(() => { db.close(); setCatalogue(null); });
+
+  function handler() {
+    const handFetch = async (url: string, init: RequestInit) => {
+      const u = new URL(url);
+      const method = init.method ?? 'GET';
+      calls.push({ url, method, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      const key = `${method} ${u.host.split('.')[0]} ${u.pathname}`;
+      return answers[key]?.() ?? new Response('{"error":"no route"}', { status: 404 });
+    };
+    const d: GrokActionDeps = {
+      db, now: () => NOW, env, loadBrand: () => brand, handFetch, catalogue: () => cat,
+      wake: (t, id) => { woke.push([t, id]); },
+    };
+    return createGrokActionHandler(d);
+  }
+
+  function post(payload: Record<string, unknown>, opts: { agent?: string; source?: string } = {}) {
+    return handler()(opts.agent ?? 'grok-bots', {
+      source_hand: opts.source ?? 'grok-operator', brand_id: 'dearborn-denim', event_type: 'grok_action', urgent: false,
+      payload: { bot: 'operator', sent_at: NOW, idempotency_key: 'act-1', request_id: 'OP-1',
+        origin: { person: 'k@dd.com', bot: 'kristina-assistant' }, action: 'inventory_lookup', params: { q: 'MICA-32-30' },
+        operator_check: { rule: 'reads', verdict: 'ok' }, ...payload },
+    });
+  }
+
+  const events = (type: string) => (db.prepare('SELECT * FROM spine_events WHERE event_type = ? ORDER BY id').all(type) as { payload: string; posted_by: string | null; source_hand: string }[])
+    .map((e) => ({ ...e, payload: JSON.parse(e.payload) as Record<string, any> }));
+
+  it('answers a read on grok_task_chief in the task shape OPERATOR drains, and wakes it', async () => {
+    const a = post({});
+    expect(a.status).toBe(200);
+    const r = (await a.done)!;
+    expect(r).toEqual({
+      request_id: 'OP-1', origin: { person: 'k@dd.com', bot: 'kristina-assistant' }, action: 'inventory_lookup',
+      status: 'ok', result: JSON.parse(lookup(25)), audit_id: r.audit_id, reason: null,
+    });
+    const [task] = events('grok_task_chief');
+    expect(task!.payload).toEqual({ task_id: `action-result-${r.audit_id}`, kind: 'action_result', args: r, notify: false, due: null, filed_by: 'mcsecretary', reply_type: null });
+    expect(woke).toEqual([['grok_task_chief', (db.prepare("SELECT id FROM spine_events WHERE event_type='grok_task_chief'").get() as { id: number }).id]]);
+    // The grok_action itself is stored, already drained by McSecretary, never left for a drainer.
+    expect(db.prepare("SELECT drained_by FROM spine_events WHERE event_type='grok_action'").get()).toEqual({ drained_by: 'mcsecretary' });
+    expect(events('grok_report')).toEqual([]);
+  });
+
+  it('runs a recount within limits with no approval, mapping the hand payload, and audits it', async () => {
+    const r = (await post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 24, reason: 'recount' } }).done)!;
+    expect(r.status).toBe('ok');
+    const write = calls.find((c) => c.method === 'POST')!;
+    expect(write.body).toEqual({ sku: 'MICA-32-30', location_id: STORE, quantity: 24, reason: 'recount', idempotency_key: `grok-action-${r.audit_id}` });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM proposals').get()).toEqual({ n: 0 });
+    const row = getAuditById(db, r.audit_id)!;
+    expect([row.person, row.user_id, row.origin_bot, row.via, row.request_id, row.status, row.hand_status])
+      .toEqual(['k@dd.com', 'kristina', 'kristina-assistant', 'grok-operator', 'OP-1', 'ok', 200]);
+    expect(JSON.parse(row.limit_check_json!)).toMatchObject({ ok: true, detail: { current: 25, next: 24, change: 1 } });
+  });
+
+  it('refuses a recount over the limit after reading the count, and writes nothing', async () => {
+    answers['GET ff /api/integration/inventory'] = () => new Response(lookup(4), { status: 200 });
+    const r = (await post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 6, reason: 'recount' } }).done)!;
+    expect([r.status, r.result]).toEqual(['refused', null]);
+    expect(r.reason).toMatch(/Count 4 → 6 refused/);
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+    expect(events('grok_report')).toEqual([]); // over a limit is OPERATOR's to route, not the desk's
+  });
+
+  it('refuses a recount when the current count cannot be read', async () => {
+    answers['GET ff /api/integration/inventory'] = () => new Response('{"variants":[]}', { status: 200 });
+    const r = (await post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 6, reason: 'recount' } }).done)!;
+    expect(r.status).toBe('refused');
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  it('receives a short PO line and carries the flag for Robert', async () => {
+    const r = (await post({ action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 37 }] } }).done)!;
+    expect(r.status).toBe('ok');
+    expect(r.flag_for_robert).toEqual(['We only got 37 of the 95 zippers ordered on PO 1003.']);
+    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ lines: [{ line_id: '41', quantity: 37 }], received_by: 'Kristina', idempotency_key: `grok-action-${r.audit_id}` });
+  });
+
+  it('origin checks: none, unknown bot, someone else\'s bot, an action the bot or the groups lack', async () => {
+    const run = async (p: Record<string, unknown>, key: string) => (await post({ ...p, idempotency_key: key }).done)!;
+    const none = await run({ origin: undefined }, 'k1');
+    expect([none.status, none.reason]).toEqual(['refused', expect.stringMatching(/no origin/)]);
+    expect(events('grok_report')).toHaveLength(1); // a malformed request goes to the desk
+    expect((await run({ origin: { person: 'k@dd.com', bot: 'ghost' } }, 'k2')).reason).toMatch(/ghost is not registered/);
+    expect((await run({ origin: { person: 'k@dd.com', bot: 'olivier-stock' } }, 'k3')).reason).toMatch(/not registered to Kristina/);
+    expect((await run({ origin: { person: 'nobody@dd.com', bot: 'olivier-stock' } }, 'k4')).reason).toMatch(/No staff user/);
+    const botLacks = await run({ origin: { person: 'o@dd.com', bot: 'olivier-stock' }, action: 'store_inventory_set', params: { sku: 'X', quantity: 1, reason: 'r' } }, 'k5');
+    expect(botLacks.reason).toBe('The bot olivier-stock may not use store_inventory_set.');
+    registerOriginBot(db, 'olivier-stock', 'o@dd.com', 'inventory_lookup,vendor_po_receive', NOW);
+    const groupLacks = await run({ origin: { person: 'o@dd.com', bot: 'olivier-stock' }, action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 1 }] } }, 'k6');
+    expect(groupLacks.reason).toBe("vendor_po_receive is not allowed for Olivier's groups.");
+    expect(calls).toEqual([]);
+  });
+
+  it('files unknown actions, invalid params and hand failures to the Chief desk as OPERATOR needs_claude reports', async () => {
+    await post({ action: 'make_basket', idempotency_key: 'u1' }).done;
+    await post({ action: 'store_inventory_set', params: { sku: 'X' }, idempotency_key: 'u2' }).done;
+    answers['GET ff /api/integration/inventory'] = () => new Response('boom', { status: 500 });
+    const failed = (await post({ idempotency_key: 'u3' }).done)!;
+    expect(failed.status).toBe('failed');
+    const reports = events('grok_report');
+    expect(reports.map((e) => [e.source_hand, e.posted_by, e.payload.bot, e.payload.filed_by])).toEqual(Array(3).fill(['grok-operator', null, 'operator', 'mcsecretary']));
+    expect(reports.map((e) => e.payload.title)).toEqual([
+      'needs_claude: OPERATOR OP-1 make_basket refused', 'needs_claude: OPERATOR OP-1 store_inventory_set refused', 'needs_claude: OPERATOR OP-1 inventory_lookup failed',
+    ]);
+    expect(reports[2]!.payload.needs_claude[0]).toMatch(/answered 500/);
+  });
+
+  it('runs the same idempotency_key once', async () => {
+    const first = post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 24, reason: 'recount' } });
+    const second = post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 24, reason: 'recount' } });
+    expect(second.body).toEqual({ id: first.body.id, audit_id: first.body.audit_id, duplicate: true, status: 'running' });
+    await first.done; await second.done;
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+    expect(events('grok_task_chief')).toHaveLength(1);
+  });
+
+  it('takes grok_action only from the grok-bots key as grok-operator', () => {
+    expect(post({}, { agent: 'marketing-manager' }).status).toBe(403);
+    expect(post({}, { source: 'grok-gina' }).status).toBe(403);
+    expect(post({ request_id: '' }).status).toBe(400);
   });
 });

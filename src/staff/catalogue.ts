@@ -66,6 +66,25 @@ export interface StaffAction {
   summary?: string;
   /** Trust level a user's ledger row starts at on their first filing (default 1; staff admin UI spec §4). */
   initial_level?: 1 | 2 | 3;
+  /** OPERATOR direct actions (spec 2026-10-27): true = a Grok `grok_action` may run it. */
+  operator?: boolean;
+  /** write only: hard limits McSecretary enforces on the OPERATOR path. Required on an operator write. */
+  limits?: ActionLimits;
+}
+
+/**
+ * Hard limits on an OPERATOR write (spec 2026-10-27 "First actions"). Exactly one kind per action:
+ * - count: a recount; |new − current| ≤ max_change_units AND ≤ max_change_pct % of current, and
+ *   at most max_units_counted units counted per request. `current_from` is the read action whose
+ *   answer gives the current count (read before writing; unreadable = refused).
+ * - per_sku: at most max_units of one SKU per request.
+ * - po_open_quantity: each line at most its open quantity, read from `read_path` on the action's
+ *   hand first; over = refused, short = runs and is flagged to Robert.
+ */
+export interface ActionLimits {
+  count?: { max_change_units: number; max_change_pct: number; max_units_counted: number; current_from: string };
+  per_sku?: { max_units: number };
+  po_open_quantity?: { read_path: string };
 }
 
 export interface StaffCatalogue {
@@ -91,8 +110,9 @@ export const PLACEHOLDER_RE = /\{([^{}]*)\}/g;
 const ACTION_KEYS = new Set([
   'kind', 'description', 'params', 'bind', 'hand', 'method', 'path', 'body', 'switch',
   'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level', 'render',
+  'operator', 'limits',
 ]);
-const WRITE_ONLY_KEYS = ['body', 'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level'];
+const WRITE_ONLY_KEYS = ['body', 'action_type', 'reversible', 'cost_usd', 'level_required', 'expires_hours', 'summary', 'initial_level', 'limits'];
 const PARAM_KEYS = new Set(['type', 'required', 'description', 'enum', 'min', 'max', 'default', 'items', 'items_require_one_of']);
 const TYPES = new Set<ParamType>(['string', 'integer', 'number', 'boolean', 'enum', 'array']);
 
@@ -320,6 +340,11 @@ function parseAction(id: string, raw: unknown): StaffAction {
     action.render = raw.render;
   }
 
+  if (raw.operator !== undefined) {
+    if (typeof raw.operator !== 'boolean') fail(where, 'operator must be true or false');
+    if (raw.operator) action.operator = true;
+  }
+
   if (kind === 'read') {
     for (const k of WRITE_ONLY_KEYS) if (raw[k] !== undefined) fail(where, `${k} is for writes only`);
     checkTemplates(where, stringsIn([action.path]), names);
@@ -356,9 +381,62 @@ function parseAction(id: string, raw: unknown): StaffAction {
     if (raw.initial_level > 1 && isPinned(action.action_type!)) fail(where, 'a pinned action_type cannot start above level 1');
     action.initial_level = raw.initial_level;
   }
+  if (raw.limits !== undefined) action.limits = parseLimits(where, raw.limits, params, bind);
+  if (action.operator && !action.limits) fail(where, 'an operator write needs a limits block');
   checkTemplates(where, stringsIn([action.path, action.body]), names);
   checkTemplates(where, stringsIn([action.summary]), names, arrays);
   return action;
+}
+
+function positive(where: string, v: unknown, name: string, max = Number.MAX_SAFE_INTEGER): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > max) fail(where, `limits ${name} must be a number above 0${max < Number.MAX_SAFE_INTEGER ? ` and at most ${max}` : ''}`);
+  return v;
+}
+
+function needParam(where: string, params: Record<string, ParamSpec>, name: string, types: ParamType[], kind: string): ParamSpec {
+  const p = params[name];
+  if (!p || !types.includes(p.type) || !p.required) fail(where, `limits ${kind} needs a required ${types.join('/')} param ${name}`);
+  return p;
+}
+
+function parseLimits(where: string, raw: unknown, params: Record<string, ParamSpec>, bind: Record<string, BindSource>): ActionLimits {
+  if (!isObj(raw)) fail(where, 'limits must be an object');
+  const kinds = Object.keys(raw);
+  if (kinds.length !== 1) fail(where, 'limits must name exactly one of count, per_sku, po_open_quantity');
+  const kind = kinds[0]!;
+  const body = raw[kind];
+  if (!isObj(body)) fail(where, `limits ${kind} must be an object`);
+  const only = (keys: string[]) => { for (const k of Object.keys(body)) if (!keys.includes(k)) fail(where, `limits ${kind}: unknown field ${k}`); };
+  switch (kind) {
+    case 'count': {
+      only(['max_change_units', 'max_change_pct', 'max_units_counted', 'current_from']);
+      needParam(where, params, 'sku', ['string'], kind);
+      needParam(where, params, 'quantity', ['integer'], kind);
+      if (!Object.values(bind).includes('user.location_id')) fail(where, 'limits count needs the user.location_id binding (the count is per location)');
+      if (typeof body.current_from !== 'string' || !ACTION_ID_RE.test(body.current_from)) fail(where, 'limits count.current_from must name a read action');
+      return { count: {
+        max_change_units: positive(where, body.max_change_units, 'count.max_change_units'),
+        max_change_pct: positive(where, body.max_change_pct, 'count.max_change_pct', 100),
+        max_units_counted: positive(where, body.max_units_counted, 'count.max_units_counted'),
+        current_from: body.current_from,
+      } };
+    }
+    case 'per_sku':
+      only(['max_units']);
+      needParam(where, params, 'sku', ['string'], kind);
+      needParam(where, params, 'quantity', ['integer', 'number'], kind);
+      return { per_sku: { max_units: positive(where, body.max_units, 'per_sku.max_units') } };
+    case 'po_open_quantity': {
+      only(['read_path']);
+      needParam(where, params, 'po_id', ['string'], kind);
+      const lines = needParam(where, params, 'lines', ['array'], kind);
+      if (!lines.items?.quantity?.required) fail(where, 'limits po_open_quantity needs lines items with a required quantity');
+      const rp = checkPath(`${where} limits`, body.read_path, 'read');
+      return { po_open_quantity: { read_path: rp } };
+    }
+    default:
+      fail(where, `limits kind ${kind} is unknown; use count, per_sku or po_open_quantity`);
+  }
 }
 
 /** Validate a parsed catalogue file. Throws naming the first problem. */
@@ -371,6 +449,14 @@ export function parseCatalogue(raw: unknown): StaffCatalogue {
   if (!isObj(raw.groups) || Object.keys(raw.groups).length === 0) fail('file', 'groups must be a non-empty object');
   const actions: Record<string, StaffAction> = {};
   for (const [id, a] of Object.entries(raw.actions)) actions[id] = parseAction(id, a);
+  for (const a of Object.values(actions)) {
+    const from = a.limits?.count?.current_from;
+    if (from === undefined) continue;
+    const r = Object.hasOwn(actions, from) ? actions[from]! : undefined;
+    if (!r || r.kind !== 'read' || r.hand !== a.hand || r.params.q?.type !== 'string') {
+      fail(`action ${a.id}`, `limits count.current_from ${from} must be a read on hand ${a.hand} with a q param`);
+    }
+  }
   const groups: Record<string, string[]> = {};
   for (const [name, list] of Object.entries(raw.groups)) {
     if (!GROUP_RE.test(name)) fail(`group ${name}`, 'name must be lowercase letters, digits and -');

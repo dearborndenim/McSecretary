@@ -4,6 +4,7 @@
  * export of the same filter.
  */
 
+import { listRecentAudit } from '../../../db/operator-queries.js';
 import { getAllUsers } from '../../../db/user-queries.js';
 import { listStaffProposals, STAFF_PAGE_SIZE, type StaffProposalFilter } from '../../../db/proposal-queries.js';
 import { extractNotify } from '../../../spine/executor.js';
@@ -149,7 +150,27 @@ export function renderActivity(ctx: PageCtx, q: URLSearchParams): Safe {
 ${rows.length === 0 ? html`<p class="mute">Nothing matches.</p>`
     : html`<table class="stack"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>Decided by</th><th>Result</th></tr></thead><tbody>${body}</tbody></table>`}
 <p class="row">${aq.page > 1 ? html`<a href="${linkFor(f, { page: String(aq.page - 1) })}">← Newer</a>` : ''}
-${aq.page < pages ? html`<a href="${linkFor(f, { page: String(aq.page + 1) })}">Older →</a>` : ''}</p>`;
+${aq.page < pages ? html`<a href="${linkFor(f, { page: String(aq.page + 1) })}">Older →</a>` : ''}</p>
+${renderOperatorRequests(ctx)}`;
+}
+
+/** The last 50 OPERATOR direct actions (grok_action), newest first: who, via which bot, what, and how it ended. */
+function renderOperatorRequests(ctx: PageCtx): Safe {
+  const rows = listRecentAudit(ctx.db, 50);
+  const names = new Map(getAllUsers(ctx.db).map((u) => [u.id, u.name]));
+  return html`<h2>OPERATOR requests</h2>
+<p class="small mute">Requests from Grok assistant bots via OPERATOR. Within limits they run with no approval.</p>
+${rows.length === 0 ? html`<p class="mute">None yet.</p>` : html`<table class="stack"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>Reason</th></tr></thead><tbody>
+${rows.map((r) => html`<tr>
+<td data-k="when">${chicago(r.received_at)}<div class="mute small">#${r.id} · ${r.request_id}</div></td>
+<td data-k="who">${(r.user_id && names.get(r.user_id)) ?? r.person ?? '?'}<div class="mute small">via ${r.origin_bot ?? '?'} via ${r.via}</div></td>
+<td data-k="action"><details><summary>${r.action}</summary>
+<h3>Params</h3><pre>${pretty(parse(r.params_json))}</pre>
+<h3>Limit check</h3><pre>${pretty(parse(r.limit_check_json))}</pre>
+<h3>Service answer${r.hand_status ? ` (${r.hand_status})` : ''}</h3><pre>${r.hand_response ?? ''}</pre></details></td>
+<td data-k="status">${pill(r.status)}</td>
+<td data-k="reason" class="small">${r.reason ?? ''}${r.flags_json ? html`<div>${(parse(r.flags_json) as string[]).join(' ')}</div>` : ''}</td></tr>`)}
+</tbody></table>`}`;
 }
 
 /** One CSV cell: quoted, and a leading = + - @ is defused so a spreadsheet never evaluates it. */

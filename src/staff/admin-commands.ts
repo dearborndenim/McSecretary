@@ -20,7 +20,10 @@ import {
 import { loadBrandConfig } from '../spine/brand-config.js';
 import { knownGroups, unknownGroups } from './groups.js';
 import { getCatalogue } from './catalogue.js';
-import { describeStaffTools } from './tools.js';
+import { describeStaffTools, grantedActionIds } from './tools.js';
+import { deleteOriginBot, listOriginBots, originBotActions, upsertOriginBot } from '../db/operator-queries.js';
+import { recordAdminAudit } from '../db/staff-ui-queries.js';
+import { SLUG_RE } from '../spine/agent-policy.js';
 
 const LOCATION_GID_RE = /^gid:\/\/shopify\/Location\/\d+$/;
 
@@ -112,9 +115,55 @@ export function setLanguageByEmail(db: Database.Database, email: string, tag: st
   return { ok: true, message: `Language set. ${describeUser(updated)}` };
 }
 
+// ── OPERATOR origin bots (spec 2026-10-27) ───────────────────
+
+const ORIGIN_USAGE = 'Usage: /originbot <bot> <email> <action,action,…|reads> — or /originbot <bot> remove. /originbots lists them.';
+
+/** The catalogue's OPERATOR actions (reads and writes). */
+function operatorActionIds(): string[] {
+  return Object.values(getCatalogue().actions).filter((a) => a.operator).map((a) => a.id);
+}
+
+/**
+ * Registers a Grok assistant bot to one staff user with the OPERATOR actions it
+ * may use (`reads` = every OPERATOR read). Replaces an existing registration.
+ * Only OPERATOR actions are accepted; one outside the person's groups is kept
+ * (groups may change later) but named, since it is refused until then.
+ */
+export function registerOriginBot(db: Database.Database, bot: string, email: string, actionsArg: string, nowIso: string): Result {
+  if (!SLUG_RE.test(bot)) return { ok: false, message: `Bot must be a slug (lowercase letters, digits, -): ${bot}` };
+  const user = getUserByEmail(db, email.trim().toLowerCase());
+  if (!user) return { ok: false, message: `No user found with email: ${email}` };
+  const cat = getCatalogue();
+  const allowed = operatorActionIds();
+  const ids = [...new Set(actionsArg.split(',').map((s) => s.trim()).filter(Boolean).flatMap((s) =>
+    s === 'reads' ? allowed.filter((id) => cat.actions[id]!.kind === 'read') : [s]))];
+  if (ids.length === 0) return { ok: false, message: ORIGIN_USAGE };
+  const bad = ids.filter((id) => !allowed.includes(id));
+  if (bad.length > 0) return { ok: false, message: `Not OPERATOR actions: ${bad.join(', ')}. OPERATOR actions: ${allowed.join(', ')}` };
+  upsertOriginBot(db, bot, user.id, ids, nowIso);
+  recordAdminAudit(db, { action: 'origin_bot_set', target: bot, detail: { user_id: user.id, actions: ids }, actor: 'telegram' }, nowIso);
+  const granted = new Set(grantedActionIds(cat, user));
+  const outside = ids.filter((id) => !granted.has(id));
+  const note = outside.length > 0 ? ` Refused until ${user.name}'s groups allow them: ${outside.join(', ')}.` : '';
+  return { ok: true, message: `Bot ${bot} registered to ${user.name} <${user.email}> with ${ids.join(', ')}.${note}` };
+}
+
+export function removeOriginBot(db: Database.Database, bot: string, nowIso: string): Result {
+  if (!deleteOriginBot(db, bot)) return { ok: false, message: `No bot ${bot} is registered.` };
+  recordAdminAudit(db, { action: 'origin_bot_remove', target: bot, actor: 'telegram' }, nowIso);
+  return { ok: true, message: `Bot ${bot} removed; its requests are refused from now on.` };
+}
+
+export function describeOriginBots(db: Database.Database): string {
+  const rows = listOriginBots(db);
+  if (rows.length === 0) return 'No origin bots registered.';
+  return rows.map((r) => `${r.bot} → ${r.user_name ?? r.user_id} <${r.user_email ?? '?'}>: ${originBotActions(r).join(', ') || '(none)'}`).join('\n');
+}
+
 /**
  * Telegram entry point. Returns the reply for `/grant`, `/grants`,
- * `/setlocation` or `/setlanguage`, or null when `text` is none of them. Admin-only: the
+ * `/setlocation`, `/setlanguage`, `/originbot` or `/originbots`, or null when `text` is none of them. Admin-only: the
  * caller checks the role before calling.
  */
 export function handleStaffAdminCommand(db: Database.Database, text: string, brandsDir: string): string | null {
@@ -130,6 +179,13 @@ export function handleStaffAdminCommand(db: Database.Database, text: string, bra
   if (cmd === '/setlocation') {
     if (parts.length !== 3) return 'Usage: /setlocation <email> <location gid|store|factory|none>';
     return setLocationByEmail(db, parts[1]!, parts[2]!, brandsDir).message;
+  }
+  if (cmd === '/originbots') return describeOriginBots(db);
+  if (cmd === '/originbot') {
+    const nowIso = new Date().toISOString();
+    if (parts.length === 3 && parts[2]!.toLowerCase() === 'remove') return removeOriginBot(db, parts[1]!.toLowerCase(), nowIso).message;
+    if (parts.length !== 4) return ORIGIN_USAGE;
+    return registerOriginBot(db, parts[1]!.toLowerCase(), parts[2]!, parts[3]!, nowIso).message;
   }
   if (cmd === '/setlanguage') {
     if (parts.length !== 3) return 'Usage: /setlanguage <email> <bcp47 tag|none>';

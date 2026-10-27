@@ -3,6 +3,7 @@
  * admin UI spec §3.4). The file is edited in the repo, not here.
  */
 
+import { listOriginBots, originBotActions } from '../../../db/operator-queries.js';
 import { html, type Safe } from '../render.js';
 import type { PageCtx } from '../router.js';
 
@@ -20,5 +21,14 @@ ${ids.map((id) => {
 <td data-k="reversible">${write ? (a.reversible ? 'yes' : 'no') : '—'}</td>
 <td data-k="starts at">${write ? `level ${a.initial_level ?? 1}` : '—'}</td></tr>`;
   })}
-</tbody></table>`)}`;
+</tbody></table>`)}
+<h2>OPERATOR origin bots</h2>
+<p class="small mute">Grok assistant bots that may ask OPERATOR to act, each for one person. Set with <code>/originbot</code> on Telegram.</p>
+${(() => {
+    const bots = listOriginBots(ctx.db);
+    return bots.length === 0 ? html`<p class="mute">None registered.</p>`
+      : html`<table class="stack"><thead><tr><th>Bot</th><th>Person</th><th>Actions</th></tr></thead><tbody>
+${bots.map((b) => html`<tr><td data-k="bot"><code>${b.bot}</code></td><td data-k="person">${b.user_name ?? b.user_id}</td>
+<td data-k="actions" class="small">${originBotActions(b).join(', ')}</td></tr>`)}</tbody></table>`;
+  })()}`;
 }

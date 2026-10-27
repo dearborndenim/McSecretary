@@ -4,6 +4,7 @@ import { initializeUserSchema } from './user-schema.js';
 import { initializeSpineSchema } from './spine-schema.js';
 import { initializeLionsSchema } from '../lions/store.js';
 import { initializeStaffUiSchema } from './staff-ui-queries.js';
+import { initializeOperatorSchema } from './operator-queries.js';
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
@@ -67,4 +68,5 @@ export function initializeSchema(db: Database.Database): void {
   initializeSpineSchema(db);
   initializeLionsSchema(db);
   initializeStaffUiSchema(db);
+  initializeOperatorSchema(db);
 }
