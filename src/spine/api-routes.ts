@@ -41,7 +41,7 @@ export interface SpineRouterDeps {
   /** Volume dir of the file drop (`/spine/files`); absent = those routes answer 404. */
   filesDir?: string;
   /** OPERATOR direct actions (src/staff/grok-action.ts): a `grok_action` event is answered, not queued. */
-  grokAction?: (agent: string, event: SpineEventInput) => { status: number; body: unknown };
+  grokAction?: (agent: string, event: SpineEventInput) => { status: number; body: unknown; done?: Promise<unknown> };
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -442,6 +442,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         if (eventType === 'grok_action' && deps.grokAction) {
           const r = deps.grokAction(agent, parsed.body as unknown as SpineEventInput);
           json(res, r.status, r.body);
+          r.done?.catch((err: unknown) => console.error(`grok_action run failed: ${err instanceof Error ? err.message : String(err)}`));
           return true;
         }
         const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now(), agent);

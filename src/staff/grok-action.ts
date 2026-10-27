@@ -441,12 +441,21 @@ export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, a
   } catch (err) {
     d.log?.(`grok_action #${auditId}: could not post the answer: ${err instanceof Error ? err.message : String(err)}`);
   }
-  finishAudit(d.db, auditId, {
-    finished_at: d.now(), user_id: out.user?.id ?? null, limit_check: out.limit ?? null,
-    hand_status: out.hand_status ?? null, hand_response: out.hand_text ?? null,
-    status: out.status, reason: out.reason, flags, result_event_id: resultEventId, escalation_event_id: escalationId,
-  });
-  if (resultEventId !== null) d.wake?.(RESULT_QUEUE, resultEventId);
+  // After a hand write nothing here may throw: the write happened and the answer is already posted.
+  try {
+    finishAudit(d.db, auditId, {
+      finished_at: d.now(), user_id: out.user?.id ?? null, limit_check: out.limit ?? null,
+      hand_status: out.hand_status ?? null, hand_response: out.hand_text ?? null,
+      status: out.status, reason: out.reason, flags, result_event_id: resultEventId, escalation_event_id: escalationId,
+    });
+  } catch (err) {
+    d.log?.(`grok_action #${auditId}: could not finish the audit row (${out.status}): ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    if (resultEventId !== null) d.wake?.(RESULT_QUEUE, resultEventId);
+  } catch (err) {
+    d.log?.(`grok_action #${auditId}: wake failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return result;
 }
 
