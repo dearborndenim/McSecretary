@@ -302,7 +302,7 @@ describe('request_agent_run', () => {
     insertEvent(db, { source_hand: 'mcsecretary', brand_id: 'dearborn-denim', event_type: 'run_request_finance', payload: {}, urgent: true }, NOW);
     drainEvents(db, 'finance', ['run_request_finance'], NOW);
     await executeGraphTool('request_agent_run', { agent: 'finance', reason: 'again' }, ADMIN);
-    expect(drainEvents(db, 'x', ['run_request_finance'], NOW)).toHaveLength(1);
+    expect(drainEvents(db, 'finance', ['run_request_finance'], NOW)).toHaveLength(1);
   });
 
   it('rejects an unknown agent', async () => {

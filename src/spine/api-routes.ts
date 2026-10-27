@@ -487,7 +487,7 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         if (refused !== undefined) return refuse(res, agent, 'read pending', refused);
         const brand = optionalBrandParam(params);
         if (brand === null) { json(res, 400, { error: 'brand must be a lowercase slug' }); return true; }
-        json(res, 200, { counts: countPendingByType(deps.db, types, brand) });
+        json(res, 200, { counts: countPendingByType(deps.db, types, brand, agent) });
         return true;
       }
 
