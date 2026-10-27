@@ -63,7 +63,7 @@ import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRep
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
-import { runExpirySweep, buildTrustMonthlySummary, buildAgentReview, trailingDaysSince, AGENT_REVIEW_DEFAULT_DAYS, AGENT_REVIEW_MAX_DAYS } from './spine/jobs.js';
+import { runExpirySweep, runMissedDeliveryCheck, buildTrustMonthlySummary, buildAgentReview, trailingDaysSince, AGENT_REVIEW_DEFAULT_DAYS, AGENT_REVIEW_MAX_DAYS } from './spine/jobs.js';
 import { getCatalogue, checkCatalogueAgainstBrand } from './staff/catalogue.js';
 import { setStaffDeps, createWriteLimiter, executeStaffTool } from './staff/execute.js';
 import { createStaffRouter } from './staff/ui/router.js';
@@ -110,6 +110,8 @@ let db: Database.Database;
 let anthropic: Anthropic;
 /** Set at boot from buildSpine: tells a staff member their proposal expired (staff access spec §7.3). */
 let notifyRequester: ((id: number) => Promise<void>) | null = null;
+/** Set at boot from buildSpine: fires SPINE_WAKE_HOOKS for an in-process event. */
+let spineWake: ((eventType: string, eventId: number) => void) | null = null;
 // Per-user: users whose hourly check-in is waiting for a reply (logged as time).
 const awaitingCheckInResponse = new Set<string>();
 // Per-user flag: expecting Rob/member's reply to the EOD reflection prompt.
@@ -353,6 +355,14 @@ async function handleSpineSweep(): Promise<void> {
   if (!report) return;
   try { await sendMessageToUser(config.spine.monthlySummaryUserId, report, false); }
   catch (err) { console.error('Spine sweep report failed:', err); }
+}
+
+/** Hourly: a design sheet an agent has not taken in 24 h becomes a task for Chief on grok_task_chief (no card, no Telegram). */
+async function handleMissedDeliveryCheck(): Promise<void> {
+  const id = runMissedDeliveryCheck(db, new Date().toISOString());
+  if (id === null) return;
+  console.log(`Missed delivery check: alerted Chief (event #${id})`);
+  try { spineWake?.('grok_task_chief', id); } catch (err) { console.error('Missed delivery wake failed:', err); }
 }
 
 async function handleTrustMonthlySummary(): Promise<void> {
@@ -1740,6 +1750,7 @@ async function main() {
   });
   setSpineHttpHandler(spine.handleHttp);
   notifyRequester = spine.notifyRequester;
+  spineWake = spine.wake;
 
   // Staff actions (spec §5, §7.6): a malformed catalogue, a group naming a hand
   // the legacy brand lacks, or an action id equal to a chat tool stops the
@@ -1923,6 +1934,7 @@ async function main() {
     { name: 'Invite Reminders', schedule: '0 9 * * *', handler: handleInviteReminders, description: 'Daily 9 AM — resend invite to entries >48h old with no /start' },
     { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
     { name: 'Spine Sweep', schedule: '0 5 * * *', handler: handleSpineSweep, description: 'Daily 5 AM CT — expire stale proposals, report undrained events and failed runs' },
+    { name: 'Missed Delivery Check', schedule: '20 * * * *', handler: handleMissedDeliveryCheck, description: 'Hourly — design sheets an agent has not taken in 24h, sent to Chief on grok_task_chief' },
     { name: 'Trust Monthly Summary', schedule: '0 7 1 * *', handler: handleTrustMonthlySummary, description: '1st of month 7 AM CT — per-agent trust ledger summary for promotion decisions' },
     { name: 'Lions Schedule Check', schedule: '0 6,12,18 * * *', handler: handleLionsCheck, description: '6 AM / noon / 6 PM CT — diff the CPS SCORE! sheet for South Loop Lions changes' },
     { name: 'Lions Schedule Check (Fri PM)', schedule: '0 20 * * 5', handler: handleLionsCheck, description: 'Friday 8 PM CT — last look before Saturday games' },

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { listStaleEvents } from '../db/event-queries.js';
+import { insertEvent, listMissedDeliveries, listStaleEvents, markMissedDeliveriesAlerted } from '../db/event-queries.js';
 import { listFailedRunsSince } from '../db/run-index-queries.js';
 import { trustSummarySince } from '../db/trust-queries.js';
 import { listReviewProposals, listReviewRuns, listReviewTrust } from '../db/review-queries.js';
@@ -40,6 +40,48 @@ export function runExpirySweep(
     if (failed.length > LIST_CAP) lines.push(`  …and ${failed.length - LIST_CAP} more`);
   }
   return lines.join('\n');
+}
+
+/** Event types with several consumers, each of which must take every event (SR-20261027-001). */
+export const DELIVERY_CONSUMERS: Record<string, string[]> = {
+  design_sheet_executed: ['design-artist', 'sourcing', 'costing'],
+};
+const MISSED_AFTER_MS = 24 * 3_600_000;
+const MISSED_LIST_CAP = 20;
+
+/**
+ * Missed-sheet health check (PR #17 follow-up): a design_sheet_executed event
+ * with no delivery row for one of its consumers after 24 hours becomes one
+ * `missed_delivery` task for Chief on grok_task_chief (Robert, 2026-10-27:
+ * alerts go to Chief, never a card, Telegram or the briefing). Each
+ * (event, consumer) is reported once. Returns the task's event id, or null.
+ */
+export function runMissedDeliveryCheck(db: Database.Database, nowIso: string): number | null {
+  const olderThan = new Date(new Date(nowIso).getTime() - MISSED_AFTER_MS).toISOString();
+  return db.transaction(() => {
+    const misses = Object.entries(DELIVERY_CONSUMERS)
+      .flatMap(([type, agents]) => agents.flatMap((a) => listMissedDeliveries(db, type, a, olderThan).map((m) => ({ ...m, event_type: type }))))
+      .sort((a, b) => a.event_id - b.event_id || a.agent.localeCompare(b.agent));
+    if (misses.length === 0) return null;
+    markMissedDeliveriesAlerted(db, misses, nowIso);
+    const shown = misses.slice(0, MISSED_LIST_CAP);
+    const lines = shown.map((m) => `${m.event_type} #${m.event_id} (${m.brand_id}, ${m.received_at.slice(0, 16)}Z): ${m.agent} has not taken it`);
+    if (misses.length > shown.length) lines.push(`…and ${misses.length - shown.length} more`);
+    return insertEvent(db, {
+      source_hand: 'mcsecretary', brand_id: 'dearborn-denim', event_type: 'grok_task_chief', urgent: false,
+      payload: {
+        task_id: `missed-delivery-${nowIso.replace(/\D/g, '').slice(0, 14)}`,
+        kind: 'missed_delivery',
+        args: {
+          for: 'chief',
+          message: `${misses.length} event${misses.length === 1 ? '' : 's'} not taken by an agent after 24 hours. Tell Robert in Grok; the agent named has probably stopped draining.`,
+          lines,
+          missed: shown,
+        },
+        notify: false, due: null, filed_by: 'mcsecretary', reply_type: null,
+      },
+    }, nowIso);
+  })();
 }
 
 /** Monthly trust summary for Robert (spec §4.4: promotion is his call). */

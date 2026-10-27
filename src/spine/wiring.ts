@@ -123,7 +123,7 @@ export function buildSpine(d: SpineBuildDeps) {
   });
 
   return {
-    file, onCallback, onText, handleHttp, execute, handFetch: fetchWithTimeout, loadBrand, notifyRequester: notifyRequesterOf,
+    file, onCallback, onText, handleHttp, execute, handFetch: fetchWithTimeout, loadBrand, notifyRequester: notifyRequesterOf, wake,
   };
 }
 
