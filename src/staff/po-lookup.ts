@@ -14,6 +14,23 @@ import { isPlainObject as isObj } from '../spine/json-object.js';
 
 /** kanban's LIMIT on the open-PO list. */
 export const KANBAN_PO_LIST_LIMIT = 200;
+/**
+ * The most JSON this answer may be: under grok-action's 32,000-char result
+ * cap (which would turn it into truncated text), with room for the envelope.
+ */
+export const PO_ANSWER_MAX = 30_000;
+const LINES_HINT = 'name one with po for its lines.';
+
+/** A PO without its lines: what an unfiltered lookup, or an over-long one, answers per PO. */
+export interface PoSummary {
+  po_id: unknown;
+  po_number: unknown;
+  vendor: unknown;
+  status: unknown;
+  expected_delivery: unknown;
+  open_lines: number;
+  open_units: number;
+}
 
 export interface PoLookupLine {
   line_id: unknown;
@@ -39,7 +56,7 @@ export interface PoLookupAnswer {
   as_of: string | null;
   match: { po?: string; q?: string };
   count: number;
-  pos: PoLookupPo[];
+  pos: (PoLookupPo | PoSummary)[];
   /** A plain sentence when nothing matched (not a failure). */
   message?: string;
   /** kanban's list was cut at 200 and the filter could not reach past it. */
@@ -74,6 +91,41 @@ export function mapPo(p: Record<string, unknown>): PoLookupPo {
     ...rest,
     lines: Array.isArray(lines) ? lines.filter(isObj).map(mapPoLine) : [],
   };
+}
+
+/** The PO as one summary row: lines with something open, and the open quantity summed across them (any unit). */
+export function summarisePo(p: PoLookupPo): PoSummary {
+  const open = p.lines.filter((l) => (l.open ?? 0) > 0);
+  return {
+    po_id: p.po_id, po_number: p.po_number, vendor: p.vendor, status: p.status,
+    expected_delivery: p.expected_delivery ?? null,
+    open_lines: open.length,
+    open_units: round2(open.reduce((n, l) => n + (l.open ?? 0), 0)),
+  };
+}
+
+const size = (v: unknown) => JSON.stringify(v).length;
+
+/**
+ * Keep the answer under PO_ANSWER_MAX: the oldest POs (kanban lists newest
+ * first) lose their lines first, then, if summaries alone are still too
+ * long, the oldest summaries go. Either way `partial` says so.
+ */
+function fitAnswer(answer: PoLookupAnswer): PoLookupAnswer {
+  if (size(answer) <= PO_ANSWER_MAX) return answer;
+  const pos = [...answer.pos];
+  const out = { ...answer, pos };
+  for (let i = pos.length - 1; i >= 0 && size(out) > PO_ANSWER_MAX; i--) {
+    const p = pos[i]!;
+    if ('lines' in p) pos[i] = summarisePo(p);
+  }
+  let dropped = 0;
+  while (pos.length > 0 && size(out) > PO_ANSWER_MAX) { pos.pop(); dropped++; }
+  const why = dropped
+    ? `Too many POs to list; the oldest ${dropped} were left out and the rest are summaries; ${LINES_HINT}`
+    : `Too long to list every line; the oldest POs are summaries without lines; ${LINES_HINT}`;
+  out.partial = answer.partial ? `${answer.partial} ${why}` : why;
+  return out;
 }
 
 /** "PO 1003", "po#1003", "#1003", " 1003 " → "1003". */
@@ -123,8 +175,9 @@ export function poLookupAnswer(body: unknown, f: { po?: string; q?: string }, ve
     as_of: isObj(body) && typeof body.as_of === 'string' ? body.as_of : null,
     match: { ...(po ? { po } : {}), ...(q ? { q } : {}) },
     count: hits.length,
-    pos: hits.map(mapPo),
+    pos: po || q ? hits.map(mapPo) : hits.map((p) => summarisePo(mapPo(p))),
   };
+  if (!po && !q && hits.length > 0) answer.message = `${hits.length} open PO${hits.length === 1 ? '' : 's'}; ${LINES_HINT}`;
   const label = po ? `PO ${normalisePoRef(po)}` : '';
   if (hits.length === 0) {
     answer.message = po && q && findPo(all, po)
@@ -139,5 +192,5 @@ export function poLookupAnswer(body: unknown, f: { po?: string; q?: string }, ve
   } else if (truncated && !po && !q) {
     answer.partial = `kanban lists only the newest ${KANBAN_PO_LIST_LIMIT} open POs; name a PO or a vendor to look further.`;
   }
-  return answer;
+  return fitAnswer(answer);
 }
