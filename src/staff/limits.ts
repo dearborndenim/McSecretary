@@ -39,7 +39,8 @@ export interface OpenPo {
   lines: OpenPoLine[];
 }
 export interface ReceiptLine {
-  line_id?: string;
+  /** kanban-purchaser's PO line id: a positive integer (it answers 400 to anything else). */
+  line_id?: number;
   sku?: string;
   quantity: number;
   unit?: string;

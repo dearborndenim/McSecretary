@@ -569,20 +569,20 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
   ] };
 
   it('PO line of 95: 37 runs flagged short, 95 runs clean, 96 runs flagged over', () => {
-    expect(checkPoReceipt(po, [{ line_id: '41', quantity: 37 }]))
+    expect(checkPoReceipt(po, [{ line_id: 41, quantity: 37 }]))
       .toMatchObject({ ok: true, flags: ['We only got 37 of the 95 zippers ordered on PO 1003.'] });
     expect(checkPoReceipt(po, [{ sku: 'zip-5', quantity: 95 }])).toMatchObject({ ok: true, flags: [] });
-    expect(checkPoReceipt(po, [{ line_id: '41', quantity: 96 }]))
+    expect(checkPoReceipt(po, [{ line_id: 41, quantity: 96 }]))
       .toMatchObject({ ok: true, flags: ['We got 96 of the 95 zippers ordered on PO 1003.'] });
   });
 
   it('measures a partly received line by what is still open, sums a line named twice, refuses another unit', () => {
-    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 6 }])).toMatchObject({ ok: true, flags: [] });
-    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 4 }, { sku: 'THR-1', quantity: 3 }]))
+    expect(checkPoReceipt(po, [{ line_id: 42, quantity: 6 }])).toMatchObject({ ok: true, flags: [] });
+    expect(checkPoReceipt(po, [{ line_id: 42, quantity: 4 }, { sku: 'THR-1', quantity: 3 }]))
       .toMatchObject({ ok: true, flags: ['We got 7 of the 6 thread cones still open (10 ordered) on PO 1003.'] });
-    expect(checkPoReceipt(po, [{ line_id: '42', quantity: 2 }]))
+    expect(checkPoReceipt(po, [{ line_id: 42, quantity: 2 }]))
       .toMatchObject({ flags: ['We only got 2 of the 6 thread cones still open (10 ordered) on PO 1003.'] });
-    const unit = checkPoReceipt(po, [{ line_id: '41', quantity: 5, unit: 'boxes' }]);
+    const unit = checkPoReceipt(po, [{ line_id: 41, quantity: 5, unit: 'boxes' }]);
     expect(!unit.ok && unit.reason).toMatch(/counts zippers in units, not boxes/);
   });
 });
@@ -685,11 +685,11 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     expect([over.status, over.reason]).toEqual(['refused', '26 × MICA-32-30 is more than the 25 units per SKU allowed per request. Nothing was moved.']);
     const same = (await post({ idempotency_key: 'l4', action: 'inventory_transfer', params: { sku: 'X', quantity: 1, from: 'store', to: 'andersonville', reason: 'r' } }).done)!;
     expect(same.reason).toBe('From and to are both andersonville; nothing would move.');
-    await post({ idempotency_key: 'l5', action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 96 }] } }).done;
+    await post({ idempotency_key: 'l5', action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: 41, quantity: 96 }] } }).done;
     const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body as Record<string, unknown>);
     expect(posts[0]).toMatchObject({ location_id: FACTORY, quantity: 4 });
     expect(posts[1]).toEqual({ sku: 'MICA-32-30', quantity: 25, from_location_id: FACTORY, to_location_id: STORE, reason: 'restock', idempotency_key: `grok-action-${t.audit_id}` });
-    expect(posts[2]).toMatchObject({ allow_over: true, lines: [{ line_id: '41', quantity: 96 }] });
+    expect(posts[2]).toMatchObject({ allow_over: true, lines: [{ line_id: 41, quantity: 96 }] });
     expect(posts).toHaveLength(3);
   });
 
@@ -721,11 +721,12 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     expect(calls.filter((c) => c.method === 'POST').map((c) => (c.body as { quantity: number }).quantity)).toEqual([6, 104, 106]);
   });
 
-  it('receives a short PO line and carries the flag for Robert', async () => {
+  it('receives a short PO line and carries the flag for Robert; line_id reaches kanban as an integer', async () => {
+    // Regression (review #3): a string line_id passed validation and kanban answered 400.
     const r = (await post({ action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 37 }] } }).done)!;
     expect(r.status).toBe('ok');
     expect(r.flag_for_robert).toEqual(['We only got 37 of the 95 zippers ordered on PO 1003.']);
-    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ lines: [{ line_id: '41', quantity: 37 }], received_by: 'Kristina', idempotency_key: `grok-action-${r.audit_id}` });
+    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ lines: [{ line_id: 41, quantity: 37 }], received_by: 'Kristina', idempotency_key: `grok-action-${r.audit_id}` });
   });
 
   it('origin checks: none, unknown bot, someone else\'s bot, an action the bot or the groups lack', async () => {
@@ -739,7 +740,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const botLacks = await run({ origin: { person: 'o@dd.com', bot: 'olivier-stock' }, action: 'store_inventory_set', params: { sku: 'X', quantity: 1, reason: 'r' } }, 'k5');
     expect(botLacks.reason).toBe('The bot olivier-stock may not use store_inventory_set.');
     registerOriginBot(db, 'olivier-stock', 'o@dd.com', 'inventory_lookup,vendor_po_receive', NOW);
-    const groupLacks = await run({ origin: { person: 'o@dd.com', bot: 'olivier-stock' }, action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 1 }] } }, 'k6');
+    const groupLacks = await run({ origin: { person: 'o@dd.com', bot: 'olivier-stock' }, action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: 41, quantity: 1 }] } }, 'k6');
     expect(groupLacks.reason).toBe("vendor_po_receive is not allowed for Olivier's groups.");
     expect(calls).toEqual([]);
   });

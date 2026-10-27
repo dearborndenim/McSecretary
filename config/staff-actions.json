@@ -125,7 +125,7 @@
           "max": 40,
           "description": "What arrived, one entry per PO line: {line_id or sku, quantity, unit?}.",
           "items": {
-            "line_id": { "type": "string", "max": 64, "description": "PO line id from vendor_po_lookup." },
+            "line_id": { "type": "integer", "min": 1, "max": 2147483647, "description": "PO line id (a whole number) from vendor_po_lookup." },
             "sku": { "type": "string", "max": 64, "description": "Material SKU, when the line id is not known." },
             "quantity": { "type": "number", "required": true, "min": 0.01, "max": 99999, "description": "Quantity received on this line." },
             "unit": { "type": "enum", "enum": ["rolls", "yards", "units", "boxes", "cones"], "description": "Unit of the quantity, when it differs from the PO line." }
