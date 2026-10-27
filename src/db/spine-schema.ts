@@ -55,6 +55,22 @@ export function initializeSpineSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_spine_events_drain ON spine_events(drained_at, event_type);
 
+    -- spine_event_deliveries: one row per (event, agent) that drained it, so an
+    -- event type with several consumers (design_sheet_executed: design-artist,
+    -- sourcing, costing) reaches each of them once. Applies only to events
+    -- after spine_meta.delivery_cutover_id; older ones keep the one-drain rule.
+    CREATE TABLE IF NOT EXISTS spine_event_deliveries (
+      event_id INTEGER NOT NULL,
+      agent TEXT NOT NULL,
+      drained_at TEXT NOT NULL,
+      PRIMARY KEY (event_id, agent)
+    );
+
+    CREATE TABLE IF NOT EXISTS spine_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS trust_ledger (
       agent TEXT NOT NULL,
       brand_id TEXT NOT NULL,
@@ -163,6 +179,13 @@ export function initializeSpineSchema(db: Database.Database): void {
   const eventCols = (db.prepare('PRAGMA table_info(spine_events)').all() as { name: string }[]).map((c) => c.name);
   if (!eventCols.includes('posted_by')) db.exec('ALTER TABLE spine_events ADD COLUMN posted_by TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS idx_spine_events_posted ON spine_events(posted_by, received_at)');
+
+  // Per-consumer delivery cutover: recorded once, on the first boot with
+  // spine_event_deliveries, as the newest event id then. Events at or below it
+  // were never re-delivered (no backfill, Robert 2026-10-27).
+  db.prepare(
+    "INSERT OR IGNORE INTO spine_meta (key, value) SELECT 'delivery_cutover_id', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM spine_events",
+  ).run();
 
   // Additive migration: rfq_messages.ack_message_id / acknowledged_at (RFQ reply
   // acknowledgement, spec change 2). ack_message_id holds the *inbound* vendor
