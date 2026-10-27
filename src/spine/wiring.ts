@@ -17,6 +17,8 @@ import type { AgentPolicy } from './agent-policy.js';
 import { notifyRequester } from '../staff/notify.js';
 import { makeWaker, parseWakeHooks } from './wake-hooks.js';
 import { spineFilesDir } from './files.js';
+import { createGrokActionHandler } from '../staff/grok-action.js';
+import { getCatalogue } from '../staff/catalogue.js';
 
 export interface SpineBuildDeps {
   db: Database.Database;
@@ -111,9 +113,13 @@ export function buildSpine(d: SpineBuildDeps) {
     return true;
   };
 
+  const wake = makeWaker(parseWakeHooks(d.env.SPINE_WAKE_HOOKS), d.fetch);
+  const grokAction = createGrokActionHandler({
+    db: d.db, now: d.now, env: d.env, loadBrand, handFetch: d.fetch, catalogue: getCatalogue, wake, log: console.log,
+  });
   const handleHttp = createSpineRouter({
     db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file, handFetch: fetchWithTimeout, env: d.env,
-    agentPolicy: d.agentPolicy, feedbackRoot, filesDir: spineFilesDir(d.env), wake: makeWaker(parseWakeHooks(d.env.SPINE_WAKE_HOOKS), d.fetch),
+    agentPolicy: d.agentPolicy, feedbackRoot, filesDir: spineFilesDir(d.env), wake, grokAction,
   });
 
   return {

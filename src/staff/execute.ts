@@ -40,7 +40,7 @@ const HAND_LABELS: Record<string, string> = {
   'cs-desk': 'customer-service desk',
 };
 
-function label(hand: string): string {
+export function label(hand: string): string {
   return HAND_LABELS[hand] ?? hand;
 }
 
@@ -332,7 +332,7 @@ export function refusalDetail(body: unknown, fallback?: string): string {
   return fallback ? cap(fallback, DETAIL_CAP) : 'no detail given';
 }
 
-function handAvailability(brand: BrandConfig, hand: string, env: Record<string, string | undefined>): string | null {
+export function handAvailability(brand: BrandConfig, hand: string, env: Record<string, string | undefined>): string | null {
   if (!Object.hasOwn(brand.hands, hand)) {
     return BUILT_IN_HANDS.has(hand) ? null : `That action is not available for ${brand.display_name}; nothing was done.`;
   }

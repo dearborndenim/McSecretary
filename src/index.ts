@@ -867,8 +867,8 @@ async function handleIncomingMessage(user: User, text: string): Promise<string> 
     return `Invite code for ${targetUser.name} (${email}):\n\n\`${code}\`\n\nExpires in 7 days. They send /start ${code} to the bot.`;
   }
 
-  // Admin-only: /grant, /grants, /setlocation, /setlanguage — staff access (spec §7.5).
-  if (user.role === 'admin' && /^\/(grant|grants|setlocation|setlanguage)(\s|$)/.test(lowerText)) {
+  // Admin-only: /grant, /grants, /setlocation, /setlanguage — staff access (spec §7.5); /originbot(s) — OPERATOR origin bots.
+  if (user.role === 'admin' && /^\/(grant|grants|setlocation|setlanguage|originbot|originbots)(\s|$)/.test(lowerText)) {
     const reply = handleStaffAdminCommand(db, text, config.spine.brandsDir);
     if (reply !== null) return reply;
   }
