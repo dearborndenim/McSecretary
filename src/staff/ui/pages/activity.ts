@@ -4,7 +4,7 @@
  * export of the same filter.
  */
 
-import { listRecentAudit } from '../../../db/operator-queries.js';
+import { listRecentAudit, listStuckAudit } from '../../../db/operator-queries.js';
 import { getAllUsers } from '../../../db/user-queries.js';
 import { listStaffProposals, STAFF_PAGE_SIZE, type StaffProposalFilter } from '../../../db/proposal-queries.js';
 import { extractNotify } from '../../../spine/executor.js';
@@ -154,12 +154,17 @@ ${aq.page < pages ? html`<a href="${linkFor(f, { page: String(aq.page + 1) })}">
 ${renderOperatorRequests(ctx)}`;
 }
 
+/** A request still `running` this long never got its answer (a crash or a hung hand). */
+const STUCK_MS = 10 * 60_000;
+
 /** The last 50 OPERATOR direct actions (grok_action), newest first: who, via which bot, what, and how it ended. */
 function renderOperatorRequests(ctx: PageCtx): Safe {
   const rows = listRecentAudit(ctx.db, 50);
+  const stuck = listStuckAudit(ctx.db, new Date(Date.parse(ctx.nowIso) - STUCK_MS).toISOString());
   const names = new Map(getAllUsers(ctx.db).map((u) => [u.id, u.name]));
   return html`<h2>OPERATOR requests</h2>
 <p class="small mute">Requests from Grok assistant bots via OPERATOR. Within limits they run with no approval.</p>
+${stuck.length === 0 ? '' : html`<p class="notice err"><strong>${stuck.length} request${stuck.length === 1 ? '' : 's'} still running after 10 minutes</strong> (no answer reached OPERATOR; check the service before anyone resends): ${stuck.map((r) => html`#${r.id} ${r.action} ${r.request_id} (${chicago(r.received_at)}) `)}</p>`}
 ${rows.length === 0 ? html`<p class="mute">None yet.</p>` : html`<table class="stack"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>Reason</th></tr></thead><tbody>
 ${rows.map((r) => html`<tr>
 <td data-k="when">${chicago(r.received_at)}<div class="mute small">#${r.id} · ${r.request_id}</div></td>

@@ -43,6 +43,8 @@ export function initializeOperatorSchema(db: Database.Database): void {
       escalation_event_id INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_operator_action_audit_received ON operator_action_audit (received_at);
+    -- One run per OPERATOR request: a resend under a new idempotency_key is still the same request.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_action_audit_request ON operator_action_audit (posted_by, request_id);
   `);
 }
 
@@ -117,6 +119,15 @@ export interface OperatorAuditRow {
 
 export function getAuditByKey(db: Database.Database, key: string): OperatorAuditRow | undefined {
   return db.prepare('SELECT * FROM operator_action_audit WHERE idempotency_key = ?').get(key) as OperatorAuditRow | undefined;
+}
+
+export function getAuditByRequest(db: Database.Database, postedBy: string, requestId: string): OperatorAuditRow | undefined {
+  return db.prepare('SELECT * FROM operator_action_audit WHERE posted_by = ? AND request_id = ?').get(postedBy, requestId) as OperatorAuditRow | undefined;
+}
+
+/** Rows still `running` that were received before `beforeIso` (the answer never came back). */
+export function listStuckAudit(db: Database.Database, beforeIso: string): OperatorAuditRow[] {
+  return db.prepare("SELECT * FROM operator_action_audit WHERE status = 'running' AND received_at < ? ORDER BY id").all(beforeIso) as OperatorAuditRow[];
 }
 
 export function getAuditById(db: Database.Database, id: number): OperatorAuditRow | undefined {

@@ -18,8 +18,9 @@
 
 import type Database from 'better-sqlite3';
 import { insertEvent } from '../db/event-queries.js';
+import crypto from 'node:crypto';
 import {
-  finishAudit, getAuditByKey, getOriginBot, insertAudit, originBotActions,
+  finishAudit, getAuditByKey, getAuditByRequest, getOriginBot, insertAudit, originBotActions,
 } from '../db/operator-queries.js';
 import { getUserByEmail, type User } from '../db/user-queries.js';
 import { SLUG_RE } from '../spine/agent-policy.js';
@@ -218,10 +219,22 @@ async function checkLimits(
   return { ok: false, outcome: refused(`${action.id} has an unknown limit kind.`) };
 }
 
-/** The write itself, straight to the hand with the hand's bearer; the hand idempotency key is per audit row. */
+/**
+ * The hand's idempotency key for one OPERATOR request: derived from request_id
+ * (not the audit row), so a resend that ever reaches a hand replays the hand's
+ * stored answer instead of writing again. Sanitised to [A-Za-z0-9._-]; the
+ * hash keeps two request_ids that sanitise alike apart. At most 120 chars.
+ */
+export function handIdempotencyKey(postedBy: string, requestId: string): string {
+  const safe = requestId.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
+  const hash = crypto.createHash('sha256').update(`${postedBy}\n${requestId}`).digest('hex').slice(0, 12);
+  return `grok-op-${safe}-${hash}`;
+}
+
+/** The write itself, straight to the hand with the hand's bearer, keyed by the OPERATOR request. */
 async function runWrite(
   d: GrokActionDeps, action: StaffAction, params: Record<string, unknown>, user: User, brand: BrandConfig,
-  req: GrokActionRequest, auditId: number,
+  req: GrokActionRequest, postedBy: string,
 ): Promise<Outcome> {
   const built = buildWriteProposal(action, params, user, brand, `OPERATOR ${req.request_id} via ${String((req.origin as { bot?: unknown }).bot)}`, d.now());
   if (!built.ok) return refused(built.error, { escalate: 'invalid_params' });
@@ -232,7 +245,7 @@ async function runWrite(
   const resolved = resolveHandUrl(target.url, payload.path);
   if (!resolved.ok) return refused(resolved.error, { escalate: 'invalid_params' });
   const href = withForwardedBrand(resolved.href, forwardBrandKey(brand, payload.hand), user.brand_id);
-  const key = `grok-action-${auditId}`;
+  const key = handIdempotencyKey(postedBy, req.request_id);
   const body = JSON.stringify(payload.body).split(PROPOSAL_ID_PLACEHOLDER).join(key);
   let answer: HandAnswer;
   try {
@@ -251,7 +264,7 @@ async function runWrite(
 }
 
 /** Everything after the envelope: never throws. */
-async function decide(d: GrokActionDeps, req: GrokActionRequest, auditId: number): Promise<Outcome> {
+async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: string): Promise<Outcome> {
   const o = req.origin;
   if (!isObj(o) || !str(o.person, 200) || !str(o.bot, 64)) {
     return refused('The request has no origin {person, bot}; every request must name the employee and their bot.', { escalate: 'invalid_request' });
@@ -299,7 +312,7 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, auditId: number
 
   const limit = await checkLimits(d, action, params.values, brand);
   if (!limit.ok) return { ...limit.outcome, user };
-  const out = await runWrite(d, action, params.values, user, brand, req, auditId);
+  const out = await runWrite(d, action, params.values, user, brand, req, postedBy);
   return {
     ...out, limit: { ...limit.check, locations: located.named }, user,
     flags: out.status === 'ok' && limit.check.ok ? limit.check.flags : [],
@@ -398,10 +411,10 @@ function escalate(d: GrokActionDeps, req: GrokActionRequest, r: ActionResult, wh
 }
 
 /** Run a stored request to its answer: decide, audit, post the action_result, wake, escalate. Never throws. */
-export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, auditId: number): Promise<ActionResult> {
+export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, auditId: number, postedBy: string): Promise<ActionResult> {
   let out: Outcome;
   try {
-    out = await decide(d, req, auditId);
+    out = await decide(d, req, postedBy);
   } catch (err) {
     out = failed(`Internal error: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -460,8 +473,9 @@ export function createGrokActionHandler(d: GrokActionDeps) {
     const parsed = parseGrokAction(event.payload, event.source_hand);
     if (!parsed.ok) return { status: 400, body: { error: `grok_action: ${parsed.error}` }, done: none };
     const req = parsed.req;
+    // A repeat is the same idempotency_key, or the same request_id under a new key (a resend).
     const dup = () => {
-      const row = getAuditByKey(d.db, req.idempotency_key);
+      const row = getAuditByKey(d.db, req.idempotency_key) ?? getAuditByRequest(d.db, agent, req.request_id);
       return row ? { status: 200, body: { id: row.event_id, audit_id: row.id, duplicate: true, status: row.status }, done: none } : null;
     };
     const seen = dup();
@@ -488,7 +502,7 @@ export function createGrokActionHandler(d: GrokActionDeps) {
       if (again) return again;
       throw err;
     }
-    const done = runGrokAction(d, req, ids.auditId);
+    const done = runGrokAction(d, req, ids.auditId, agent);
     return { status: 200, body: { id: ids.eventId, audit_id: ids.auditId }, done };
   };
 }

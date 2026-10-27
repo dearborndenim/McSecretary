@@ -18,7 +18,7 @@ import {
   buildWriteProposal, createWriteLimiter, executeStaffAction, refusalDetail, validateParams, type StaffExecDeps,
 } from '../../src/staff/execute.js';
 import { checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
-import { createGrokActionHandler, withLevelsByLocation, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
+import { createGrokActionHandler, handIdempotencyKey, withLevelsByLocation, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
 import { getAuditById } from '../../src/db/operator-queries.js';
 import { registerOriginBot } from '../../src/staff/admin-commands.js';
 import { setCatalogue } from '../../src/staff/catalogue.js';
@@ -639,7 +639,8 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
   function post(payload: Record<string, unknown>, opts: { agent?: string; source?: string } = {}) {
     return handler()(opts.agent ?? 'grok-bots', {
       source_hand: opts.source ?? 'grok-operator', brand_id: 'dearborn-denim', event_type: 'grok_action', urgent: false,
-      payload: { bot: 'operator', sent_at: NOW, idempotency_key: 'act-1', request_id: 'OP-1',
+      payload: { bot: 'operator', sent_at: NOW, idempotency_key: 'act-1',
+        request_id: typeof payload.idempotency_key === 'string' ? `OP-${payload.idempotency_key}` : 'OP-1',
         origin: { person: 'k@dd.com', bot: 'kristina-assistant' }, action: 'inventory_lookup', params: { q: 'MICA-32-30' },
         operator_check: { rule: 'reads', verdict: 'ok' }, ...payload },
     });
@@ -668,7 +669,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const r = (await post({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 24, reason: 'recount' } }).done)!;
     expect(r.status).toBe('ok');
     const write = calls.find((c) => c.method === 'POST')!;
-    expect(write.body).toEqual({ sku: 'MICA-32-30', location_id: STORE, quantity: 24, reason: 'recount', idempotency_key: `grok-action-${r.audit_id}` });
+    expect(write.body).toEqual({ sku: 'MICA-32-30', location_id: STORE, quantity: 24, reason: 'recount', idempotency_key: handIdempotencyKey('grok-bots', 'OP-1') });
     expect(db.prepare('SELECT COUNT(*) AS n FROM proposals').get()).toEqual({ n: 0 });
     const row = getAuditById(db, r.audit_id)!;
     expect([row.person, row.user_id, row.origin_bot, row.via, row.request_id, row.status, row.hand_status])
@@ -688,7 +689,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     await post({ idempotency_key: 'l5', action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: 41, quantity: 96 }] } }).done;
     const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body as Record<string, unknown>);
     expect(posts[0]).toMatchObject({ location_id: FACTORY, quantity: 4 });
-    expect(posts[1]).toEqual({ sku: 'MICA-32-30', quantity: 25, from_location_id: FACTORY, to_location_id: STORE, reason: 'restock', idempotency_key: `grok-action-${t.audit_id}` });
+    expect(posts[1]).toEqual({ sku: 'MICA-32-30', quantity: 25, from_location_id: FACTORY, to_location_id: STORE, reason: 'restock', idempotency_key: handIdempotencyKey('grok-bots', 'OP-l2') });
     expect(posts[2]).toMatchObject({ allow_over: true, lines: [{ line_id: 41, quantity: 96 }] });
     expect(posts).toHaveLength(3);
   });
@@ -726,7 +727,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const r = (await post({ action: 'vendor_po_receive', params: { po_id: '7', lines: [{ line_id: '41', quantity: 37 }] } }).done)!;
     expect(r.status).toBe('ok');
     expect(r.flag_for_robert).toEqual(['We only got 37 of the 95 zippers ordered on PO 1003.']);
-    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ lines: [{ line_id: 41, quantity: 37 }], received_by: 'Kristina', idempotency_key: `grok-action-${r.audit_id}` });
+    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ lines: [{ line_id: 41, quantity: 37 }], received_by: 'Kristina', idempotency_key: handIdempotencyKey('grok-bots', 'OP-1') });
   });
 
   it('origin checks: none, unknown bot, someone else\'s bot, an action the bot or the groups lack', async () => {
@@ -754,7 +755,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     const reports = events('grok_report');
     expect(reports.map((e) => [e.source_hand, e.posted_by, e.payload.bot, e.payload.filed_by])).toEqual(Array(3).fill(['grok-operator', null, 'operator', 'mcsecretary']));
     expect(reports.map((e) => e.payload.title)).toEqual([
-      'needs_claude: OPERATOR OP-1 make_basket refused', 'needs_claude: OPERATOR OP-1 store_inventory_set refused', 'needs_claude: OPERATOR OP-1 inventory_lookup failed',
+      'needs_claude: OPERATOR OP-u1 make_basket refused', 'needs_claude: OPERATOR OP-u2 store_inventory_set refused', 'needs_claude: OPERATOR OP-u3 inventory_lookup failed',
     ]);
     expect(reports[2]!.payload.needs_claude[0]).toMatch(/answered 500/);
   });
@@ -766,6 +767,22 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     await first.done; await second.done;
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
     expect(events('grok_task_chief')).toHaveLength(1);
+  });
+
+  it('runs a resend of the same request_id under a new idempotency_key once (review #4)', async () => {
+    const params = { sku: 'MICA-32-30', quantity: 24, reason: 'recount' };
+    const first = post({ action: 'store_inventory_set', params });
+    await first.done;
+    const resend = handler()('grok-bots', {
+      source_hand: 'grok-operator', brand_id: 'dearborn-denim', event_type: 'grok_action', urgent: false,
+      payload: { bot: 'operator', sent_at: NOW, idempotency_key: 'act-1-retry', request_id: 'OP-1',
+        origin: { person: 'k@dd.com', bot: 'kristina-assistant' }, action: 'store_inventory_set', params },
+    });
+    expect(resend.body).toEqual({ id: first.body.id, audit_id: first.body.audit_id, duplicate: true, status: 'ok' });
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+    // The hand key comes from the request, so a resend that did reach a hand would replay, not write.
+    expect(handIdempotencyKey('grok-bots', 'OP 1/x')).toMatch(/^grok-op-OP_1_x-[0-9a-f]{12}$/);
+    expect(handIdempotencyKey('grok-bots', 'OP 1/x')).not.toBe(handIdempotencyKey('grok-bots', 'OP_1_x'));
   });
 
   it('takes grok_action only from the grok-bots key as grok-operator', () => {
