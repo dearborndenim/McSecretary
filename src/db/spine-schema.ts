@@ -134,6 +134,23 @@ export function initializeSpineSchema(db: Database.Database): void {
       rfq_id TEXT NOT NULL DEFAULT '',
       processed_at TEXT NOT NULL
     );
+
+    -- spine_files: the file drop (POST /spine/files). Bytes live on the volume
+    -- under the spine files dir, named by id; this row is the index, the owner
+    -- and the expiry. Rows and files past expires_at are pruned on upload.
+    CREATE TABLE IF NOT EXISTS spine_files (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      uploaded_by TEXT NOT NULL,
+      source TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_spine_files_uploader ON spine_files(uploaded_by, created_at);
+    CREATE INDEX IF NOT EXISTS idx_spine_files_expiry ON spine_files(expires_at);
   `);
 
   // Additive migration: proposals.run_id (Stage 0B provenance link). PRAGMA-gated like user-schema.ts.

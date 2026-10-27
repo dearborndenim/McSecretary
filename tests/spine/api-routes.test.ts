@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { appendFeedbackRow, type FeedbackBody } from '../../src/spine/feedback-hand.js';
 import http from 'node:http';
 import { initializeSchema } from '../../src/db/schema.js';
@@ -962,5 +963,114 @@ describe('spine routes: design_feedback intake and the feedback store read', () 
     expect(JSON.parse((await get(DESIGNER, '/spine/hands/feedback/designer/other-prompt?brand=knits')).body).rows).toEqual([]);
     expect((await get(COSTING, '/spine/hands/feedback/designer/fall-workwear-2027?brand=dearborn-denim')).status).toBe(403);
     expect((await get(DESIGNER, '/spine/hands/feedback/designer/../x?brand=dearborn-denim')).status).toBe(400);
+  });
+});
+
+describe('file drop (/spine/files)', () => {
+  const BOTS = 'b'.repeat(24);
+  const INBOX = 'i'.repeat(24);
+  const POLICY_JSON = JSON.stringify({
+    'grok-bots': { events: { post_types: ['grok_report'], source_hand: 'grok-*' }, files: true, rate: { files_per_hour: 2 } },
+    'grok-inbox': { events: { drain_types: ['grok_report'] } },
+  });
+  let db: Database.Database;
+  let dir: string;
+  let now: string;
+  let handle: ReturnType<typeof createSpineRouter>;
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db);
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spine-files-'));
+    now = NOW;
+    const agentKeys = new Map([[KEY, 'marketing-manager'], [BOTS, 'grok-bots'], [INBOX, 'grok-inbox']]);
+    handle = createSpineRouter({
+      db, now: () => now, agentKeys, agentPolicy: parseAgentPolicy(POLICY_JSON, agentKeys.values()),
+      brandsDir: path.join(process.cwd(), 'config', 'brands'),
+      file: async () => ({ id: 1, routed: 'card' }), handFetch: async () => new Response('{}'), env: {}, filesDir: dir,
+    });
+  });
+  afterEach(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  const upload = async (key: string | undefined, url: string, bytes: Buffer, contentType: string) => {
+    const r = fakeRes();
+    const req = fakeReq('POST', url, undefined, key ? `Bearer ${key}` : undefined, { chunks: [bytes] });
+    (req.headers as Record<string, string>)['content-type'] = contentType;
+    await handle(req, r.res);
+    return { status: r.out.status, body: JSON.parse(r.out.body) as Record<string, unknown>, req };
+  };
+  const download = async (key: string, url: string) => {
+    let headers: Record<string, string> = {};
+    const out = { status: 0, body: undefined as unknown };
+    const res = {
+      writeHead(s: number, h?: Record<string, string>) { out.status = s; headers = h ?? {}; return res; },
+      end(b?: unknown) { out.body = b; },
+    };
+    await handle(fakeReq('GET', url, undefined, `Bearer ${key}`), res as unknown as import('node:http').ServerResponse);
+    return { ...out, headers };
+  };
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+
+  it('round-trips an upload: bot posts, an unrestricted agent downloads the same bytes', async () => {
+    const up = await upload(BOTS, '/spine/files?name=swatch.png&source=grok-gina', PNG, 'image/png');
+    expect(up.status).toBe(200);
+    const id = up.body.file_id as string;
+    expect(id).toMatch(/^[a-f0-9]{32}$/);
+    expect(up.body).toEqual({
+      file_id: id, url: `/spine/files/${id}`, bytes: PNG.length, content_type: 'image/png', name: 'swatch.png',
+      sha256: crypto.createHash('sha256').update(PNG).digest('hex'), expires_at: '2026-10-07T12:00:00.000Z',
+    });
+    const got = await download(KEY, `/spine/files/${id}`);
+    expect(got.status).toBe(200);
+    expect(got.headers['Content-Type']).toBe('image/png');
+    expect(Buffer.compare(got.body as Buffer, PNG)).toBe(0);
+  });
+
+  it('refuses a missing or unknown bearer, and an agent whose policy lacks files', async () => {
+    expect((await upload(undefined, '/spine/files?name=a.pdf', PNG, 'application/pdf')).status).toBe(401);
+    expect((await upload('x'.repeat(24), '/spine/files?name=a.pdf', PNG, 'application/pdf')).status).toBe(401);
+    const inbox = await upload(INBOX, '/spine/files?name=a.pdf', PNG, 'application/pdf');
+    expect(inbox.status).toBe(403);
+    expect(inbox.body).toEqual({ error: 'policy: grok-inbox may not upload files' });
+    expect((await upload(BOTS, '/spine/files?name=a.pdf&source=grok-inbox', PNG, 'application/pdf')).status).toBe(403);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  it('refuses a type outside the list (SVG, HTML, form posts) with 415', async () => {
+    for (const t of ['image/svg+xml', 'text/html', 'application/x-www-form-urlencoded', 'application/json']) {
+      expect((await upload(KEY, '/spine/files?name=a.bin', PNG, t)).status).toBe(415);
+    }
+    expect((await upload(KEY, '/spine/files?name=a.exe', PNG, 'application/octet-stream')).status).toBe(415);
+    const ok = await upload(KEY, '/spine/files?name=sheet.xlsx', PNG, 'application/octet-stream');
+    expect(ok.body.content_type).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  });
+
+  it('refuses a body over 25 MB with 413 and stores nothing', async () => {
+    const big = Buffer.alloc(25 * 1024 * 1024 + 1);
+    const r = await upload(KEY, '/spine/files?name=big.pdf', big, 'application/pdf');
+    expect(r.status).toBe(413);
+    expect(r.req.destroyed).toBe(true);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM spine_files').get() as { n: number }).n).toBe(0);
+  });
+
+  it('caps uploads per hour from the policy', async () => {
+    for (let i = 0; i < 2; i++) expect((await upload(BOTS, `/spine/files?name=${i}.csv`, PNG, 'text/csv')).status).toBe(200);
+    const third = await upload(BOTS, '/spine/files?name=3.csv', PNG, 'text/csv');
+    expect(third.status).toBe(429);
+    expect(third.body).toEqual({ error: 'policy: grok-bots is over 2 files per hour' });
+  });
+
+  it('a bot reads back only its own uploads', async () => {
+    const mine = await upload(KEY, '/spine/files?name=a.pdf', PNG, 'application/pdf');
+    expect((await download(BOTS, `/spine/files/${mine.body.file_id as string}`)).status).toBe(404);
+  });
+
+  it('prunes files past 30 days on the next upload, and serves an expired one as 404', async () => {
+    const old = await upload(KEY, '/spine/files?name=old.pdf', PNG, 'application/pdf');
+    const oldId = old.body.file_id as string;
+    now = '2026-10-07T12:00:00.000Z';
+    expect((await download(KEY, `/spine/files/${oldId}`)).status).toBe(404);
+    expect(fs.existsSync(path.join(dir, oldId))).toBe(true);
+    await upload(KEY, '/spine/files?name=new.pdf', PNG, 'application/pdf');
+    expect(fs.existsSync(path.join(dir, oldId))).toBe(false);
+    expect(db.prepare('SELECT id FROM spine_files').all()).toHaveLength(1);
   });
 });
