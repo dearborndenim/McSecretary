@@ -36,6 +36,7 @@ import {
 import {
   checkPerSku, checkPoReceipt, findOpenPo, type LimitCheck, type ReceiptLine,
 } from './limits.js';
+import { KANBAN_PO_LIST_LIMIT, poList, poLookupAnswer } from './po-lookup.js';
 import { grantedActionIds } from './tools.js';
 
 export const GROK_ACTION_EVENT = 'grok_action';
@@ -297,6 +298,10 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: strin
   const located = resolveLocationParams(found.operator!, params.values, user, brand);
   if (!located.ok) return { ...located.outcome, user };
 
+  if (action.kind === 'read' && found.operator!.answer === 'open_pos') {
+    return { ...(await openPoLookup(d, action, params.values, user, brand)), user };
+  }
+
   if (action.kind === 'read') {
     const registry = Object.entries(brand.locations ?? {});
     // Asking for every registered location lets factory-fenix answer for a new store without a code change here.
@@ -318,6 +323,27 @@ async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: strin
     ...out, limit: { ...limit.check, locations: located.named }, user,
     flags: out.status === 'ok' && limit.check.ok ? limit.check.flags : [],
   };
+}
+
+/**
+ * vendor_po_lookup from OPERATOR: kanban's open-PO list, filtered by `po` /
+ * `q` here (src/staff/po-lookup.ts). kanban has a vendor filter but no PO
+ * filter and lists at most 200 POs, so when the list is full and `q` is given
+ * it is read again with `vendor=q` to reach that vendor's older POs.
+ */
+async function openPoLookup(
+  d: GrokActionDeps, action: StaffAction, values: Record<string, unknown>, user: User, brand: BrandConfig,
+): Promise<Outcome> {
+  const a = await readAction(d, action, values, user, brand);
+  if (!a.ok || a.status < 200 || a.status >= 300) return handProblem(action.hand, a, 'read the open POs');
+  const body = parseBody(a.text);
+  const f = { po: values.po as string | undefined, q: values.q as string | undefined };
+  let vendorBody: unknown;
+  if (poList(body).length >= KANBAN_PO_LIST_LIMIT && typeof f.q === 'string' && f.q.trim()) {
+    const v = await readAction(d, action, values, user, brand, [['vendor', f.q.trim()]]);
+    if (v.ok && v.status >= 200 && v.status < 300) vendorBody = parseBody(v.text);
+  }
+  return { status: 'ok', reason: null, hand_status: a.status, hand_text: null, result: poLookupAnswer(body, f, vendorBody) };
 }
 
 /**
