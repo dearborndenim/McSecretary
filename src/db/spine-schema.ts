@@ -65,6 +65,19 @@ export function initializeSpineSchema(db: Database.Database): void {
       drained_at TEXT NOT NULL,
       PRIMARY KEY (event_id, agent)
     );
+    CREATE INDEX IF NOT EXISTS idx_spine_event_deliveries_agent ON spine_event_deliveries(agent, event_id);
+    -- Drains filter on event_type then the per-consumer rule; the OR in that
+    -- rule keeps SQLite off idx_spine_events_drain for post-cutover events.
+    CREATE INDEX IF NOT EXISTS idx_spine_events_type_id ON spine_events(event_type, id);
+
+    -- One row per (event, consumer) already reported to Chief as missed
+    -- (runMissedDeliveryCheck), so each miss is alerted once.
+    CREATE TABLE IF NOT EXISTS spine_missed_delivery_alerts (
+      event_id INTEGER NOT NULL,
+      agent TEXT NOT NULL,
+      alerted_at TEXT NOT NULL,
+      PRIMARY KEY (event_id, agent)
+    );
 
     CREATE TABLE IF NOT EXISTS spine_meta (
       key TEXT PRIMARY KEY,

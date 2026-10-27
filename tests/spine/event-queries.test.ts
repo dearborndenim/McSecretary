@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeSchema } from '../../src/db/schema.js';
+import { runMissedDeliveryCheck } from '../../src/spine/jobs.js';
 import { insertEvent, drainEvents, listStaleEvents, countUndrainedUrgent, countPendingByType, deliveryCutoverId } from '../../src/db/event-queries.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
@@ -57,12 +58,12 @@ describe('event queue', () => {
   it('delivers a design_sheet_executed to each of its three consumers exactly once', () => {
     const id = insertEvent(db, ev('design_sheet_executed', true), NOW);
     for (const agent of ['design-artist', 'sourcing', 'costing']) {
-      expect(countPendingByType(db, ['design_sheet_executed'], undefined, agent).design_sheet_executed).toEqual({ pending: 1, urgent: 1 });
+      expect(countPendingByType(db, ['design_sheet_executed'], undefined, agent, NOW).design_sheet_executed).toEqual({ pending: 1, urgent: 1 });
       expect(drainEvents(db, agent, ['design_sheet_executed'], NOW, 'dearborn-denim').map((e) => e.id)).toEqual([id]);
     }
     for (const agent of ['design-artist', 'sourcing', 'costing']) {
       expect(drainEvents(db, agent, ['design_sheet_executed'], NOW)).toEqual([]);
-      expect(countPendingByType(db, ['design_sheet_executed'], undefined, agent).design_sheet_executed!.pending).toBe(0);
+      expect(countPendingByType(db, ['design_sheet_executed'], undefined, agent, NOW).design_sheet_executed!.pending).toBe(0);
     }
     const row = db.prepare('SELECT drained_by FROM spine_events WHERE id = ?').get(id) as { drained_by: string };
     expect(row.drained_by).toBe('design-artist');
@@ -73,7 +74,7 @@ describe('event queue', () => {
     const id = insertEvent(db, ev('grok_digest'), NOW);
     db.prepare("UPDATE spine_events SET drained_by = 'mcsecretary', drained_at = ? WHERE id = ?").run(NOW, id);
     expect(drainEvents(db, 'grok-bots', ['grok_digest'], NOW)).toEqual([]);
-    expect(countPendingByType(db, ['grok_digest'], undefined, 'grok-bots').grok_digest!.pending).toBe(0);
+    expect(countPendingByType(db, ['grok_digest'], undefined, 'grok-bots', NOW).grok_digest!.pending).toBe(0);
   });
 });
 
@@ -109,8 +110,61 @@ describe('per-consumer delivery cutover (migration)', () => {
     const fresh = insertEvent(db, ev('design_sheet_executed'), NOW);
     // The undrained pre-cutover event keeps the one-drain rule: sourcing takes it, costing does not.
     expect(drainEvents(db, 'sourcing', ['design_sheet_executed'], NOW).map((e) => e.id)).toEqual([2, fresh]);
-    expect(countPendingByType(db, ['design_sheet_executed'], undefined, 'costing').design_sheet_executed!.pending).toBe(1);
+    expect(countPendingByType(db, ['design_sheet_executed'], undefined, 'costing', NOW).design_sheet_executed!.pending).toBe(1);
     expect(drainEvents(db, 'costing', ['design_sheet_executed'], NOW).map((e) => e.id)).toEqual([fresh]);
     expect(drainEvents(db, 'design-artist', ['design_sheet_executed'], NOW).map((e) => e.id)).toEqual([fresh]);
+  });
+});
+
+describe('PR #17 follow-up: new-consumer backlog limit and missed-sheet check', () => {
+  let db: Database.Database;
+  const sheet = { source_hand: 'design-module', brand_id: 'dearborn-denim', event_type: 'design_sheet_executed', payload: {}, urgent: true };
+  const DAY = 86_400_000;
+  const ago = (days: number) => new Date(new Date(NOW).getTime() - days * DAY).toISOString();
+  beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); });
+  afterEach(() => db.close());
+
+  it('gives a new consumer only the last 7 days, but an established one its whole backlog', () => {
+    const old = insertEvent(db, sheet, ago(30));
+    // design-artist took the old sheet back then, so it is an established consumer.
+    expect(drainEvents(db, 'design-artist', ['design_sheet_executed'], ago(30)).map((e) => e.id)).toEqual([old]);
+    const recent = insertEvent(db, sheet, ago(2));
+    // A fourth consumer starting today does not get the 30-day-old sheet.
+    expect(countPendingByType(db, ['design_sheet_executed'], undefined, 'new-agent', NOW).design_sheet_executed!.pending).toBe(1);
+    expect(drainEvents(db, 'new-agent', ['design_sheet_executed'], NOW).map((e) => e.id)).toEqual([recent]);
+    // From then on it is established: a sheet it was offline for still arrives, however old.
+    const later = insertEvent(db, sheet, NOW);
+    expect(drainEvents(db, 'new-agent', ['design_sheet_executed'], new Date(new Date(NOW).getTime() + 20 * DAY).toISOString()).map((e) => e.id)).toEqual([later]);
+    expect(drainEvents(db, 'design-artist', ['design_sheet_executed'], NOW).map((e) => e.id)).toEqual([recent, later]);
+  });
+
+  it('alerts Chief once on grok_task_chief for each consumer that has not taken a sheet in 24 h', () => {
+    const missed = insertEvent(db, sheet, ago(2));
+    insertEvent(db, sheet, ago(0.5)); // under 24 h: not yet missed
+    drainEvents(db, 'design-artist', ['design_sheet_executed'], ago(1.9));
+    drainEvents(db, 'sourcing', ['design_sheet_executed'], ago(1.9));
+    const id = runMissedDeliveryCheck(db, NOW);
+    expect(id).not.toBeNull();
+    const row = db.prepare('SELECT * FROM spine_events WHERE id = ?').get(id) as { event_type: string; source_hand: string; urgent: number; payload: string };
+    expect(row.event_type).toBe('grok_task_chief');
+    expect(row.source_hand).toBe('mcsecretary');
+    const task = JSON.parse(row.payload);
+    expect(task.kind).toBe('missed_delivery');
+    expect(task.reply_type).toBeNull();
+    expect(task.args.for).toBe('chief');
+    expect(task.args.missed.map((m: { event_id: number; agent: string }) => [m.event_id, m.agent])).toEqual([[missed, 'costing']]);
+    // No card: nothing went to the proposals table.
+    expect((db.prepare('SELECT COUNT(*) AS n FROM proposals').get() as { n: number }).n).toBe(0);
+    // Reported once.
+    expect(runMissedDeliveryCheck(db, NOW)).toBeNull();
+  });
+
+  it('stays quiet when every consumer took the sheet, and for pre-cutover sheets', () => {
+    db.prepare("UPDATE spine_meta SET value = '1' WHERE key = 'delivery_cutover_id'").run();
+    insertEvent(db, sheet, ago(10)); // id 1, at the cutover: one-drain rule, never alerted
+    const s = insertEvent(db, sheet, ago(3));
+    for (const a of ['design-artist', 'sourcing', 'costing']) drainEvents(db, a, ['design_sheet_executed'], ago(2.5));
+    expect(s).toBe(2);
+    expect(runMissedDeliveryCheck(db, NOW)).toBeNull();
   });
 });
