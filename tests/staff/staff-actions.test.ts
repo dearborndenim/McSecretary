@@ -19,9 +19,10 @@ import {
 } from '../../src/staff/execute.js';
 import { checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
 import { createGrokActionHandler, handIdempotencyKey, withLevelsByLocation, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
-import { getAuditById } from '../../src/db/operator-queries.js';
+import { getAuditById, getAuditByKey, initializeOperatorSchema, insertAudit } from '../../src/db/operator-queries.js';
 import { registerOriginBot } from '../../src/staff/admin-commands.js';
 import { setCatalogue } from '../../src/staff/catalogue.js';
+import { parseAgentPolicy } from '../../src/spine/agent-policy.js';
 
 const NOW = '2026-10-08T15:00:00.000Z';
 const BRANDS = path.join(process.cwd(), 'config', 'brands');
@@ -587,6 +588,35 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
   });
 });
 
+describe('operator_action_audit migration: idempotency_key unique per poster (review #1)', () => {
+  it('rebuilds the old table keeping every row, then lets two keys share an idempotency_key', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE operator_action_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, finished_at TEXT,
+        idempotency_key TEXT NOT NULL UNIQUE, request_id TEXT NOT NULL, event_id INTEGER, posted_by TEXT NOT NULL, via TEXT NOT NULL,
+        person TEXT, user_id TEXT, origin_bot TEXT, action TEXT NOT NULL, params_json TEXT NOT NULL DEFAULT '{}', operator_check_json TEXT,
+        limit_check_json TEXT, hand_status INTEGER, hand_response TEXT, status TEXT NOT NULL DEFAULT 'running', reason TEXT, flags_json TEXT,
+        result_event_id INTEGER, escalation_event_id INTEGER);
+      INSERT INTO operator_action_audit (id, received_at, idempotency_key, request_id, event_id, posted_by, via, action, status, hand_status)
+        VALUES (3, '${NOW}', 'act-1', 'OP-1', 9, 'grok-bots', 'grok-operator', 'inventory_lookup', 'ok', 200),
+               (7, '${NOW}', 'act-2', 'OP-2', 11, 'grok-bots', 'grok-operator', 'store_inventory_set', 'refused', null);`);
+    const before = db.prepare('SELECT * FROM operator_action_audit ORDER BY id').all();
+    initializeOperatorSchema(db);
+    initializeOperatorSchema(db); // a second boot is a no-op
+    expect(db.prepare('SELECT * FROM operator_action_audit ORDER BY id').all()).toEqual(before);
+    expect(getAuditByKey(db, 'grok-bots', 'act-1')!.id).toBe(3);
+    expect(getAuditByKey(db, 'grok-frank', 'act-1')).toBeUndefined();
+    const add = (postedBy: string, key: string, requestId: string) => insertAudit(db, {
+      received_at: NOW, idempotency_key: key, request_id: requestId, event_id: 1, posted_by: postedBy, via: postedBy,
+      person: null, origin_bot: null, action: 'inventory_lookup', params: {}, operator_check: undefined,
+    });
+    expect(add('grok-frank', 'act-1', 'FR-1')).toBe(8);
+    expect(() => add('grok-bots', 'act-1', 'OP-3')).toThrow(/UNIQUE/);
+    expect(() => add('grok-frank', 'act-9', 'FR-1')).toThrow(/UNIQUE/);
+    db.close();
+  });
+});
+
 describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
   let db: Database.Database;
   let calls: { url: string; method: string; body: unknown }[];
@@ -621,6 +651,15 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
   });
   afterEach(() => { db.close(); setCatalogue(null); });
 
+  // Frank's live entry plus grok_action; grok-olive is an assistant key that has not opted in.
+  const frankPolicy = (types: string[]) => ({ propose: null, events: { post_types: types, drain_types: ['grok_task_frank'], source_hand: 'self' }, rate: { events_per_hour: 300 } });
+  const agentPolicy = parseAgentPolicy(JSON.stringify({
+    'grok-frank': frankPolicy(['grok_result', 'grok_report', 'grok_profile', 'grok_daily', 'grok_action']),
+    'grok-olive': frankPolicy(['grok_result', 'grok_report', 'grok_*']),
+    'grok-newbie': frankPolicy(['grok_action']),
+    'grok-chief': frankPolicy(['grok_action']),
+  }), ['grok-frank', 'grok-olive', 'grok-newbie', 'grok-chief']);
+
   function handler() {
     const handFetch = async (url: string, init: RequestInit) => {
       const u = new URL(url);
@@ -631,7 +670,7 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     };
     const d: GrokActionDeps = {
       db, now: () => NOW, env, loadBrand: () => brand, handFetch, catalogue: () => cat,
-      wake: (t, id) => { woke.push([t, id]); },
+      wake: (t, id) => { woke.push([t, id]); }, agentPolicy,
     };
     return createGrokActionHandler(d);
   }
@@ -890,6 +929,94 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
   it('takes grok_action only from the grok-bots key as grok-operator', () => {
     expect(post({}, { agent: 'marketing-manager' }).status).toBe(403);
     expect(post({}, { source: 'grok-gina' }).status).toBe(403);
+    expect(post({}, { source: 'grok-bots' }).status).toBe(403);
     expect(post({ request_id: '' }).status).toBe(400);
+  });
+
+  describe('a staff assistant on its own key (grok-frank)', () => {
+    beforeEach(() => { registerOriginBot(db, 'frank', 'k@dd.com', 'reads,store_inventory_set', NOW); });
+    const frank = (payload: Record<string, unknown>, agent = 'grok-frank') => post({
+      bot: agent.slice(5), request_id: 'FR-1', origin: { person: 'k@dd.com', bot: agent.slice(5) }, ...payload,
+    }, { agent, source: agent });
+
+    it('runs an action for its registered person and answers on grok_task_frank, audited via grok-frank', async () => {
+      const a = frank({ action: 'store_inventory_set', params: { sku: 'MICA-32-30', quantity: 24, reason: 'recount' } });
+      expect(a.status).toBe(200);
+      const r = (await a.done)!;
+      expect(r.status).toBe('ok');
+      expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ location_id: STORE, quantity: 24, idempotency_key: handIdempotencyKey('grok-frank', 'FR-1') });
+      const [task] = events('grok_task_frank');
+      expect(task!.payload.args).toEqual(r);
+      expect(woke).toEqual([['grok_task_frank', expect.any(Number)]]);
+      expect(events('grok_task_chief')).toEqual([]);
+      const row = getAuditById(db, r.audit_id)!;
+      expect([row.posted_by, row.via, row.origin_bot, row.user_id]).toEqual(['grok-frank', 'grok-frank', 'frank', 'kristina']);
+    });
+
+    it('is refused (403, nothing stored) unless its policy lists grok_action exactly, or it posts as another source', () => {
+      expect(frank({}, 'grok-olive').status).toBe(403);
+      expect(post({ bot: 'operator', origin: { person: 'k@dd.com', bot: 'frank' } }, { agent: 'grok-frank', source: 'grok-operator' }).status).toBe(403);
+      expect(events('grok_action')).toEqual([]);
+    });
+
+    it('binds identity to the key: another bot, another person, or an unregistered bot is refused and nothing runs', async () => {
+      const otherBot = (await frank({ origin: { person: 'k@dd.com', bot: 'kristina-assistant' }, request_id: 'FR-2', idempotency_key: 'f2' }).done)!;
+      expect(otherBot.reason).toBe("This request came in on grok-frank's key, so origin.bot must be frank, not kristina-assistant.");
+      const otherPerson = (await frank({ origin: { person: 'o@dd.com', bot: 'frank' }, request_id: 'FR-3', idempotency_key: 'f3' }).done)!;
+      expect(otherPerson.reason).toBe('The bot frank is not registered to Olivier; a bot acts only for its own person.');
+      const unregistered = (await frank({ request_id: 'NB-1', idempotency_key: 'n1' }, 'grok-newbie').done)!;
+      expect(unregistered.reason).toMatch(/^The bot newbie is not registered/);
+      expect([otherBot.status, otherPerson.status, unregistered.status]).toEqual(['refused', 'refused', 'refused']);
+      expect(calls).toEqual([]);
+      expect(events('grok_task_frank')).toHaveLength(2);
+      expect(events('grok_task_newbie')).toHaveLength(1);
+    });
+
+    it('files no work order for an unregistered assistant, a missing origin or the wrong person (review #2)', async () => {
+      const unregistered = (await frank({ action: 'work_order', params: { request: 'x' }, request_id: 'NB-2', idempotency_key: 'n2' }, 'grok-newbie').done)!;
+      expect(unregistered.reason).toBe('The bot newbie is not registered in McSecretary; Robert registers each assistant bot to one person.');
+      const noOrigin = (await frank({ origin: undefined, request_id: 'FR-4', idempotency_key: 'f4' }).done)!;
+      expect(noOrigin.reason).toMatch(/no origin/);
+      const wrongPerson = (await frank({ action: 'work_order', params: { request: 'x' }, origin: { person: 'o@dd.com', bot: 'frank' }, request_id: 'FR-5', idempotency_key: 'f5' }).done)!;
+      expect(wrongPerson.reason).toMatch(/not registered to Olivier/);
+      expect(events('grok_report')).toEqual([]);
+      // OPERATOR's malformed request still goes to the desk.
+      await post({ origin: undefined, idempotency_key: 'op-x' }).done;
+      expect(events('grok_report').map((e) => e.source_hand)).toEqual(['grok-operator']);
+    });
+
+    it('refuses an assistant key with a reserved slug, so no key answers on grok_task_chief (review #3)', () => {
+      expect(frank({}, 'grok-chief').status).toBe(403);
+      expect(events('grok_action')).toEqual([]);
+    });
+
+    it('scopes idempotency_key per key: the same key from grok-frank and grok-bots both run (review #1)', async () => {
+      const fr = frank({ idempotency_key: 'act-1', request_id: 'FR-9' });
+      const op = post({ idempotency_key: 'act-1' });
+      expect([fr.body.duplicate, op.body.duplicate]).toEqual([undefined, undefined]);
+      expect([(await fr.done)!.status, (await op.done)!.status]).toEqual(['ok', 'ok']);
+      expect([events('grok_task_frank').length, events('grok_task_chief').length]).toEqual([1, 1]);
+      expect(frank({ idempotency_key: 'act-1', request_id: 'FR-10' }).body.duplicate).toBe(true);
+    });
+
+    it('turns a free-text request into a Chief-desk work order that answers on grok_task_frank', async () => {
+      const r = (await frank({ action: 'work_order', params: { request: 'Merab needs the Mica fall reorder costed' } }).done)!;
+      expect(r.status).toBe('refused');
+      const [report] = events('grok_report');
+      expect([report!.source_hand, report!.posted_by, report!.payload.bot, report!.payload.filed_by, report!.payload.title])
+        .toEqual(['grok-frank', null, 'frank', 'mcsecretary', 'needs_claude: frank FR-1 work_order refused']);
+      expect(report!.payload.needs_claude[0]).toMatch(/^frank request FR-1 .* via frank: .*Mica fall reorder costed/);
+      expect(events('grok_task_frank')).toHaveLength(1);
+      expect(events('grok_task_chief')).toEqual([]);
+    });
+
+    it('carries an 8,000-char request to the desk intact; the 2,000-char summary says it was cut', async () => {
+      const request = `${'x'.repeat(7990)} END`;
+      await frank({ action: 'work_order', params: { request } }).done;
+      const [report] = events('grok_report');
+      expect(report!.payload.needs_claude[0]).toContain(`${request}"}`);
+      expect(report!.payload.summary).toHaveLength(2000);
+      expect(report!.payload.summary).toMatch(/…\[truncated, \d+ chars\]$/);
+    });
   });
 });

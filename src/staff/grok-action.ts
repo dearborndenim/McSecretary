@@ -11,6 +11,12 @@
  *   action, invalid params or a hand failure, a needs_claude report for the
  *   Chief desk.
  *
+ * A staff assistant on its own key (`grok-<bot>`, e.g. grok-frank) takes the
+ * same path when its AGENT_POLICY lists grok_action in events.post_types: it
+ * posts as source_hand grok-<bot>, may speak only as origin.bot <bot> (the
+ * person is the one that bot is registered to), and its answers and work
+ * orders go to grok_task_<bot> instead of grok_task_chief (callerFor).
+ *
  * A write within limits runs with NO approval on this path (Robert,
  * 2026-10-27): it never touches the proposal router or the trust ledger. The
  * Telegram staff path keeps its own levels.
@@ -23,7 +29,7 @@ import {
   finishAudit, getAuditByKey, getAuditByRequest, getOriginBot, insertAudit, originBotActions,
 } from '../db/operator-queries.js';
 import { getUserByEmail, type User } from '../db/user-queries.js';
-import { SLUG_RE } from '../spine/agent-policy.js';
+import { SLUG_RE, type AgentPolicy } from '../spine/agent-policy.js';
 import { forwardBrandKey, locationForGid, resolveHand, resolveLocation, type BrandConfig } from '../spine/brand-config.js';
 import { PROPOSAL_ID_PLACEHOLDER, resolveHandUrl, withForwardedBrand } from '../spine/executor.js';
 import { readHandPath } from '../spine/hand-read.js';
@@ -40,10 +46,10 @@ import { KANBAN_PO_LIST_LIMIT, poList, poLookupAnswer } from './po-lookup.js';
 import { grantedActionIds } from './tools.js';
 
 export const GROK_ACTION_EVENT = 'grok_action';
-/** The only key and source allowed to post one (OPERATOR). */
+/** OPERATOR's key and source; staff assistants post on their own keys (callerFor). */
 export const OPERATOR_AGENT = 'grok-bots';
 export const OPERATOR_SOURCE_HAND = 'grok-operator';
-/** The queue OPERATOR drains; the wake hook for it wakes OPERATOR. */
+/** The queue OPERATOR drains; the wake hook for it wakes OPERATOR. An assistant's is grok_task_<bot>. */
 export const RESULT_QUEUE = 'grok_task_chief';
 export const RESULT_KIND = 'action_result';
 const SYSTEM_AGENT = 'mcsecretary';
@@ -51,6 +57,21 @@ const VIA = 'grok-operator';
 const RESULT_CAP = 32_000;
 const HAND_RESPONSE_CAP = 4000;
 const HAND_TIMEOUT_MS = 20_000;
+/**
+ * A needs_claude work order's text: room for a ~8,000-char free-text request
+ * plus the header and params JSON (grok-inbox does not cap a grok_report's
+ * needs_claude items; the 64 KB spine body is the outer limit). Its summary
+ * stays at grok-inbox's 2,000 for grok_report.
+ */
+const ESCALATION_TEXT_MAX = 12_000;
+const ESCALATION_SUMMARY_MAX = 2000;
+
+/** Cut to at most `max` chars, saying so in the text: the desk must never read a silently shortened order. */
+export function capMarked(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const mark = `…[truncated, ${s.length} chars]`;
+  return `${s.slice(0, max - mark.length)}${mark}`;
+}
 
 export type ActionStatus = 'ok' | 'refused' | 'failed';
 
@@ -86,7 +107,44 @@ export interface GrokActionDeps {
   catalogue: () => StaffCatalogue;
   /** The wake hooks (SPINE_WAKE_HOOKS): an in-process event does not fire them by itself. */
   wake?: (eventType: string, eventId: number) => void;
+  /** AGENT_POLICY: an assistant key may post grok_action only when its entry lists it exactly. */
+  agentPolicy?: AgentPolicy;
   log?: (msg: string) => void;
+}
+
+/** Who a grok_action came in from, and where its answers go. */
+export interface Caller {
+  /** The audit row's `via`: grok-operator, or the assistant's own agent (grok-frank). */
+  via: string;
+  /** An assistant's own bot slug, which origin.bot must equal; null for OPERATOR (any registered bot). */
+  bot: string | null;
+  /** The grok_task_<…> queue the action_result goes to (and whose wake hook fires). */
+  queue: string;
+  /** source_hand of a needs_claude escalation, so the Chief desk answers on this caller's queue. */
+  source: string;
+  /** How the request is named in a needs_claude work order. */
+  label: string;
+}
+
+/**
+ * The caller for a grok_action posted by `agent` as `sourceHand`, or null when
+ * this key may not post one. OPERATOR: the grok-bots key as grok-operator.
+ * An assistant: a `grok-<bot>` key (never grok-bots) posting as itself, whose
+ * AGENT_POLICY entry lists `grok_action` exactly (a `grok_*` prefix is not an
+ * opt-in).
+ */
+/** Slugs of the shared Grok keys and queues (grok-inbox's RESERVED_SLUGS, plus OPERATOR's and Chief's): never an assistant's. */
+export const RESERVED_ASSISTANT_SLUGS = ['bots', 'operator', 'chief', 'inbox', 'task'];
+
+export function callerFor(agent: string, sourceHand: unknown, policy: AgentPolicy | undefined): Caller | null {
+  if (agent === OPERATOR_AGENT) {
+    return sourceHand === OPERATOR_SOURCE_HAND
+      ? { via: VIA, bot: null, queue: RESULT_QUEUE, source: OPERATOR_SOURCE_HAND, label: 'OPERATOR' } : null;
+  }
+  const bot = agent.startsWith('grok-') ? agent.slice(5) : '';
+  if (!SLUG_RE.test(bot) || RESERVED_ASSISTANT_SLUGS.includes(bot) || sourceHand !== agent) return null;
+  if (!policy?.get(agent)?.events.post_types.includes(GROK_ACTION_EVENT)) return null;
+  return { via: agent, bot, queue: `grok_task_${bot}`, source: agent, label: bot };
 }
 
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
@@ -266,10 +324,19 @@ async function runWrite(
 }
 
 /** Everything after the envelope: never throws. */
-async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: string): Promise<Outcome> {
+async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: string, caller: Caller): Promise<Outcome> {
   const o = req.origin;
+  // An assistant files nothing (not even a work order) until its own bot is registered and the person matches.
+  if (caller.bot !== null && !getOriginBot(d.db, caller.bot)) {
+    return refused(`The bot ${caller.bot} is not registered in McSecretary; Robert registers each assistant bot to one person.`);
+  }
   if (!isObj(o) || !str(o.person, 200) || !str(o.bot, 64)) {
-    return refused('The request has no origin {person, bot}; every request must name the employee and their bot.', { escalate: 'invalid_request' });
+    return refused('The request has no origin {person, bot}; every request must name the employee and their bot.',
+      caller.bot === null ? { escalate: 'invalid_request' } : {});
+  }
+  // An assistant's identity is its key: it speaks only as its own bot, so only for that bot's registered person.
+  if (caller.bot !== null && o.bot !== caller.bot) {
+    return refused(`This request came in on ${caller.via}'s key, so origin.bot must be ${caller.bot}, not ${o.bot}.`);
   }
   const user = getUserByEmail(d.db, (o.person as string).trim());
   if (!user) return refused(`No staff user has the email ${o.person}.`);
@@ -401,26 +468,27 @@ export function withLevelsByLocation(body: unknown, brand: BrandConfig): unknown
   return { ...body, variants, locations: Object.fromEntries(registry.map(([k, l]) => [k, l.name])) };
 }
 
-function escalationText(req: GrokActionRequest, r: ActionResult, why: NonNullable<Escalate>): string {
+function escalationText(req: GrokActionRequest, r: ActionResult, why: NonNullable<Escalate>, who: string): string {
   const ask = {
-    invalid_request: 'OPERATOR sent a request McSecretary cannot attribute; fix its request shape (GROK_SPINE.md grok_action).',
-    unknown_action: 'OPERATOR asked for an action the catalogue does not have; do the work if it is real, or add a catalogue action if it recurs.',
-    invalid_params: 'The params did not validate (in McSecretary or at the service); work out what was meant and do it, or tell OPERATOR what to send.',
+    invalid_request: `${who} sent a request McSecretary cannot attribute; fix its request shape (GROK_SPINE.md grok_action).`,
+    unknown_action: `${who} asked for an action the catalogue does not have; do the work if it is real, or add a catalogue action if it recurs.`,
+    invalid_params: `The params did not validate (in McSecretary or at the service); work out what was meant and do it, or tell ${who} what to send.`,
     hand_failed: 'The service failed or timed out; investigate, and check whether anything was written before retrying.',
   }[why];
-  return cap(`OPERATOR request ${r.request_id} (audit #${r.audit_id}) from ${r.origin.person ?? 'unknown person'} via ${r.origin.bot ?? 'unknown bot'}: ${r.action} ${r.status}: ${r.reason ?? ''} ${ask} Params: ${JSON.stringify(req.params)}`, 1500);
+  return capMarked(`${who} request ${r.request_id} (audit #${r.audit_id}) from ${r.origin.person ?? 'unknown person'} via ${r.origin.bot ?? 'unknown bot'}: ${r.action} ${r.status}: ${r.reason ?? ''} ${ask} Params: ${JSON.stringify(req.params)}`, ESCALATION_TEXT_MAX);
 }
 
 /**
  * The needs_claude work order for the Chief desk: a grok_report-shaped event
- * as OPERATOR's (source_hand grok-operator, bot operator) so the desk's answer
- * goes back on OPERATOR's queue, stamped filed_by mcsecretary and inserted
- * in-process (posted_by null), which no HTTP key can produce.
+ * as the caller's (source_hand grok-operator / grok-<bot>, payload.bot its
+ * slug) so the desk's answer goes back on that caller's queue, stamped
+ * filed_by mcsecretary and inserted in-process (posted_by null), which no
+ * HTTP key can produce.
  */
-function escalate(d: GrokActionDeps, req: GrokActionRequest, r: ActionResult, why: NonNullable<Escalate>, brandId: string): number {
-  const text = escalationText(req, r, why);
+function escalate(d: GrokActionDeps, req: GrokActionRequest, r: ActionResult, why: NonNullable<Escalate>, brandId: string, caller: Caller): number {
+  const text = escalationText(req, r, why, caller.label);
   return insertEvent(d.db, {
-    source_hand: OPERATOR_SOURCE_HAND,
+    source_hand: caller.source,
     brand_id: brandId,
     event_type: 'grok_report',
     urgent: false,
@@ -429,8 +497,8 @@ function escalate(d: GrokActionDeps, req: GrokActionRequest, r: ActionResult, wh
       sent_at: d.now(),
       idempotency_key: `action-escalation-${r.audit_id}`,
       filed_by: SYSTEM_AGENT,
-      title: cap(`needs_claude: OPERATOR ${r.request_id} ${r.action} ${r.status}`, 120),
-      summary: cap(text, 2000),
+      title: cap(`needs_claude: ${caller.label} ${r.request_id} ${r.action} ${r.status}`, 120),
+      summary: capMarked(text, ESCALATION_SUMMARY_MAX),
       needs_claude: [text],
       metrics: { audit_id: r.audit_id },
     },
@@ -438,10 +506,10 @@ function escalate(d: GrokActionDeps, req: GrokActionRequest, r: ActionResult, wh
 }
 
 /** Run a stored request to its answer: decide, audit, post the action_result, wake, escalate. Never throws. */
-export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, auditId: number, postedBy: string): Promise<ActionResult> {
+export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, auditId: number, postedBy: string, caller: Caller): Promise<ActionResult> {
   let out: Outcome;
   try {
-    out = await decide(d, req, postedBy);
+    out = await decide(d, req, postedBy, caller);
   } catch (err) {
     out = failed(`Internal error: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -462,9 +530,9 @@ export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, a
   let escalationId: number | null = null;
   try {
     resultEventId = insertEvent(d.db, {
-      source_hand: SYSTEM_AGENT, brand_id: brandId, event_type: RESULT_QUEUE, urgent: false, payload: actionResultTask(result),
+      source_hand: SYSTEM_AGENT, brand_id: brandId, event_type: caller.queue, urgent: false, payload: actionResultTask(result),
     }, d.now());
-    if (out.escalate) escalationId = escalate(d, req, result, out.escalate, brandId);
+    if (out.escalate) escalationId = escalate(d, req, result, out.escalate, brandId, caller);
   } catch (err) {
     d.log?.(`grok_action #${auditId}: could not post the answer: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -479,7 +547,7 @@ export async function runGrokAction(d: GrokActionDeps, req: GrokActionRequest, a
     d.log?.(`grok_action #${auditId}: could not finish the audit row (${out.status}): ${err instanceof Error ? err.message : String(err)}`);
   }
   try {
-    if (resultEventId !== null) d.wake?.(RESULT_QUEUE, resultEventId);
+    if (resultEventId !== null) d.wake?.(caller.queue, resultEventId);
   } catch (err) {
     d.log?.(`grok_action #${auditId}: wake failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -503,7 +571,8 @@ export interface AcceptAnswer {
 export function createGrokActionHandler(d: GrokActionDeps) {
   return function accept(agent: string, event: SpineEventInput): AcceptAnswer {
     const none = Promise.resolve(null);
-    if (agent !== OPERATOR_AGENT || event.source_hand !== OPERATOR_SOURCE_HAND) {
+    const caller = callerFor(agent, event.source_hand, d.agentPolicy);
+    if (!caller) {
       return { status: 403, body: { error: `policy: ${agent} may not post ${GROK_ACTION_EVENT} as ${String(event.source_hand).slice(0, 64)}` }, done: none };
     }
     const parsed = parseGrokAction(event.payload, event.source_hand);
@@ -511,7 +580,7 @@ export function createGrokActionHandler(d: GrokActionDeps) {
     const req = parsed.req;
     // A repeat is the same idempotency_key, or the same request_id under a new key (a resend).
     const dup = () => {
-      const row = getAuditByKey(d.db, req.idempotency_key) ?? getAuditByRequest(d.db, agent, req.request_id);
+      const row = getAuditByKey(d.db, agent, req.idempotency_key) ?? getAuditByRequest(d.db, agent, req.request_id);
       return row ? { status: 200, body: { id: row.event_id, audit_id: row.id, duplicate: true, status: row.status }, done: none } : null;
     };
     const seen = dup();
@@ -525,7 +594,7 @@ export function createGrokActionHandler(d: GrokActionDeps) {
         d.db.prepare('UPDATE spine_events SET drained_by = ?, drained_at = ? WHERE id = ?').run(SYSTEM_AGENT, nowIso, eventId);
         const auditId = insertAudit(d.db, {
           received_at: nowIso, idempotency_key: req.idempotency_key, request_id: req.request_id, event_id: eventId,
-          posted_by: agent, via: VIA,
+          posted_by: agent, via: caller.via,
           person: typeof o.person === 'string' ? cap(o.person, 200) : null,
           origin_bot: typeof o.bot === 'string' ? cap(o.bot, 64) : null,
           action: req.action, params: req.params, operator_check: req.operator_check,
@@ -538,7 +607,7 @@ export function createGrokActionHandler(d: GrokActionDeps) {
       if (again) return again;
       throw err;
     }
-    const done = runGrokAction(d, req, ids.auditId, agent);
+    const done = runGrokAction(d, req, ids.auditId, agent, caller);
     return { status: 200, body: { id: ids.eventId, audit_id: ids.auditId }, done };
   };
 }
