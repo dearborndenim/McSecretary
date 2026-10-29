@@ -133,13 +133,16 @@ export interface Caller {
  * AGENT_POLICY entry lists `grok_action` exactly (a `grok_*` prefix is not an
  * opt-in).
  */
+/** Slugs of the shared Grok keys and queues (grok-inbox's RESERVED_SLUGS, plus OPERATOR's and Chief's): never an assistant's. */
+export const RESERVED_ASSISTANT_SLUGS = ['bots', 'operator', 'chief', 'inbox', 'task'];
+
 export function callerFor(agent: string, sourceHand: unknown, policy: AgentPolicy | undefined): Caller | null {
   if (agent === OPERATOR_AGENT) {
     return sourceHand === OPERATOR_SOURCE_HAND
       ? { via: VIA, bot: null, queue: RESULT_QUEUE, source: OPERATOR_SOURCE_HAND, label: 'OPERATOR' } : null;
   }
   const bot = agent.startsWith('grok-') ? agent.slice(5) : '';
-  if (!SLUG_RE.test(bot) || sourceHand !== agent) return null;
+  if (!SLUG_RE.test(bot) || RESERVED_ASSISTANT_SLUGS.includes(bot) || sourceHand !== agent) return null;
   if (!policy?.get(agent)?.events.post_types.includes(GROK_ACTION_EVENT)) return null;
   return { via: agent, bot, queue: `grok_task_${bot}`, source: agent, label: bot };
 }
@@ -323,8 +326,13 @@ async function runWrite(
 /** Everything after the envelope: never throws. */
 async function decide(d: GrokActionDeps, req: GrokActionRequest, postedBy: string, caller: Caller): Promise<Outcome> {
   const o = req.origin;
+  // An assistant files nothing (not even a work order) until its own bot is registered and the person matches.
+  if (caller.bot !== null && !getOriginBot(d.db, caller.bot)) {
+    return refused(`The bot ${caller.bot} is not registered in McSecretary; Robert registers each assistant bot to one person.`);
+  }
   if (!isObj(o) || !str(o.person, 200) || !str(o.bot, 64)) {
-    return refused('The request has no origin {person, bot}; every request must name the employee and their bot.', { escalate: 'invalid_request' });
+    return refused('The request has no origin {person, bot}; every request must name the employee and their bot.',
+      caller.bot === null ? { escalate: 'invalid_request' } : {});
   }
   // An assistant's identity is its key: it speaks only as its own bot, so only for that bot's registered person.
   if (caller.bot !== null && o.bot !== caller.bot) {
@@ -572,7 +580,7 @@ export function createGrokActionHandler(d: GrokActionDeps) {
     const req = parsed.req;
     // A repeat is the same idempotency_key, or the same request_id under a new key (a resend).
     const dup = () => {
-      const row = getAuditByKey(d.db, req.idempotency_key) ?? getAuditByRequest(d.db, agent, req.request_id);
+      const row = getAuditByKey(d.db, agent, req.idempotency_key) ?? getAuditByRequest(d.db, agent, req.request_id);
       return row ? { status: 200, body: { id: row.event_id, audit_id: row.id, duplicate: true, status: row.status }, done: none } : null;
     };
     const seen = dup();

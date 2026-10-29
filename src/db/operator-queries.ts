@@ -4,25 +4,16 @@ import type Database from 'better-sqlite3';
  * OPERATOR direct actions (spec 2026-10-27):
  * - `staff_origin_bots`: each Grok assistant bot registered to one staff user
  *   (users.id) with the action ids it may use. A bot acts only for its person.
- * - `operator_action_audit`: one row per `grok_action` request, unique on its
- *   idempotency_key, holding the person, the bot, OPERATOR's request_id, the
- *   action, params, the limit check, the hand's answer and the status.
+ * - `operator_action_audit`: one row per `grok_action` request, unique on
+ *   (posted_by, idempotency_key) and (posted_by, request_id), holding the
+ *   person, the bot, the poster's request_id, the action, params, the limit
+ *   check, the hand's answer and the status.
  */
-export function initializeOperatorSchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS staff_origin_bots (
-      bot TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id),
-      actions_json TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS operator_action_audit (
+const AUDIT_COLUMNS = `
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       received_at TEXT NOT NULL,
       finished_at TEXT,
-      idempotency_key TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT NOT NULL,
       request_id TEXT NOT NULL,
       event_id INTEGER,
       posted_by TEXT NOT NULL,
@@ -40,9 +31,44 @@ export function initializeOperatorSchema(db: Database.Database): void {
       reason TEXT,
       flags_json TEXT,
       result_event_id INTEGER,
-      escalation_event_id INTEGER
+      escalation_event_id INTEGER`;
+const AUDIT_COLUMN_NAMES = 'id, received_at, finished_at, idempotency_key, request_id, event_id, posted_by, via, person, user_id, origin_bot, action, params_json, operator_check_json, limit_check_json, hand_status, hand_response, status, reason, flags_json, result_event_id, escalation_event_id';
+
+/**
+ * The first schema had idempotency_key UNIQUE across every key, so one key
+ * could pre-claim another's idempotency_key. SQLite cannot drop a column
+ * constraint, so the table is rebuilt once (rows and ids kept) without it;
+ * the composite (posted_by, idempotency_key) index replaces it.
+ */
+function dropGlobalKeyUnique(db: Database.Database): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operator_action_audit'").get() as { sql: string } | undefined;
+  if (!row || !/idempotency_key\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(row.sql)) return;
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE operator_action_audit_new (${AUDIT_COLUMNS});
+      INSERT INTO operator_action_audit_new (${AUDIT_COLUMN_NAMES}) SELECT ${AUDIT_COLUMN_NAMES} FROM operator_action_audit;
+      DROP TABLE operator_action_audit;
+      ALTER TABLE operator_action_audit_new RENAME TO operator_action_audit;
+    `);
+  })();
+}
+
+export function initializeOperatorSchema(db: Database.Database): void {
+  dropGlobalKeyUnique(db);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS staff_origin_bots (
+      bot TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      actions_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS operator_action_audit (${AUDIT_COLUMNS}
     );
     CREATE INDEX IF NOT EXISTS idx_operator_action_audit_received ON operator_action_audit (received_at);
+    -- One run per key's idempotency_key; another key's same string is a different request.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_action_audit_key ON operator_action_audit (posted_by, idempotency_key);
     -- One run per OPERATOR request: a resend under a new idempotency_key is still the same request.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_action_audit_request ON operator_action_audit (posted_by, request_id);
   `);
@@ -117,8 +143,8 @@ export interface OperatorAuditRow {
   escalation_event_id: number | null;
 }
 
-export function getAuditByKey(db: Database.Database, key: string): OperatorAuditRow | undefined {
-  return db.prepare('SELECT * FROM operator_action_audit WHERE idempotency_key = ?').get(key) as OperatorAuditRow | undefined;
+export function getAuditByKey(db: Database.Database, postedBy: string, key: string): OperatorAuditRow | undefined {
+  return db.prepare('SELECT * FROM operator_action_audit WHERE posted_by = ? AND idempotency_key = ?').get(postedBy, key) as OperatorAuditRow | undefined;
 }
 
 export function getAuditByRequest(db: Database.Database, postedBy: string, requestId: string): OperatorAuditRow | undefined {

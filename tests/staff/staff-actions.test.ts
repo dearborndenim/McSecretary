@@ -19,7 +19,7 @@ import {
 } from '../../src/staff/execute.js';
 import { checkPerSku, checkPoReceipt, type OpenPo } from '../../src/staff/limits.js';
 import { createGrokActionHandler, handIdempotencyKey, withLevelsByLocation, type ActionResult, type GrokActionDeps } from '../../src/staff/grok-action.js';
-import { getAuditById } from '../../src/db/operator-queries.js';
+import { getAuditById, getAuditByKey, initializeOperatorSchema, insertAudit } from '../../src/db/operator-queries.js';
 import { registerOriginBot } from '../../src/staff/admin-commands.js';
 import { setCatalogue } from '../../src/staff/catalogue.js';
 import { parseAgentPolicy } from '../../src/spine/agent-policy.js';
@@ -588,6 +588,35 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
   });
 });
 
+describe('operator_action_audit migration: idempotency_key unique per poster (review #1)', () => {
+  it('rebuilds the old table keeping every row, then lets two keys share an idempotency_key', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE operator_action_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, finished_at TEXT,
+        idempotency_key TEXT NOT NULL UNIQUE, request_id TEXT NOT NULL, event_id INTEGER, posted_by TEXT NOT NULL, via TEXT NOT NULL,
+        person TEXT, user_id TEXT, origin_bot TEXT, action TEXT NOT NULL, params_json TEXT NOT NULL DEFAULT '{}', operator_check_json TEXT,
+        limit_check_json TEXT, hand_status INTEGER, hand_response TEXT, status TEXT NOT NULL DEFAULT 'running', reason TEXT, flags_json TEXT,
+        result_event_id INTEGER, escalation_event_id INTEGER);
+      INSERT INTO operator_action_audit (id, received_at, idempotency_key, request_id, event_id, posted_by, via, action, status, hand_status)
+        VALUES (3, '${NOW}', 'act-1', 'OP-1', 9, 'grok-bots', 'grok-operator', 'inventory_lookup', 'ok', 200),
+               (7, '${NOW}', 'act-2', 'OP-2', 11, 'grok-bots', 'grok-operator', 'store_inventory_set', 'refused', null);`);
+    const before = db.prepare('SELECT * FROM operator_action_audit ORDER BY id').all();
+    initializeOperatorSchema(db);
+    initializeOperatorSchema(db); // a second boot is a no-op
+    expect(db.prepare('SELECT * FROM operator_action_audit ORDER BY id').all()).toEqual(before);
+    expect(getAuditByKey(db, 'grok-bots', 'act-1')!.id).toBe(3);
+    expect(getAuditByKey(db, 'grok-frank', 'act-1')).toBeUndefined();
+    const add = (postedBy: string, key: string, requestId: string) => insertAudit(db, {
+      received_at: NOW, idempotency_key: key, request_id: requestId, event_id: 1, posted_by: postedBy, via: postedBy,
+      person: null, origin_bot: null, action: 'inventory_lookup', params: {}, operator_check: undefined,
+    });
+    expect(add('grok-frank', 'act-1', 'FR-1')).toBe(8);
+    expect(() => add('grok-bots', 'act-1', 'OP-3')).toThrow(/UNIQUE/);
+    expect(() => add('grok-frank', 'act-9', 'FR-1')).toThrow(/UNIQUE/);
+    db.close();
+  });
+});
+
 describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
   let db: Database.Database;
   let calls: { url: string; method: string; body: unknown }[];
@@ -628,7 +657,8 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     'grok-frank': frankPolicy(['grok_result', 'grok_report', 'grok_profile', 'grok_daily', 'grok_action']),
     'grok-olive': frankPolicy(['grok_result', 'grok_report', 'grok_*']),
     'grok-newbie': frankPolicy(['grok_action']),
-  }), ['grok-frank', 'grok-olive', 'grok-newbie']);
+    'grok-chief': frankPolicy(['grok_action']),
+  }), ['grok-frank', 'grok-olive', 'grok-newbie', 'grok-chief']);
 
   function handler() {
     const handFetch = async (url: string, init: RequestInit) => {
@@ -940,6 +970,33 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
       expect(calls).toEqual([]);
       expect(events('grok_task_frank')).toHaveLength(2);
       expect(events('grok_task_newbie')).toHaveLength(1);
+    });
+
+    it('files no work order for an unregistered assistant, a missing origin or the wrong person (review #2)', async () => {
+      const unregistered = (await frank({ action: 'work_order', params: { request: 'x' }, request_id: 'NB-2', idempotency_key: 'n2' }, 'grok-newbie').done)!;
+      expect(unregistered.reason).toBe('The bot newbie is not registered in McSecretary; Robert registers each assistant bot to one person.');
+      const noOrigin = (await frank({ origin: undefined, request_id: 'FR-4', idempotency_key: 'f4' }).done)!;
+      expect(noOrigin.reason).toMatch(/no origin/);
+      const wrongPerson = (await frank({ action: 'work_order', params: { request: 'x' }, origin: { person: 'o@dd.com', bot: 'frank' }, request_id: 'FR-5', idempotency_key: 'f5' }).done)!;
+      expect(wrongPerson.reason).toMatch(/not registered to Olivier/);
+      expect(events('grok_report')).toEqual([]);
+      // OPERATOR's malformed request still goes to the desk.
+      await post({ origin: undefined, idempotency_key: 'op-x' }).done;
+      expect(events('grok_report').map((e) => e.source_hand)).toEqual(['grok-operator']);
+    });
+
+    it('refuses an assistant key with a reserved slug, so no key answers on grok_task_chief (review #3)', () => {
+      expect(frank({}, 'grok-chief').status).toBe(403);
+      expect(events('grok_action')).toEqual([]);
+    });
+
+    it('scopes idempotency_key per key: the same key from grok-frank and grok-bots both run (review #1)', async () => {
+      const fr = frank({ idempotency_key: 'act-1', request_id: 'FR-9' });
+      const op = post({ idempotency_key: 'act-1' });
+      expect([fr.body.duplicate, op.body.duplicate]).toEqual([undefined, undefined]);
+      expect([(await fr.done)!.status, (await op.done)!.status]).toEqual(['ok', 'ok']);
+      expect([events('grok_task_frank').length, events('grok_task_chief').length]).toEqual([1, 1]);
+      expect(frank({ idempotency_key: 'act-1', request_id: 'FR-10' }).body.duplicate).toBe(true);
     });
 
     it('turns a free-text request into a Chief-desk work order that answers on grok_task_frank', async () => {
