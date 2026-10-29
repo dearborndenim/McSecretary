@@ -163,7 +163,7 @@ function renderOperatorRequests(ctx: PageCtx): Safe {
   const stuck = listStuckAudit(ctx.db, new Date(Date.parse(ctx.nowIso) - STUCK_MS).toISOString());
   const names = new Map(getAllUsers(ctx.db).map((u) => [u.id, u.name]));
   return html`<h2>OPERATOR requests</h2>
-<p class="small mute">Requests from Grok assistant bots via OPERATOR. Within limits they run with no approval.</p>
+<p class="small mute">Requests from Grok assistant bots, via OPERATOR (grok-operator) or on the assistant's own key (e.g. grok-frank). Within limits they run with no approval.</p>
 ${stuck.length === 0 ? '' : html`<p class="notice err"><strong>${stuck.length} request${stuck.length === 1 ? '' : 's'} still running after 10 minutes</strong> (no answer reached OPERATOR; check the service before anyone resends): ${stuck.map((r) => html`#${r.id} ${r.action} ${r.request_id} (${chicago(r.received_at)}) `)}</p>`}
 ${rows.length === 0 ? html`<p class="mute">None yet.</p>` : html`<table class="stack"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>Reason</th></tr></thead><tbody>
 ${rows.map((r) => html`<tr>
