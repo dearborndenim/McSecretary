@@ -3,6 +3,9 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
+## 2026-10-31 — Legal agent policy (branch `feat/legal-policy`)
+- `scripts/policy-legal.sh` (+ reconstructed `scripts/policy-legal.sample-before.json`): the `legal` AGENT_KEYS key and notes-only AGENT_POLICY entry for claude_code's Legal Phase 1 (plan `docs/superpowers/plans/2026-10-31-legal-phase-1.md` Task 5). Validated by dry run; not applied. Go-live (plan Task 7): `cd ~/Documents/Claude/claude_code/McSecretary && scripts/policy-legal.sh --set`, then `GET /spine/policy/self` with the legal key answers `restricted: true`.
+
 ## 2026-10-31 — Purchasing lanes, Build 4 (branch `feat/purchasing-lanes`)
 - **Why:** Robert's purchasing rules of 2026-10-31 (small POs bought automatically, ≥ $500 staged for Robert, Amazon/Home Depot under $200 or urgent bought at once after his prompt). Spec/plan `docs/superpowers/{specs,plans}/2026-10-31-purchasing-approval-and-fast-lane.md` in the claude_code repo; kanban-purchaser Builds 1–3 carry the lanes.
 - `po_fast_lane` pinned (`gates.ts`). Catalogue: `material_request` += `urgent`, `fulfilment`, `operator: true`; new `vendor_po_draft` → kanban `POST /api/integration/po-drafts` (office group, OPERATOR); `vendor_po_approve` sends `approver_id` (users.id); `vendor_po_waiting` describes `lane`/`needs`/`review`.
