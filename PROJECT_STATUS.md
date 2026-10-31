@@ -3,6 +3,12 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
+## 2026-10-31 — Purchasing lanes, Build 4 (branch `feat/purchasing-lanes`)
+- **Why:** Robert's purchasing rules of 2026-10-31 (small POs bought automatically, ≥ $500 staged for Robert, Amazon/Home Depot under $200 or urgent bought at once after his prompt). Spec/plan `docs/superpowers/{specs,plans}/2026-10-31-purchasing-approval-and-fast-lane.md` in the claude_code repo; kanban-purchaser Builds 1–3 carry the lanes.
+- `po_fast_lane` pinned (`gates.ts`). Catalogue: `material_request` += `urgent`, `fulfilment`, `operator: true`; new `vendor_po_draft` → kanban `POST /api/integration/po-drafts` (office group, OPERATOR); `vendor_po_approve` sends `approver_id` (users.id); `vendor_po_waiting` describes `lane`/`needs`/`review`.
+- `scripts/policy-purchasing-lanes.sh`: the kanban-purchaser AGENT_POLICY change, validated with `parseAgentPolicy`, not applied.
+- **Before merge/deploy (Foreman):** run the policy script with `--set` from the linked checkout (before kanban Build 2 deploys); after deploy register Chief: `/originbot chief rob@dearborndenim.com material_request,vendor_po_draft,vendor_po_waiting,vendor_po_lookup`. Safe to deploy before kanban: kanban main's `/requests` and `/pos/approve` validators ignore unknown keys (checked 2026-10-31 at `59e8e3f`), so `urgent`/`fulfilment`/`approver_id` are ignored until kanban Builds 1–2 read them; `vendor_po_draft` answers 404 until kanban Build 3 ships `/po-drafts`.
+
 ## 2026-10-01 — Agent policy (branch `feat/agent-policy`)
 - **Why:** Grok bots will share one key (`grok-bots`); `AGENT_POLICY` bounds what a keyed agent may do (root plan `docs/superpowers/plans/2026-10-01-grok-spine-bridge.md` build 1, spec §7).
 - `src/spine/agent-policy.ts` (parse, default-deny entries, fail-loud boot checks), `countEventsSince` for the hourly cap, checks in `api-routes.ts`, new `GET /spine/policy/self`; graph tools skip policy agents.

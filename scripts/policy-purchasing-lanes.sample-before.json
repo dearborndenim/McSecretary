@@ -1,0 +1,1 @@
+{"kanban-purchaser":{"propose":{"hands":["notes","kanban-purchaser"],"action_types":["purchasing_alert","po_draft","po_draft_over_threshold","pickup_inbound_note","pickup_book"]},"events":{"drain_types":["purchasing_update","pickup_update","po_draft_rejected","po_draft_expired","po_draft_over_threshold_rejected","po_draft_over_threshold_expired"]}}}

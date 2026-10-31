@@ -7,7 +7,7 @@ describe('gates', () => {
       'ad_spend_step_over_cap', 'po_draft_over_threshold', 'ap_pay_run', 'vendor_add', 'hire_flag',
       'storefront_publish', 'organic_post', 'ad_launch', 'price_change',
       'fabric_pick', 'sample_approval', 'techpack_signoff', 'shopify_execute',
-      'policy_change',
+      'policy_change', 'po_fast_lane',
     ]) {
       expect(isPinned(t), t).toBe(true);
     }

@@ -7,6 +7,7 @@ export const PINNED_ACTION_TYPES: ReadonlyArray<string> = Object.freeze([
   // money
   'ad_spend_step_over_cap',
   'po_draft_over_threshold',
+  'po_fast_lane',        // purchasing fast lane: Robert's prompt before an immediate buy (spec 2026-10-31 §4.2)
   'ap_pay_run',          // payables: Robert approves every pay run (payables spec money rule 1)
   'vendor_add',
   'hire_flag',

@@ -72,7 +72,7 @@ describe('staff-action catalogue validator (spec §5)', () => {
       'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_note', 'cs_reply', 'cs_search', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
       'pickup_approve', 'pickup_collected', 'pickup_hold', 'pickup_mark_ready', 'pickup_release', 'pickup_reschedule', 'pickup_status',
-      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_approve', 'vendor_po_lookup', 'vendor_po_receive',
+      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_approve', 'vendor_po_draft', 'vendor_po_lookup', 'vendor_po_receive',
       'vendor_po_waiting',
     ]);
     // Inbound pickups (kanban Build P1): Robert alone approves a quote (cost bound to it), holds and releases; the driver group marks collected.
@@ -245,7 +245,7 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
       hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/pos/approve',
       body: {
         pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }],
-        approved_by: 'Robert', idempotency_key: '{{proposal.id}}',
+        approved_by: 'Robert', approver_id: 'robert-mcmillan', idempotency_key: '{{proposal.id}}',
       },
     });
     expect(r.built.summary).toBe('Approve 2 vendor PO(s): 1003, 1005');
@@ -284,7 +284,7 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe('https://kp.example/api/integration/pos/approve');
     expect(JSON.parse(init.body as string)).toEqual({
-      pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }], approved_by: 'Robert', idempotency_key: '1',
+      pos: [{ po_number: 1003, total_usd: 342, version: 'a1b2c3d4' }, { po_number: 1005, total_usd: 368.4, version: '9f8e7d6c' }], approved_by: 'Robert', approver_id: 'robert-mcmillan', idempotency_key: '1',
     });
 
     // The look-up: vendor goes in the query when given and is left out when not.
@@ -296,6 +296,49 @@ describe('vendor_po_approve (purchasing Build 6b)', () => {
       'https://kp.example/api/integration/pos?status=waiting',
     ]);
     db.close();
+  });
+});
+
+describe('purchasing lanes (spec 2026-10-31 §5.2, Build 4)', () => {
+  const merab = (): User => kristina({ id: 'merab', name: 'Merab', grants_json: '["office"]', location_id: null });
+
+  it('vendor_po_draft files the draft to kanban /po-drafts with the lines as given, the requester and the proposal-id key', () => {
+    const action = cat.actions.vendor_po_draft!;
+    expect(cat.groups.office).toContain('vendor_po_draft');
+    expect([action.action_type, action.reversible, action.cost_usd, action.level_required, action.initial_level, action.expires_hours])
+      .toEqual(['vendor_po_draft', true, 0, 1, 2, 24]);
+    const v = validateParams(action, {
+      vendor: 'AFI', notes: 'net 30', urgent: false,
+      lines: [
+        { item: '1121JW', quantity: 2000, unit: 'yards', unit_cost: '3.65', vendor_part_number: '1121JW' },
+        { item: 'rib for 1121JW', quantity: 4, unit: 'rolls', name: '2329RW rib', price: 9 },
+      ],
+    });
+    const r = buildWriteProposal(action, (v as any).values, merab(), brand, 'order 2,000 yd of 1121JW from AFI', NOW) as any;
+    expect(r.built.input.action_payload).toEqual({
+      hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/po-drafts',
+      body: {
+        vendor: 'AFI', notes: 'net 30', urgent: false,
+        lines: [
+          { item: '1121JW', quantity: 2000, unit: 'yards', unit_cost: 3.65, vendor_part_number: '1121JW' },
+          { item: 'rib for 1121JW', quantity: 4, unit: 'rolls', name: '2329RW rib' },
+        ],
+        requested_by: 'Merab', idempotency_key: '{{proposal.id}}',
+      },
+    });
+    expect(r.built.summary).toBe('Draft vendor PO for AFI: 2 line(s): 1121JW, rib for 1121JW');
+    expect(validateParams(action, { vendor: 'AFI', lines: [{ item: '1121JW', quantity: 10 }] })).toEqual({ ok: false, error: 'lines[0].unit is required' });
+    expect(validateParams(action, { vendor: 'AFI', lines: [{ item: 'x', quantity: 1, unit: 'units', unit_cost: -1 }] })).toEqual({ ok: false, error: 'lines[0].unit_cost must be at least 0' });
+  });
+
+  it('material_request carries urgent and fulfilment when said, and sends neither key when not (kanban defaults to not urgent)', () => {
+    const action = cat.actions.material_request!;
+    const base = { material: 'clear plastic scoops', quantity: 2, unit: 'boxes', reason: 'out' };
+    const urgent = buildWriteProposal(action, (validateParams(action, { ...base, urgent: true, fulfilment: 'pickup' }) as any).values, merab(), brand, 'right away', NOW) as any;
+    expect(urgent.built.input.action_payload.body).toEqual({ ...base, urgent: true, fulfilment: 'pickup', requested_by: 'Merab', idempotency_key: '{{proposal.id}}' });
+    const plain = buildWriteProposal(action, (validateParams(action, base) as any).values, merab(), brand, 'reorder', NOW) as any;
+    expect(plain.built.input.action_payload.body).toEqual({ ...base, requested_by: 'Merab', idempotency_key: '{{proposal.id}}' });
+    expect(validateParams(action, { ...base, urgent: 'yes' })).toEqual({ ok: false, error: 'urgent must be true or false' });
   });
 });
 
@@ -539,8 +582,9 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
     expect(cat.actions.inventory_transfer!.limits).toEqual({ per_sku: { max_units: 25 } });
     expect(cat.actions.vendor_po_receive!.limits).toEqual({ po_receipt: { read_path: '/api/integration/pos?status=ordered' } });
     const operator = Object.values(cat.actions).filter((a) => a.operator).map((a) => a.id).sort();
-    expect(operator).toEqual(['customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'pickup_status', 'pos_status',
-      'production_lookup', 'store_inventory_set', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
+    // material_request and vendor_po_draft (purchasing lanes 2026-10-31): a draft spends nothing on this path; kanban's lanes hold the money.
+    expect(operator).toEqual(['customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'pickup_status', 'pos_status',
+      'production_lookup', 'store_inventory_set', 'vendor_po_draft', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
   });
 
   it('validates the operator block and the brand locations registry at boot', () => {
@@ -702,6 +746,26 @@ describe('OPERATOR grok_action → action_result (spec 2026-10-27)', () => {
     // The grok_action itself is stored, already drained by McSecretary, never left for a drainer.
     expect(db.prepare("SELECT drained_by FROM spine_events WHERE event_type='grok_action'").get()).toEqual({ drained_by: 'mcsecretary' });
     expect(events('grok_report')).toEqual([]);
+  });
+
+  it("runs Robert's purchase requests from Chief on kanban: material_request urgent, vendor_po_draft lines (spec 2026-10-31 §5)", async () => {
+    createUser(db, { id: 'robert-mcmillan', name: 'Robert McMillan', email: 'rob@dd.com', role: 'admin' });
+    registerOriginBot(db, 'chief', 'rob@dd.com', 'material_request,vendor_po_draft,vendor_po_waiting,vendor_po_lookup', NOW);
+    answers['POST kp /api/integration/requests'] = () => new Response('{"draft_po_id":12,"notify":"new draft PO 1012 (Amazon); fast lane"}', { status: 201 });
+    answers['POST kp /api/integration/po-drafts'] = () => new Response('{"draft_po_id":7,"po_number":1007,"lane":"staged","notify":"PO 1007 (AFI), $13,000.00, staged"}', { status: 201 });
+    const origin = { person: 'rob@dd.com', bot: 'chief' };
+    const m = (await post({ idempotency_key: 'm1', origin, action: 'material_request',
+      params: { material: 'clear plastic scoops', quantity: 2, unit: 'boxes', reason: 'we need them right away', urgent: true, fulfilment: 'pickup' } }).done)!;
+    const d = (await post({ idempotency_key: 'd1', origin, action: 'vendor_po_draft',
+      params: { vendor: 'AFI', lines: [{ item: '1121JW', quantity: 2000, unit: 'yards', unit_cost: 3.65 }] } }).done)!;
+    expect([m.status, d.status]).toEqual(['ok', 'ok']);
+    expect(calls.filter((c) => c.method === 'POST').map((c) => [new URL(c.url).pathname, c.body])).toEqual([
+      ['/api/integration/requests', { material: 'clear plastic scoops', quantity: 2, unit: 'boxes', reason: 'we need them right away', urgent: true, fulfilment: 'pickup',
+        requested_by: 'Robert McMillan', idempotency_key: handIdempotencyKey('grok-bots', 'OP-m1') }],
+      ['/api/integration/po-drafts', { vendor: 'AFI', lines: [{ item: '1121JW', quantity: 2000, unit: 'yards', unit_cost: 3.65 }],
+        requested_by: 'Robert McMillan', idempotency_key: handIdempotencyKey('grok-bots', 'OP-d1') }],
+    ]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM proposals').get()).toEqual({ n: 0 });
   });
 
   it('runs a recount within limits with no approval, mapping the hand payload, and audits it', async () => {
