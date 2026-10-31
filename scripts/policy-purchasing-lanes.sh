@@ -18,7 +18,7 @@ if [[ -n ${LOCAL_POLICY:-} ]]; then
 else
   RUN=(railway run --)
 fi
-OUT="$OUT" $RUN node --import tsx -e '
+export OUT; "${RUN[@]}" node --import tsx -e '
 const fs = require("fs");
 (async () => {
   const { parseAgentPolicy } = await import("./src/spine/agent-policy.ts");
