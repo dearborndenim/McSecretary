@@ -462,11 +462,12 @@ describe('spine routes', () => {
       expect((await get(handle, '/spine/brands', 'Bearer ')).status).toBe(401);
     });
 
-    it('lists both brand files with active', async () => {
+    it('lists every brand file with active', async () => {
       const out = await get(handle, '/spine/brands', `Bearer ${KEY}`);
       expect(JSON.parse(out.body)).toEqual({ brands: [
         { brand_id: 'dearborn-denim', active: true },
         { brand_id: 'knits', active: true },
+        { brand_id: 'long-ryder', active: true },
       ] });
     });
 

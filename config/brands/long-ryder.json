@@ -1,0 +1,48 @@
+{
+  "_comment": "Hand-written 2026-11-01 (not generated: brand-gen refuses long-ryder until its dossier reaches step 8) so the agent graph can run for Long Ryder: the Designer, Merchandiser line plan and Technical Designer reach design-module, product-dev and the PO receiver with brand=long-ryder. Factory hands share Dearborn's services and env names, as knits does; ad-manager and content-engine name their own LONG_RYDER env vars, unset on purpose until the Long Ryder marketing build. Replace with brand-gen's output once the dossier is done.",
+  "brand_id": "long-ryder",
+  "display_name": "Long Ryder",
+  "active": true,
+  "inbox_user_id": "robert-mcmillan",
+  "shopify_store": "long-ryder.myshopify.com",
+  "meta_ad_account": "",
+  "silent_budget_usd": 0,
+  "exploration_share": 0.2,
+  "proposal_expiry_hours": 48,
+  "hands": {
+    "ad-manager": {
+      "url_env": "AD_MANAGER_LONG_RYDER_URL",
+      "key_env": "AD_MANAGER_LONG_RYDER_KEY"
+    },
+    "content-engine": {
+      "url_env": "CONTENT_ENGINE_LONG_RYDER_URL",
+      "key_env": "CONTENT_ENGINE_LONG_RYDER_KEY"
+    },
+    "product-dev": {
+      "url_env": "PRODUCT_DEV_URL",
+      "key_env": "PRODUCT_DEV_KEY",
+      "forward_brand": "brand"
+    },
+    "piece-work-scanner": {
+      "url_env": "PIECE_WORK_SCANNER_URL",
+      "key_env": "PIECE_WORK_SCANNER_API_KEY"
+    },
+    "purchase-order-receiver": {
+      "url_env": "PO_RECEIVER_URL",
+      "key_env": "PO_RECEIVER_API_KEY"
+    },
+    "kanban-purchaser": {
+      "url_env": "KANBAN_PURCHASER_URL",
+      "key_env": "KANBAN_PURCHASER_KEY"
+    },
+    "quickbooks-sync": {
+      "url_env": "QUICKBOOKS_SYNC_URL",
+      "key_env": "QUICKBOOKS_SYNC_KEY"
+    },
+    "design-module": {
+      "url_env": "DESIGN_MODULE_URL",
+      "key_env": "DESIGN_MODULE_KEY",
+      "forward_brand": "brand"
+    }
+  }
+}

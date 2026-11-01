@@ -45,8 +45,21 @@ describe('brand config', () => {
     expect(forwardBrandKey(b, 'notes')).toBeUndefined();
   });
 
-  it('loads knits (Ballow) with its _comment key, and lists both brands', () => {
-    expect(listBrandIds(DIR)).toEqual(['dearborn-denim', 'knits']);
+  it('loads long-ryder sharing the factory hands, its marketing hands unset on purpose', () => {
+    const lr = loadBrandConfig(DIR, 'long-ryder');
+    expect(lr.display_name).toBe('Long Ryder');
+    expect(forwardBrandKey(lr, 'design-module')).toBe('brand');
+    expect(forwardBrandKey(lr, 'product-dev')).toBe('brand');
+    expect(forwardBrandKey(lr, 'purchase-order-receiver')).toBeUndefined();
+    expect(() => resolveHand(lr, 'ad-manager', { AD_MANAGER_URL: 'https://am.example', AD_MANAGER_KEY: 'k' })).toThrow(/AD_MANAGER_LONG_RYDER_URL/);
+    const dd = loadBrandConfig(DIR, 'dearborn-denim');
+    for (const h of ['product-dev', 'design-module', 'piece-work-scanner', 'purchase-order-receiver', 'kanban-purchaser', 'quickbooks-sync']) {
+      expect(lr.hands[h], h).toEqual(dd.hands[h]);
+    }
+  });
+
+  it('loads knits (Ballow) with its _comment key, and lists every brand', () => {
+    expect(listBrandIds(DIR)).toEqual(['dearborn-denim', 'knits', 'long-ryder']);
     const k = loadBrandConfig(DIR, 'knits');
     expect(k.display_name).toBe('Ballow');
     expect(k.silent_budget_usd).toBe(0);
