@@ -72,7 +72,7 @@ describe('staff-action catalogue validator (spec §5)', () => {
       'cs_assign_me', 'cs_close', 'cs_my_queue', 'cs_note', 'cs_reply', 'cs_search', 'cs_ticket',
       'customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'ops_note',
       'pickup_approve', 'pickup_collected', 'pickup_hold', 'pickup_mark_ready', 'pickup_release', 'pickup_reschedule', 'pickup_status',
-      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_po_approve', 'vendor_po_draft', 'vendor_po_lookup', 'vendor_po_receive',
+      'pos_status', 'production_lookup', 'store_inventory_set', 'vendor_create', 'vendor_po_approve', 'vendor_po_draft', 'vendor_po_lookup', 'vendor_po_receive',
       'vendor_po_waiting',
     ]);
     // Inbound pickups (kanban Build P1): Robert alone approves a quote (cost bound to it), holds and releases; the driver group marks collected.
@@ -331,6 +331,18 @@ describe('purchasing lanes (spec 2026-10-31 §5.2, Build 4)', () => {
     expect(validateParams(action, { vendor: 'AFI', lines: [{ item: 'x', quantity: 1, unit: 'units', unit_cost: -1 }] })).toEqual({ ok: false, error: 'lines[0].unit_cost must be at least 0' });
   });
 
+  it('vendor_create (OP-20261102-004) is admin-only and posts the facts as given to kanban /vendors', () => {
+    const action = cat.actions.vendor_create!;
+    expect(Object.values(cat.groups).flat()).not.toContain('vendor_create');
+    const v = validateParams(action, { name: 'American Elastic', order_email: 'orders@americanelastic.com' });
+    const r = buildWriteProposal(action, (v as any).values, merab(), brand, 'add American Elastic', NOW) as any;
+    expect(r.built.input.action_payload).toEqual({
+      hand: 'kanban-purchaser', method: 'POST', path: '/api/integration/vendors',
+      body: { name: 'American Elastic', order_email: 'orders@americanelastic.com', requested_by: 'Merab', idempotency_key: '{{proposal.id}}' },
+    });
+    expect(validateParams(action, { name: 'X', order_method: 'browser' }).ok).toBe(false);
+  });
+
   it('material_request carries urgent and fulfilment when said, and sends neither key when not (kanban defaults to not urgent)', () => {
     const action = cat.actions.material_request!;
     const base = { material: 'clear plastic scoops', quantity: 2, unit: 'boxes', reason: 'out' };
@@ -583,8 +595,9 @@ describe('OPERATOR direct-action limits (spec 2026-10-27, Robert\'s numbers)', (
     expect(cat.actions.vendor_po_receive!.limits).toEqual({ po_receipt: { read_path: '/api/integration/pos?status=ordered' } });
     const operator = Object.values(cat.actions).filter((a) => a.operator).map((a) => a.id).sort();
     // material_request and vendor_po_draft (purchasing lanes 2026-10-31): a draft spends nothing on this path; kanban's lanes hold the money.
+    // vendor_create (OP-20261102-004): Chief adds a vendor on Robert's request; it spends nothing.
     expect(operator).toEqual(['customer_order_lookup', 'inventory_lookup', 'inventory_transfer', 'material_request', 'pickup_status', 'pos_status',
-      'production_lookup', 'store_inventory_set', 'vendor_po_draft', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
+      'production_lookup', 'store_inventory_set', 'vendor_create', 'vendor_po_draft', 'vendor_po_lookup', 'vendor_po_receive', 'vendor_po_waiting']);
   });
 
   it('validates the operator block and the brand locations registry at boot', () => {

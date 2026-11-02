@@ -241,7 +241,7 @@
     "vendor_po_draft": {
       "operator": true,
       "kind": "write",
-      "description": "Put one or more lines on a vendor's draft vendor PO (our purchase order to a vendor), for new items or several lines at once; for one material kanban already knows, material_request is enough. This makes a draft, not a purchase: purchasing decides by lane. Under $500 the PO is bought without asking after a short settle; $500 and over is staged, reviewed and waits for Robert's approval; Amazon or Home Depot under $200, or anything urgent, is bought at once after Robert's prompt (a Grok tap on the exact total, or a card). Set urgent when the person says ASAP, right away, or in-store pickup, and fulfilment pickup for in-store pickup. Copy vendor, items, quantities and prices exactly as the person gave them; never add freight, palletizing, shipping, fuel or other charges as lines (purchasing refuses them; the vendor bills them). A line kanban does not have needs name (what the new item is called) and is created on the vendor; a vendor kanban does not have is refused (Robert adds vendors). Relay purchasing's answer: the PO number, lane and what happens next. Not for customer orders.",
+      "description": "Put one or more lines on a vendor's draft vendor PO (our purchase order to a vendor), for new items or several lines at once; for one material kanban already knows, material_request is enough. This makes a draft, not a purchase: purchasing decides by lane. Under $500 the PO is bought without asking after a short settle; $500 and over is staged, reviewed and waits for Robert's approval; Amazon or Home Depot under $200, or anything urgent, is bought at once after Robert's prompt (a Grok tap on the exact total, or a card). Set urgent when the person says ASAP, right away, or in-store pickup, and fulfilment pickup for in-store pickup. Copy vendor, items, quantities and prices exactly as the person gave them; never add freight, palletizing, shipping, fuel or other charges as lines (purchasing refuses them; the vendor bills them). A line kanban does not have needs name (what the new item is called) and is created on the vendor; a vendor kanban does not have is refused: add it first with vendor_create when Robert asks and the vendor's facts are known. Relay purchasing's answer: the PO number, lane and what happens next. Not for customer orders.",
       "params": {
         "vendor": { "type": "string", "required": true, "max": 120, "description": "Vendor code or name, e.g. \"AMAZON\" or \"Cone Denim\"." },
         "lines": {
@@ -275,6 +275,105 @@
       "initial_level": 2,
       "expires_hours": 24,
       "summary": "Draft vendor PO for {vendor}: {#lines} line(s): {lines.item}"
+    },
+    "vendor_create": {
+      "operator": true,
+      "kind": "write",
+      "description": "Add a new vendor to kanban-purchaser (a supplier MMI buys from), only when Robert asks for it and the vendor's facts are known: its name and how it takes orders (an order email for an emailed PO, or its website for a web store). Copy the facts exactly as given; never guess an email. A name kanban already has is not added again: the answer says created false and gives that vendor. The new vendor is marked for the office to review. Then file the PO with vendor_po_draft naming the vendor's code from the answer. This adds no PO and buys nothing.",
+      "params": {
+        "name": {
+          "type": "string",
+          "required": true,
+          "max": 200,
+          "description": "Vendor name, e.g. \"American Elastic\"."
+        },
+        "code": {
+          "type": "string",
+          "required": false,
+          "max": 20,
+          "description": "Short code (letters, digits, - and _), e.g. \"AMELASTIC\"; leave out to have one made from the name."
+        },
+        "order_method": {
+          "type": "enum",
+          "required": false,
+          "enum": [
+            "email",
+            "grok_web",
+            "manual"
+          ],
+          "description": "email: kanban emails the PO; grok_web: a web store the purchasing bot orders on; manual: ordered by hand. Leave out: email when an order or contact email is given, else manual."
+        },
+        "order_email": {
+          "type": "string",
+          "required": false,
+          "max": 200,
+          "description": "Address POs are emailed to."
+        },
+        "contact_name": {
+          "type": "string",
+          "required": false,
+          "max": 200,
+          "description": "Contact person."
+        },
+        "contact_email": {
+          "type": "string",
+          "required": false,
+          "max": 200,
+          "description": "Contact email."
+        },
+        "phone": {
+          "type": "string",
+          "required": false,
+          "max": 50,
+          "description": "Phone."
+        },
+        "address": {
+          "type": "string",
+          "required": false,
+          "max": 500,
+          "description": "Address."
+        },
+        "website_url": {
+          "type": "string",
+          "required": false,
+          "max": 500,
+          "description": "Website (https://…)."
+        },
+        "notes": {
+          "type": "string",
+          "required": false,
+          "max": 2000,
+          "description": "Notes (terms, account number), as given."
+        }
+      },
+      "bind": {
+        "requested_by": "user.name",
+        "idempotency_key": "proposal.id"
+      },
+      "hand": "kanban-purchaser",
+      "method": "POST",
+      "path": "/api/integration/vendors",
+      "body": {
+        "name": "{name}",
+        "code": "{code}",
+        "order_method": "{order_method}",
+        "order_email": "{order_email}",
+        "contact_name": "{contact_name}",
+        "contact_email": "{contact_email}",
+        "phone": "{phone}",
+        "address": "{address}",
+        "website_url": "{website_url}",
+        "notes": "{notes}",
+        "requested_by": "{requested_by}",
+        "idempotency_key": "{idempotency_key}"
+      },
+      "action_type": "vendor_create",
+      "reversible": true,
+      "cost_usd": 0,
+      "level_required": 1,
+      "initial_level": 1,
+      "expires_hours": 24,
+      "summary": "Add vendor {name}"
     },
     "production_lookup": {
       "operator": true,
