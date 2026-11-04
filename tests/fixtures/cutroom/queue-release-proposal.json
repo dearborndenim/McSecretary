@@ -1,0 +1,31 @@
+{
+  "_comment": "Recorded from cutroom feat/queue src/cutroom/spine.py SpineClient.release_proposal (agent-control spec 5.7), 2026-10-25. Regenerate from cutroom if that body changes.",
+  "brand_id": "dearborn-denim",
+  "action_type": "queue_release",
+  "action_payload": {
+    "hand": "cutroom",
+    "method": "POST",
+    "path": "/api/queue/CJ-10252026-1/release",
+    "body": {}
+  },
+  "reason": "Release DDA-WO-0142 GBR-101 to plotter and cutter: 2 markers x 50/50 plies, 757.4 m (828.3 yd) of D1234, efficiency 83.1 %, exact preset, overcut 34+1",
+  "evidence": {
+    "job_id": "CJ-10252026-1",
+    "po": "DDA-WO-0142",
+    "style_code": "GBR-101",
+    "fabric_code": "D1234",
+    "plan_id": "10252026 DDA-WO-0142 GBR-101",
+    "markers": 2,
+    "plies": 100,
+    "fabric_m": 757.4,
+    "fabric_yd": 828.3,
+    "efficiency": 0.8312,
+    "matched_kind": "exact",
+    "overcut": "34+1",
+    "decision_events": true
+  },
+  "cost_usd": 0,
+  "reversible": false,
+  "level_required": 2,
+  "expires_at": "2026-10-28T15:00:00Z"
+}

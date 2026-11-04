@@ -47,6 +47,10 @@
     "cs-desk": {
       "url_env": "CS_DESK_URL",
       "key_env": "CS_DESK_KEY"
+    },
+    "cutroom": {
+      "url_env": "CUTROOM_URL",
+      "key_env": "CUTROOM_KEY"
     }
   }
 }
