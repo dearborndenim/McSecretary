@@ -1,0 +1,51 @@
+{
+  "@odata.etag": "W/\"CQAAABYAAAD\"",
+  "id": "AAMkAD-promo-1",
+  "receivedDateTime": "2026-11-09T14:05:00Z",
+  "hasAttachments": false,
+  "subject": "Our Fall Sale: 30% off everything",
+  "bodyPreview": "Shop the fall sale. Unsubscribe here: https://bestmadeco.example/u/abc",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-promo-1",
+  "body": {
+    "contentType": "text",
+    "content": "Shop the fall sale. Unsubscribe here: https://bestmadeco.example/u/abc"
+  },
+  "from": {
+    "emailAddress": {
+      "name": "Best Made Co.",
+      "address": "news@mail.bestmadeco.example"
+    }
+  },
+  "toRecipients": [
+    {
+      "emailAddress": {
+        "name": "rob",
+        "address": "rob@dearborndenim.com"
+      }
+    }
+  ],
+  "ccRecipients": [],
+  "internetMessageHeaders": [
+    {
+      "name": "Received",
+      "value": "from mail.example.net by BN8PR.outlook.office365.com"
+    },
+    {
+      "name": "Message-ID",
+      "value": "<AAMkAD-promo-1@mail.example.net>"
+    },
+    {
+      "name": "MIME-Version",
+      "value": "1.0"
+    },
+    {
+      "name": "List-Unsubscribe",
+      "value": "<mailto:unsub-abc@mail.bestmadeco.example?subject=unsubscribe>, <https://mail.bestmadeco.example/unsub/abc123?e=rob%40dearborndenim.com>"
+    },
+    {
+      "name": "List-Unsubscribe-Post",
+      "value": "List-Unsubscribe=One-Click"
+    }
+  ]
+}

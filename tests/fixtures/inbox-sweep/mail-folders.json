@@ -1,0 +1,37 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('rob%40dearborndenim.com')/mailFolders(id,displayName)",
+  "value": [
+    {
+      "id": "AAMkAD-fld-archive",
+      "displayName": "Archive"
+    },
+    {
+      "id": "AAMkAD-fld-deleted",
+      "displayName": "Deleted Items"
+    },
+    {
+      "id": "AAMkAD-fld-dmarc",
+      "displayName": "DMARC Reports"
+    },
+    {
+      "id": "AAMkAD-fld-inbox",
+      "displayName": "Inbox"
+    },
+    {
+      "id": "AAMkAD-fld-junk",
+      "displayName": "Junk Email"
+    },
+    {
+      "id": "AAMkAD-fld-mmi",
+      "displayName": "McMillan Manufacturing Reports"
+    },
+    {
+      "id": "AAMkAD-fld-promo",
+      "displayName": "Promotions"
+    },
+    {
+      "id": "AAMkAD-fld-sent",
+      "displayName": "Sent Items"
+    }
+  ]
+}

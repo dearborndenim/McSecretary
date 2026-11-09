@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { determineAction, type EmailAction } from '../../src/email/actions.js';
+import { readFileSync } from 'node:fs';
+import { determineAction, ensureFolder, folderIdFromList, type EmailAction } from '../../src/email/actions.js';
 import type { ClassifiedEmail } from '../../src/email/types.js';
 
 function makeClassified(overrides: Partial<ClassifiedEmail>): ClassifiedEmail {
@@ -54,5 +55,33 @@ describe('determineAction', () => {
     const email = makeClassified({ category: 'junk', confidence: 0.6 });
     const action = determineAction(email);
     expect(action.type).toBe('flag_for_review');
+  });
+});
+
+describe('inbox sweep folders (Graph mailFolders fixture)', () => {
+  const folders = JSON.parse(readFileSync(new URL('../fixtures/inbox-sweep/mail-folders.json', import.meta.url), 'utf8'));
+
+  it('finds a top-level folder by display name, case-insensitively', () => {
+    expect(folderIdFromList(folders, 'Promotions')).toBe('AAMkAD-fld-promo');
+    expect(folderIdFromList(folders, 'dmarc reports')).toBe('AAMkAD-fld-dmarc');
+    expect(folderIdFromList(folders, 'Gov Bids')).toBeNull();
+  });
+
+  it('refuses a response without a value array', () => {
+    expect(() => folderIdFromList({ error: { code: 'ErrorAccessDenied' } }, 'Promotions')).toThrow(/value array/);
+  });
+
+  function graph(createdId: string) {
+    return (async (_url: string | URL | Request, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify(folders), { status: 200 });
+      return new Response(JSON.stringify({ id: createdId, displayName: JSON.parse(String(init!.body)).displayName }), { status: 201 });
+    }) as typeof fetch;
+  }
+
+  it('returns an existing folder id, creates a missing one, and passes well-known names through', async () => {
+    const deps = { fetch: graph('AAMkAD-fld-new'), token: async () => 't' };
+    expect(await ensureFolder('rob@dearborndenim.com', 'Promotions', deps)).toBe('AAMkAD-fld-promo');
+    expect(await ensureFolder('rob@dearborndenim.com', 'Gov Bids', deps)).toBe('AAMkAD-fld-new');
+    expect(await ensureFolder('rob@dearborndenim.com', 'junkemail', deps)).toBe('junkemail');
   });
 });

@@ -59,7 +59,9 @@ import { createTelegramTransport } from './spine/telegram-card.js';
 import { parseAgentKeys } from './spine/agent-keys.js';
 import { parseAgentPolicy } from './spine/agent-policy.js';
 import { getGraphToken } from './auth/graph.js';
-import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRepliesFrom, type RfqScanSummary } from './email/rfq-intake.js';
+import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRepliesFrom, matchRfqReply, resolveOwnDomains, type RfqScanSummary } from './email/rfq-intake.js';
+import { runInboxSweep, createSweepClassifier } from './email/inbox-sweep.js';
+import { COMPANY_DOMAINS, GINA_ADDRESSES, domainOf, parseSweepMode } from './email/inbox-sweep-rules.js';
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
@@ -363,6 +365,55 @@ async function handleMissedDeliveryCheck(): Promise<void> {
   if (id === null) return;
   console.log(`Missed delivery check: alerted Chief (event #${id})`);
   try { spineWake?.('grok_task_chief', id); } catch (err) { console.error('Missed delivery wake failed:', err); }
+}
+
+let inboxSweepRunning = false;
+
+/**
+ * Every 15 min: the Inbox Sweep (src/email/inbox-sweep.ts), gated by
+ * INBOX_SWEEP_MODE (off by default; shadow logs only; live moves mail). Errors
+ * are logged, never thrown, so a failing Graph or model call does not send a
+ * Telegram "Task failed" every 15 minutes.
+ */
+async function handleInboxSweep(): Promise<void> {
+  const mode = parseSweepMode(process.env.INBOX_SWEEP_MODE);
+  if (mode === 'off' || inboxSweepRunning) return;
+  inboxSweepRunning = true;
+  try {
+    const accounts = getActiveUsers(db).flatMap((u) => getUserEmailAccounts(db, u.id).map((a) => a.email_address.toLowerCase()));
+    const companyDomains = [...new Set([...COMPANY_DOMAINS, ...accounts.map(domainOf).filter(Boolean)])];
+    const ownDomains = resolveOwnDomains(process.env);
+    const summary = await runInboxSweep({
+      db,
+      mode,
+      mailboxes: [process.env.OUTLOOK_USER_EMAIL_1 ?? '', process.env.OUTLOOK_USER_EMAIL_2 ?? ''],
+      now: () => new Date(),
+      graphFetch: fetch,
+      token: getGraphToken,
+      unsubscribeFetch: fetch,
+      classify: createSweepClassifier(anthropic),
+      isRfqReply: (m) => matchRfqReply(db, {
+        id: m.id, account: m.mailbox, sender: m.sender, senderName: m.senderName, subject: m.subject,
+        bodyPreview: m.bodyPreview, body: m.bodyText, receivedAt: m.receivedAt, threadId: m.conversationId, isRead: m.isRead,
+      }, new Date().toISOString(), { ownDomains }) !== null,
+      companyDomains,
+      deniedAddresses: new Set(accounts),
+      engagementMailboxes: [GINA_ADDRESSES[0]!],
+    });
+    for (const b of summary.mailboxes) {
+      if (b.fetched > 0 || b.errors.length > 0) {
+        console.log(`Inbox sweep (${mode}) ${b.mailbox}: ${b.fetched} fetched, ${b.decided} decided, ${b.moved} moved, ${b.unsubscribed} unsubscribed`);
+      }
+      if (b.errors.length > 0) console.error(`Inbox sweep ${b.mailbox} errors: ${b.errors.join('; ')}`);
+    }
+    if (summary.eventId !== null) {
+      try { spineWake?.('grok_task_chief', summary.eventId); } catch (err) { console.error('Inbox sweep wake failed:', err); }
+    }
+  } catch (err) {
+    console.error('Inbox sweep failed:', err instanceof Error ? err.message : String(err));
+  } finally {
+    inboxSweepRunning = false;
+  }
 }
 
 async function handleTrustMonthlySummary(): Promise<void> {
@@ -1931,6 +1982,7 @@ async function main() {
     { name: 'Weekly Synthesis', schedule: '0 19 * * 0', handler: handleWeeklySynthesis, description: 'Sunday 7 PM — synthesize weekly learnings' },
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
     { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },
+    { name: 'Inbox Sweep', schedule: '*/15 * * * *', handler: handleInboxSweep, description: 'Every 15 min, 24/7 — file new mail Rob does not need (INBOX_SWEEP_MODE off|shadow|live)' },
     { name: 'Invite Reminders', schedule: '0 9 * * *', handler: handleInviteReminders, description: 'Daily 9 AM — resend invite to entries >48h old with no /start' },
     { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
     { name: 'Spine Sweep', schedule: '0 5 * * *', handler: handleSpineSweep, description: 'Daily 5 AM CT — expire stale proposals, report undrained events and failed runs' },
