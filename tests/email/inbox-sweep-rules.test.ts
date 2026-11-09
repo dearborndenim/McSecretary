@@ -5,6 +5,8 @@ import {
   COMPANY_DOMAINS,
   decideAction,
   fromGraphMessage,
+  isAutomatedSender,
+  isProtectedSender,
   parseSweepMode,
   unsubscribeEligible,
   type RuleContext,
@@ -61,8 +63,13 @@ describe('deterministic rules', () => {
     expect(applyDeterministicRules(fixture('dmarc-report'), ctx)).toEqual({ rule: 'dmarc', folder: 'DMARC Reports', classify: false });
   });
 
-  it('archives a vendor reply on a Gina thread and asks the classifier about a handoff', () => {
+  it('archives a vendor reply on a Gina thread (Rob on Cc) and asks the classifier about a handoff', () => {
     expect(applyDeterministicRules(fixture('gina-vendor-reply'), ctx)).toEqual({ rule: 'gina_thread', folder: 'archive', classify: true });
+  });
+
+  it('does not treat a Gina-thread message addressed To Rob as a Gina thread', () => {
+    const m = fixture('gina-vendor-reply');
+    expect(applyDeterministicRules({ ...m, to: ['gina@dearborndenim.com', ROB], cc: [] }, ctx)).toBeNull();
   });
 
   it("archives Gina's own copy, but classifies Gina writing to Rob directly", () => {
@@ -71,10 +78,25 @@ describe('deterministic rules', () => {
     expect(applyDeterministicRules({ ...copy, to: [ROB], cc: [] }, ctx)).toBeNull();
   });
 
-  it('files a known MMI report sender', () => {
-    const m = { ...fixture('promo-mailto-only'), sender: 'reports@mcmillan-manufacturing.com' };
-    const hit = applyDeterministicRules(m, { ...ctx, mmiReportSenders: new Set(['reports@mcmillan-manufacturing.com']) });
-    expect(hit?.folder).toBe('McMillan Manufacturing Reports');
+  it('files a known MMI report sender only when it looks automated and is not company staff or Gina', () => {
+    const base = fixture('promo-mailto-only');
+    const seen = (sender: string) => ({ ...ctx, mmiReportSenders: new Set([sender]) });
+    const rule = (sender: string, headers = base.headers) => applyDeterministicRules({ ...base, sender, headers }, seen(sender))?.rule;
+    expect(rule('noreply@erp-cloud.example')).toBe('mmi_report');
+    // A person filed there twice: no automated signal, so classified like any other mail.
+    expect(rule('jane.doe@erp-cloud.example')).toBeUndefined();
+    expect(rule('jane.doe@erp-cloud.example', [...base.headers!, { name: 'Auto-Submitted', value: 'auto-generated' }])).toBe('mmi_report');
+    expect(rule('jane.doe@erp-cloud.example', [...base.headers!, { name: 'Precedence', value: 'bulk' }])).toBe('mmi_report');
+    expect(rule('jane.doe@erp-cloud.example', [...base.headers!, { name: 'Auto-Submitted', value: 'no' }])).toBeUndefined();
+    expect(rule('reports@mcmillan-manufacturing.com')).not.toBe('mmi_report');
+    expect(rule('gina@dearborndenim.com')).not.toBe('mmi_report');
+  });
+
+  it('recognises automated senders by local part', () => {
+    const m = fixture('promo-mailto-only');
+    expect(isAutomatedSender({ ...m, sender: 'do-not-reply@x.example', headers: null })).toBe(true);
+    expect(isAutomatedSender({ ...m, sender: 'notifications@x.example', headers: null })).toBe(true);
+    expect(isAutomatedSender({ ...m, sender: 'reportingmanager.jones@x.example', headers: null })).toBe(false);
   });
 
   it('never moves an RFQ reply (a move re-ids it and the RFQ intake would file it twice)', () => {
@@ -99,8 +121,9 @@ describe('decideAction', () => {
   it('maps confident lanes to folders, handoffs and tell-Robert', () => {
     expect(decideAction(null, cls({ lane: 'promotions' })).folder).toBe('Promotions');
     expect(decideAction(null, cls({ lane: 'fyi' })).folder).toBe('archive');
-    expect(decideAction(null, cls({ lane: 'junk' })).folder).toBe('junkemail');
-    expect(decideAction(null, cls({ lane: 'phishing' }))).toMatchObject({ folder: 'junkemail', tell: 'phishing' });
+    expect(decideAction(null, cls({ lane: 'junk' }), { second: cls({ lane: 'junk' }) }).folder).toBe('Sweep Junk');
+    expect(decideAction(null, cls({ lane: 'phishing' }), { second: cls({ lane: 'phishing' }) }))
+      .toMatchObject({ folder: 'Sweep Junk', tell: 'phishing' });
     expect(decideAction(null, cls({ lane: 'gov_bid', bot: 'General Paton Bot' })))
       .toMatchObject({ folder: 'Gov Bids', tell: 'gov_bid', handoffBot: 'General Paton Bot' });
     expect(decideAction(null, cls({ lane: 'handoff', bot: 'HR Bot' }))).toMatchObject({ folder: 'archive', handoffBot: 'HR Bot' });
@@ -114,10 +137,40 @@ describe('decideAction', () => {
   it('on a Gina thread: hands an action-needing reply to its owner, Gina by default, and keeps what Rob must decide', () => {
     const rule = applyDeterministicRules(fixture('gina-vendor-reply'), ctx);
     expect(decideAction(rule, cls({ lane: 'handoff', bot: 'Purchasing Bot' }))).toMatchObject({ folder: 'archive', handoffBot: 'Purchasing Bot' });
-    expect(decideAction(rule, undefined)).toMatchObject({ folder: 'archive', handoffBot: 'Gina' });
+    expect(decideAction(rule, cls({ lane: 'handoff', bot: 'none' }))).toMatchObject({ folder: 'archive', handoffBot: 'Gina' });
     expect(decideAction(rule, cls({ lane: 'fyi' }))).toMatchObject({ folder: 'archive', handoffBot: null });
     expect(decideAction(rule, cls({ lane: 'keep' })).folder).toBeNull();
-    expect(decideAction(rule, cls({ lane: 'phishing' }))).toMatchObject({ folder: 'junkemail', tell: 'phishing' });
+    expect(decideAction(rule, cls({ lane: 'phishing' }), { second: cls({ lane: 'phishing' }) }))
+      .toMatchObject({ folder: 'Sweep Junk', tell: 'phishing' });
+  });
+
+  it('on a Gina thread: no classifier answer or low confidence keeps it in the inbox', () => {
+    const rule = applyDeterministicRules(fixture('gina-vendor-reply'), ctx);
+    expect(decideAction(rule, undefined)).toMatchObject({ folder: null, handoffBot: null });
+    expect(decideAction(rule, cls({ lane: 'handoff', bot: 'Gina', confidence: 0.5 }))).toMatchObject({ folder: null, handoffBot: null });
+  });
+
+  it('keeps junk or phishing that the single-message pass does not confirm (prompt injection guard)', () => {
+    expect(decideAction(null, cls({ lane: 'junk' })).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'junk' }), { second: null }).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'junk' }), { second: cls({ lane: 'keep' }) }).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'phishing' }), { second: cls({ lane: 'phishing', confidence: 0.6 }) }).folder).toBeNull();
+    // Either pass saying phishing makes it phishing.
+    expect(decideAction(null, cls({ lane: 'junk' }), { second: cls({ lane: 'phishing' }) })).toMatchObject({ lane: 'phishing', tell: 'phishing' });
+  });
+
+  it('keeps government and bank senders unless it is a gov bid or both passes say phishing', () => {
+    const p = { protectedSender: true };
+    expect(decideAction(null, cls({ lane: 'fyi' }), p).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'promotions' }), p).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'junk' }), { ...p, second: cls({ lane: 'junk' }) }).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'junk' }), { ...p, second: cls({ lane: 'phishing' }) }).folder).toBeNull();
+    expect(decideAction(null, cls({ lane: 'phishing' }), { ...p, second: cls({ lane: 'phishing' }) }).folder).toBe('Sweep Junk');
+    expect(decideAction(null, cls({ lane: 'gov_bid', bot: 'General Paton Bot' }), p).folder).toBe('Gov Bids');
+    expect(decideAction(null, cls({ lane: 'fyi', urgent_today: true }), p)).toMatchObject({ folder: null, tell: 'urgent_today' });
+    expect(isProtectedSender('alerts@notify.wintrust.com')).toBe(true);
+    expect(isProtectedSender('dibbs-rfq@dla.mil')).toBe(true);
+    expect(isProtectedSender('news@mail.bestmadeco.example')).toBe(false);
   });
 });
 
@@ -156,6 +209,13 @@ describe('unsubscribeEligible (RFC 8058 one-click only)', () => {
     for (const sender of ['dibbs-rfq@dla.mil', 'news@sam.gov', 'alerts@chicago.il.us']) {
       expect(unsub(fixture('promo-one-click'), { sender })).toEqual({ ok: false, reason: 'government sender' });
     }
+  });
+
+  it('refuses static vendor and customer domains, subdomains included', () => {
+    const m = fixture('promo-one-click');
+    expect(unsub(m, { sender: 'news@conedenim.com' })).toEqual({ ok: false, reason: 'known vendor or customer domain' });
+    expect(unsub(m, { sender: 'promo@mail.carrtextile.com' })).toEqual({ ok: false, reason: 'known vendor or customer domain' });
+    expect(unsub(m, { sender: 'vendors@vermontflannel.com' })).toMatchObject({ ok: false });
   });
 
   it('refuses staff, company domains, known vendors/customers and anyone Rob engaged with', () => {

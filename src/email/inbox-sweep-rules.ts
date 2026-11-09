@@ -91,14 +91,33 @@ function header(headers: SweepHeader[] | null, name: string): string | null {
 // Folders, lanes, bots
 // ---------------------------------------------------------------------------
 
-/** Named folders are created on demand; `archive` / `junkemail` are Graph well-known names. */
+/**
+ * Named folders are created on demand; `archive` is the Graph well-known name.
+ * Junk and phishing go to the sweep's own "Sweep Junk", never the well-known
+ * Junk Email folder, which Exchange purges automatically.
+ */
 export type SweepFolder =
   | 'Promotions'
   | 'DMARC Reports'
   | 'McMillan Manufacturing Reports'
   | 'Gov Bids'
-  | 'archive'
-  | 'junkemail';
+  | 'Sweep Junk'
+  | 'archive';
+
+/**
+ * Folders the sweep files into (display names as Outlook shows them). The 5 AM
+ * triage leaves unread mail in these alone, so it neither re-classifies nor
+ * archives what the sweep already filed.
+ */
+export const SWEEP_MANAGED_FOLDER_NAMES = [
+  'Promotions',
+  'DMARC Reports',
+  'McMillan Manufacturing Reports',
+  'Gov Bids',
+  'Sweep Junk',
+  'Archive',
+  'Junk Email',
+];
 
 export const SWEEP_LANES = ['promotions', 'junk', 'phishing', 'gov_bid', 'fyi', 'handoff', 'keep'] as const;
 export type SweepLane = (typeof SWEEP_LANES)[number];
@@ -162,6 +181,22 @@ export interface RuleContext {
   companyDomains: string[];
 }
 
+const AUTOMATED_LOCAL_PART =
+  /^(no-?reply|do-?not-?reply|donotreply|notifications?|notify|alerts?|reports?|reporting|automated|auto|system|mailer|daemon|bounces?|postmaster|scheduler)([._+-]|$)/;
+
+/**
+ * Signs a message was sent by a machine, not a person: `Auto-Submitted` other
+ * than `no`, `Precedence: bulk|list|junk`, or a no-reply-style local part.
+ */
+export function isAutomatedSender(m: SweepMessage): boolean {
+  const autoSubmitted = header(m.headers, 'Auto-Submitted');
+  if (autoSubmitted && autoSubmitted.trim().toLowerCase() !== 'no') return true;
+  const precedence = header(m.headers, 'Precedence');
+  if (precedence && /^(bulk|list|junk)$/i.test(precedence.trim())) return true;
+  const local = m.sender.slice(0, m.sender.lastIndexOf('@'));
+  return AUTOMATED_LOCAL_PART.test(local);
+}
+
 export function isDmarcReport(m: SweepMessage): boolean {
   if (/report domain:/i.test(m.subject)) return true;
   return m.hasAttachments && /dmarc/i.test(m.sender);
@@ -173,14 +208,25 @@ export function isDmarcReport(m: SweepMessage): boolean {
  *    move re-ids the message, so moving it would make the next Email Scan file
  *    the vendor's quotes (and acknowledgement) a second time.
  * 2. DMARC aggregate reports → DMARC Reports.
- * 3. A sender already filed (twice or more) in McMillan Manufacturing Reports → there.
+ * 3. McMillan Manufacturing Reports: the sender was filed there at least twice
+ *    already, is not on a company domain or Gina, and the message looks
+ *    automated (`isAutomatedSender`).
  * 4. Gina's own copies (from gina@/purchasing@, Rob not in To) → Archive.
- * 5. An outside sender writing to a thread Gina is on → Archive, classified for a handoff.
+ * 5. An outside sender writing to a thread Gina is on, with Rob only on Cc →
+ *    Archive, classified for a handoff. Mail addressed To Rob is classified
+ *    like any other.
  */
 export function applyDeterministicRules(m: SweepMessage, ctx: RuleContext): RuleHit | null {
   if (ctx.isRfqReply) return { rule: 'rfq_reply', folder: null, classify: false };
   if (isDmarcReport(m)) return { rule: 'dmarc', folder: 'DMARC Reports', classify: false };
-  if (m.sender && ctx.mmiReportSenders.has(m.sender)) {
+  const companySender = ctx.companyDomains.includes(domainOf(m.sender));
+  if (
+    m.sender
+    && ctx.mmiReportSenders.has(m.sender)
+    && !companySender
+    && !GINA_ADDRESSES.includes(m.sender)
+    && isAutomatedSender(m)
+  ) {
     return { rule: 'mmi_report', folder: 'McMillan Manufacturing Reports', classify: false };
   }
   if (GINA_ADDRESSES.includes(m.sender)) {
@@ -188,8 +234,10 @@ export function applyDeterministicRules(m: SweepMessage, ctx: RuleContext): Rule
     return null; // Gina writing to Rob directly: classified like any other mail.
   }
   const ginaOnThread = [...m.to, ...m.cc].some((a) => GINA_ADDRESSES.includes(a));
-  const external = m.sender !== '' && !ctx.companyDomains.includes(domainOf(m.sender));
-  if (ginaOnThread && external) return { rule: 'gina_thread', folder: 'archive', classify: true };
+  const external = m.sender !== '' && !companySender;
+  if (ginaOnThread && external && !m.to.includes(m.mailbox)) {
+    return { rule: 'gina_thread', folder: 'archive', classify: true };
+  }
   return null;
 }
 
@@ -216,44 +264,84 @@ function realBot(bot: SweepBot | undefined): Exclude<SweepBot, 'none'> | null {
   return bot && bot !== 'none' ? bot : null;
 }
 
-/**
- * Combine the rule hit (if any) and the classifier's answer (if any). When in
- * doubt the message stays in the inbox: no answer, low confidence, or anything
- * urgent today that is not junk/phishing.
- */
-export function decideAction(rule: RuleHit | null, c: SweepClassification | undefined): SweepDecision {
-  const confident = c !== undefined && c.confidence >= SWEEP_MIN_CONFIDENCE;
+export interface DecideOptions {
+  /**
+   * The single-message re-classification, run only when the batch said junk
+   * or phishing (a cross-message prompt injection cannot reach it). Missing,
+   * null or disagreeing → the message stays in the inbox.
+   */
+  second?: SweepClassification | null;
+  /** Government, bank or payment sender (`isProtectedSender`). */
+  protectedSender?: boolean;
+}
 
+/** Junk or phishing with confidence: the batch lanes that need the second pass. */
+export function needsSecondPass(c: SweepClassification | undefined): boolean {
+  return c !== undefined && c.confidence >= SWEEP_MIN_CONFIDENCE && (c.lane === 'junk' || c.lane === 'phishing');
+}
+
+/** Junk/phishing confirmed by both passes; phishing if either pass said phishing. Null = not confirmed. */
+function confirmedJunk(c: SweepClassification, second: SweepClassification | null | undefined): SweepDecision | null {
+  if (!second || !needsSecondPass(second)) return null;
+  const phishing = c.lane === 'phishing' || second.lane === 'phishing';
+  const keyFacts = second.key_facts || c.key_facts;
+  return phishing
+    ? { lane: 'phishing', folder: 'Sweep Junk', handoffBot: null, tell: 'phishing', keyFacts }
+    : { lane: 'junk', folder: 'Sweep Junk', handoffBot: null, tell: null, keyFacts };
+}
+
+/**
+ * Combine the rule hit (if any) and the classifier's answers. When in doubt the
+ * message stays in the inbox: no answer, low confidence, junk/phishing the
+ * single-message pass does not confirm, anything urgent today that is not
+ * junk/phishing, and a government/bank sender unless it is a gov bid or both
+ * passes call it phishing.
+ */
+export function decideAction(
+  rule: RuleHit | null,
+  c: SweepClassification | undefined,
+  opts: DecideOptions = {},
+): SweepDecision {
   if (rule && !rule.classify) {
     return { lane: rule.rule, folder: rule.folder, handoffBot: null, tell: null, keyFacts: '' };
   }
+  const d = classifierDecision(rule, c, opts.second);
+  if (!opts.protectedSender || d.folder === null) return d;
+  const bothPhishing = c?.lane === 'phishing' && opts.second?.lane === 'phishing'
+    && (opts.second?.confidence ?? 0) >= SWEEP_MIN_CONFIDENCE;
+  if (d.lane === 'phishing' && bothPhishing) return d;
+  if (d.lane === 'gov_bid') return d;
+  return { ...keep(d.lane, c), tell: d.tell === 'urgent_today' ? d.tell : null };
+}
 
-  if (rule && rule.classify) {
-    // A vendor reply on a Gina thread: Archive (rule 4) unless it is junk, or
-    // something Rob must read or decide. Hand it to its owner unless the
-    // classifier is confident it needs nothing; an unclassified one goes to Gina.
-    if (confident && c.lane === 'phishing') {
-      return { lane: 'phishing', folder: 'junkemail', handoffBot: null, tell: 'phishing', keyFacts: c.key_facts };
-    }
-    if (confident && c.lane === 'junk') return { lane: 'junk', folder: 'junkemail', handoffBot: null, tell: null, keyFacts: c.key_facts };
-    if (c?.urgent_today) return { ...keep('gina_thread', c), tell: 'urgent_today' };
-    if (confident && c.lane === 'keep') return keep('gina_thread', c); // rule 8: Rob must read or decide it.
-    const needsAction = !confident || c.lane === 'handoff' || c.lane === 'gov_bid';
+function classifierDecision(
+  rule: RuleHit | null,
+  c: SweepClassification | undefined,
+  second: SweepClassification | null | undefined,
+): SweepDecision {
+  const confident = c !== undefined && c.confidence >= SWEEP_MIN_CONFIDENCE;
+
+  if (rule) {
+    // A vendor reply on a Gina thread (Rob on Cc only): Archive (rule 4) when
+    // the classifier is confident, handing it to its owner when it needs action.
+    // No answer or low confidence keeps it in the inbox.
+    if (!confident) return keep(rule.rule, c);
+    if (needsSecondPass(c)) return confirmedJunk(c, second) ?? keep(rule.rule, c);
+    if (c.urgent_today) return { ...keep(rule.rule, c), tell: 'urgent_today' };
+    if (c.lane === 'keep') return keep(rule.rule, c); // rule 8: Rob must read or decide it.
+    const needsAction = c.lane === 'handoff' || c.lane === 'gov_bid';
     return {
       lane: rule.rule,
       folder: rule.folder,
-      handoffBot: needsAction ? realBot(c?.bot) ?? 'Gina' : null,
+      handoffBot: needsAction ? realBot(c.bot) ?? 'Gina' : null,
       tell: null,
-      keyFacts: c?.key_facts ?? '',
+      keyFacts: c.key_facts,
     };
   }
 
   if (!c) return keep('keep');
   if (!confident) return keep('keep', c);
-  if (c.lane === 'phishing') {
-    return { lane: 'phishing', folder: 'junkemail', handoffBot: null, tell: 'phishing', keyFacts: c.key_facts };
-  }
-  if (c.lane === 'junk') return { lane: 'junk', folder: 'junkemail', handoffBot: null, tell: null, keyFacts: c.key_facts };
+  if (needsSecondPass(c)) return confirmedJunk(c, second) ?? keep(c.lane, c);
   if (c.urgent_today) return { ...keep(c.lane, c), tell: 'urgent_today' };
   switch (c.lane) {
     case 'promotions':
@@ -287,8 +375,32 @@ export const FINANCIAL_DOMAINS = [
   'braintreegateway.com', 'shopify.com', 'shop.app', 'visa.com', 'mastercard.com',
 ];
 
-function domainIn(domain: string, list: Iterable<string>): boolean {
-  for (const d of list) if (domain === d || domain.endsWith(`.${d}`)) return true;
+/**
+ * Vendor and customer domains known to the repos (static, so it holds when the
+ * DB is empty): the email domains of the Sourcing agent's vendor registry and
+ * candidates (claude_code `agents/sourcing/inputs/vendors*.json`, freemail
+ * dropped) plus Vermont Flannel (an MMI customer). kanban-purchaser's vendor
+ * list has no read endpoint McSecretary can call, so its vendors are covered
+ * only through `rfq_messages`, triage categories and the engagement check.
+ */
+export const VENDOR_DOMAINS = [
+  'carrtextile.com', 'conedenim.com', 'mmitextiles.com', 'moodfabrics.com', 'carolinacotton.com',
+  'eaglefabrics.com', 'fabricwholesaledirect.com', 'kendortextiles.com', 'mvmills.com',
+  'zippershipper.com', 'zipperstop.com', 'vermontflannel.com',
+];
+
+/** `domain` is `d` or a subdomain of it, for some `d` in `list`. */
+export function domainIn(domain: string, list: Iterable<string>): boolean {
+  for (const d of list) if (d && (domain === d || domain.endsWith(`.${d}`))) return true;
+  return false;
+}
+
+/** `domain` and some `d` in `list` are the same domain, or one is a subdomain of the other. */
+export function domainRelated(domain: string, list: Iterable<string>): boolean {
+  for (const d of list) {
+    if (!d) continue;
+    if (domain === d || domain.endsWith(`.${d}`) || d.endsWith(`.${domain}`)) return true;
+  }
   return false;
 }
 
@@ -301,6 +413,12 @@ export function isFinancialDomain(domain: string): boolean {
   if (domainIn(domain, FINANCIAL_DOMAINS)) return true;
   // Any bank or credit union by name (firstbank.com, alliantcreditunion.org, xyzfcu.org).
   return domain.split('.').some((label) => /bank|creditunion|fcu$/.test(label));
+}
+
+/** Government, bank or payment sender: the sweep only files these as gov bids or two-pass phishing. */
+export function isProtectedSender(sender: string): boolean {
+  const domain = domainOf(sender);
+  return domain !== '' && (isGovernmentDomain(domain) || isFinancialDomain(domain));
 }
 
 export interface UnsubscribeInput {
@@ -362,6 +480,7 @@ export function unsubscribeEligible(i: UnsubscribeInput): UnsubscribeVerdict {
   if (isFinancialDomain(domain)) return { ok: false, reason: 'bank or payment sender' };
   if (domainIn(domain, i.companyDomains)) return { ok: false, reason: 'company or staff domain' };
   if (i.deniedAddresses.has(sender)) return { ok: false, reason: 'staff address' };
+  if (domainIn(domain, VENDOR_DOMAINS)) return { ok: false, reason: 'known vendor or customer domain' };
   if (i.knownCorrespondent) return { ok: false, reason: 'known vendor, customer or correspondent' };
 
   const post = header(i.headers, 'List-Unsubscribe-Post');

@@ -83,16 +83,21 @@ const CORRESPONDENT_CATEGORIES = ['customer_inquiry', 'supplier', 'team_internal
 
 /**
  * True when local records show the sender is a vendor, customer, staff member or
- * other real correspondent: a domain we sent an RFQ to, or an address the triage
- * classifier filed under a correspondent category. Feeds the unsubscribe denylist.
+ * other real correspondent: a domain we sent an RFQ to (same domain or a
+ * subdomain either way), or an address the triage classifier filed under a
+ * correspondent category. Feeds the unsubscribe denylist.
  */
 export function isKnownCorrespondent(db: Database.Database, address: string, domain: string): boolean {
   const placeholders = CORRESPONDENT_CATEGORIES.map(() => '?').join(', ');
-  const row = db.prepare(`
-    SELECT 1 FROM rfq_messages WHERE vendor_domain = ?
-    UNION ALL
-    SELECT 1 FROM processed_emails WHERE lower(sender) = ? AND category IN (${placeholders})
+  const person = db.prepare(
+    `SELECT 1 FROM processed_emails WHERE lower(sender) = ? AND category IN (${placeholders}) LIMIT 1`,
+  ).get(address.toLowerCase(), ...CORRESPONDENT_CATEGORIES);
+  if (person !== undefined) return true;
+  if (!domain) return false;
+  const vendor = db.prepare(`
+    SELECT 1 FROM rfq_messages
+    WHERE vendor_domain = ? OR ? LIKE '%.' || vendor_domain OR vendor_domain LIKE '%.' || ?
     LIMIT 1
-  `).get(domain, address.toLowerCase(), ...CORRESPONDENT_CATEGORIES);
-  return row !== undefined;
+  `).get(domain, domain, domain);
+  return vendor !== undefined;
 }

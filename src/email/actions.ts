@@ -91,8 +91,8 @@ export async function categorizeOutlookEmail(
 // module has no delete call, and the sweep never sends, replies or forwards.
 // ---------------------------------------------------------------------------
 
-/** Graph well-known folder names the sweep moves into without a lookup. */
-export const WELL_KNOWN_SWEEP_FOLDERS = ['archive', 'junkemail'] as const;
+/** Graph well-known folder names the sweep moves into without a lookup (never junkemail: Exchange purges it). */
+export const WELL_KNOWN_SWEEP_FOLDERS = ['archive'] as const;
 
 export interface GraphDeps {
   fetch?: typeof fetch;
@@ -130,8 +130,8 @@ async function graphJson(deps: GraphDeps, method: 'GET' | 'POST', path: string, 
 
 /**
  * The id of the mailbox's top-level folder `displayName`, creating it when
- * missing. A well-known name (`archive`, `junkemail`) is returned as-is: Graph
- * accepts it as a `destinationId`.
+ * missing. The well-known name `archive` is returned as-is: Graph accepts it
+ * as a `destinationId`.
  */
 export async function ensureFolder(mailbox: string, displayName: string, deps: GraphDeps = {}): Promise<string> {
   if ((WELL_KNOWN_SWEEP_FOLDERS as readonly string[]).includes(displayName)) return displayName;

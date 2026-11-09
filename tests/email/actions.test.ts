@@ -78,10 +78,12 @@ describe('inbox sweep folders (Graph mailFolders fixture)', () => {
     }) as typeof fetch;
   }
 
-  it('returns an existing folder id, creates a missing one, and passes well-known names through', async () => {
+  it('returns an existing folder id, creates a missing one, and passes archive through', async () => {
     const deps = { fetch: graph('AAMkAD-fld-new'), token: async () => 't' };
     expect(await ensureFolder('rob@dearborndenim.com', 'Promotions', deps)).toBe('AAMkAD-fld-promo');
     expect(await ensureFolder('rob@dearborndenim.com', 'Gov Bids', deps)).toBe('AAMkAD-fld-new');
-    expect(await ensureFolder('rob@dearborndenim.com', 'junkemail', deps)).toBe('junkemail');
+    expect(await ensureFolder('rob@dearborndenim.com', 'archive', deps)).toBe('archive');
+    // Junk goes to the sweep's own folder, created like any other, never the auto-purged junkemail.
+    expect(await ensureFolder('rob@dearborndenim.com', 'Sweep Junk', deps)).toBe('AAMkAD-fld-new');
   });
 });

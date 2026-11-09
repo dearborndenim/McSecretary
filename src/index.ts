@@ -383,10 +383,11 @@ async function handleInboxSweep(): Promise<void> {
     const accounts = getActiveUsers(db).flatMap((u) => getUserEmailAccounts(db, u.id).map((a) => a.email_address.toLowerCase()));
     const companyDomains = [...new Set([...COMPANY_DOMAINS, ...accounts.map(domainOf).filter(Boolean)])];
     const ownDomains = resolveOwnDomains(process.env);
+    const mailboxes = [process.env.OUTLOOK_USER_EMAIL_1 ?? '', process.env.OUTLOOK_USER_EMAIL_2 ?? ''].filter(Boolean);
     const summary = await runInboxSweep({
       db,
       mode,
-      mailboxes: [process.env.OUTLOOK_USER_EMAIL_1 ?? '', process.env.OUTLOOK_USER_EMAIL_2 ?? ''],
+      mailboxes,
       now: () => new Date(),
       graphFetch: fetch,
       token: getGraphToken,
@@ -398,7 +399,8 @@ async function handleInboxSweep(): Promise<void> {
       }, new Date().toISOString(), { ownDomains }) !== null,
       companyDomains,
       deniedAddresses: new Set(accounts),
-      engagementMailboxes: [GINA_ADDRESSES[0]!],
+      // Engagement counts in either of Rob's mailboxes and Gina's, whichever one is being swept.
+      engagementMailboxes: [...mailboxes, GINA_ADDRESSES[0]!],
     });
     for (const b of summary.mailboxes) {
       if (b.fetched > 0 || b.errors.length > 0) {
