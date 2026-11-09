@@ -1,0 +1,51 @@
+{
+  "@odata.etag": "W/\"CQAAABYAAAD\"",
+  "id": "AAMkAD-bank-1",
+  "receivedDateTime": "2026-11-09T14:07:30Z",
+  "hasAttachments": false,
+  "subject": "Fraud alert: please confirm a $4,812.00 wire on your account ending 4417",
+  "bodyPreview": "We detected a wire transfer of $4,812.00 that may not have been authorized. Call the number on the back of your card today.",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-bank-1",
+  "body": {
+    "contentType": "text",
+    "content": "We detected a wire transfer of $4,812.00 that may not have been authorized. Call the number on the back of your card today."
+  },
+  "from": {
+    "emailAddress": {
+      "name": "Wintrust Alerts",
+      "address": "alerts@notify.wintrust.com"
+    }
+  },
+  "toRecipients": [
+    {
+      "emailAddress": {
+        "name": "rob",
+        "address": "rob@dearborndenim.com"
+      }
+    }
+  ],
+  "ccRecipients": [],
+  "internetMessageHeaders": [
+    {
+      "name": "Received",
+      "value": "from mail.example.net by BN8PR.outlook.office365.com"
+    },
+    {
+      "name": "Message-ID",
+      "value": "<AAMkAD-bank-1@mail.example.net>"
+    },
+    {
+      "name": "MIME-Version",
+      "value": "1.0"
+    },
+    {
+      "name": "List-Unsubscribe",
+      "value": "<https://notify.wintrust.com/prefs/unsub?id=9>"
+    },
+    {
+      "name": "List-Unsubscribe-Post",
+      "value": "List-Unsubscribe=One-Click"
+    }
+  ]
+}

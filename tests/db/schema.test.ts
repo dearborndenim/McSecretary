@@ -31,4 +31,20 @@ describe('initializeSchema', () => {
     initializeSchema(db);
     expect(() => initializeSchema(db)).not.toThrow();
   });
+
+  it('adds the inbox sweep tables to an existing database without touching its rows', () => {
+    initializeSchema(db);
+    db.exec(`DROP TABLE inbox_sweep_log; DROP TABLE inbox_sweep_state;`);
+    db.prepare("INSERT INTO processed_emails (id, account, sender, category) VALUES ('m1', 'rob@dearborndenim.com', 'a@b.example', 'supplier')").run();
+    db.prepare("INSERT INTO processed_emails (id, account, sender, category) VALUES ('m2', 'rob@dearborndenim.com', 'c@d.example', 'junk')").run();
+    const before = (db.prepare('SELECT COUNT(*) AS n FROM processed_emails').get() as { n: number }).n;
+
+    initializeSchema(db);
+
+    const names = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((t) => t.name);
+    expect(names).toContain('inbox_sweep_state');
+    expect(names).toContain('inbox_sweep_log');
+    expect((db.prepare('SELECT COUNT(*) AS n FROM processed_emails').get() as { n: number }).n).toBe(before);
+    expect(before).toBe(2);
+  });
 });

@@ -1,6 +1,7 @@
 import { getGraphToken } from '../auth/graph.js';
 import type { RawEmail } from './types.js';
-import { GRAPH_BASE } from '../auth/graph-base.js';
+import { GRAPH_BASE, graphSegment } from '../auth/graph-base.js';
+import { SWEEP_MANAGED_FOLDER_NAMES } from './inbox-sweep-rules.js';
 
 interface GraphMessage {
   id: string;
@@ -11,6 +12,7 @@ interface GraphMessage {
   receivedDateTime: string;
   conversationId: string;
   isRead: boolean;
+  parentFolderId?: string;
 }
 
 interface GraphResponse {
@@ -52,7 +54,7 @@ export async function fetchUnreadOutlookEmails(
     filter += ` and receivedDateTime ge ${toGraphDateTime(since)}`;
   }
 
-  const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=${encodeURIComponent(filter)}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=id,from,subject,bodyPreview,body,receivedDateTime,conversationId,isRead`;
+  const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=${encodeURIComponent(filter)}&$top=${maxResults}&$orderby=receivedDateTime desc&$select=id,from,subject,bodyPreview,body,receivedDateTime,conversationId,isRead,parentFolderId`;
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -64,8 +66,9 @@ export async function fetchUnreadOutlookEmails(
   }
 
   const data = (await response.json()) as GraphResponse;
+  const skip = data.value.length > 0 ? await sweepManagedFolderIds(userEmail, token) : new Set<string>();
 
-  return data.value.map((msg): RawEmail => ({
+  return data.value.filter((msg) => !msg.parentFolderId || !skip.has(msg.parentFolderId)).map((msg): RawEmail => ({
     id: msg.id,
     account: userEmail,
     sender: msg.from.emailAddress.address,
@@ -91,4 +94,37 @@ export function stripHtml(html: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 3000);
+}
+
+/**
+ * Ids of the top-level folders the Inbox Sweep files into (by display name),
+ * from a Graph `mailFolders` list. Triage leaves unread mail in these alone so
+ * it neither re-classifies nor archives what the sweep already filed.
+ */
+export function sweepManagedIdsFrom(json: unknown): Set<string> {
+  const rows = (json as { value?: unknown })?.value;
+  if (!Array.isArray(rows)) throw new Error('mailFolders response has no value array');
+  const names = new Set(SWEEP_MANAGED_FOLDER_NAMES.map((n) => n.toLowerCase()));
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const r = row as { id?: unknown; displayName?: unknown };
+    if (typeof r.id === 'string' && typeof r.displayName === 'string' && names.has(r.displayName.trim().toLowerCase())) {
+      ids.add(r.id);
+    }
+  }
+  return ids;
+}
+
+/** A failed lookup excludes nothing (triage behaves as before) and is logged. */
+async function sweepManagedFolderIds(userEmail: string, token: string): Promise<Set<string>> {
+  try {
+    const res = await fetch(`${GRAPH_BASE}/users/${graphSegment(userEmail)}/mailFolders?$top=100&$select=id,displayName`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Graph ${res.status}`);
+    return sweepManagedIdsFrom(await res.json());
+  } catch (err) {
+    console.error(`Triage: sweep folder lookup failed for ${userEmail}: ${err instanceof Error ? err.message : String(err)}`);
+    return new Set();
+  }
 }

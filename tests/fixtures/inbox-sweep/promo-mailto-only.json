@@ -1,0 +1,47 @@
+{
+  "@odata.etag": "W/\"CQAAABYAAAD\"",
+  "id": "AAMkAD-promo-2",
+  "receivedDateTime": "2026-11-09T14:06:00Z",
+  "hasAttachments": false,
+  "subject": "Weekly specials on needles and thread",
+  "bodyPreview": "This week's specials.",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-promo-2",
+  "body": {
+    "contentType": "text",
+    "content": "This week's specials."
+  },
+  "from": {
+    "emailAddress": {
+      "name": "Sewing Supply Deals",
+      "address": "deals@sewingsupply.example"
+    }
+  },
+  "toRecipients": [
+    {
+      "emailAddress": {
+        "name": "rob",
+        "address": "rob@dearborndenim.com"
+      }
+    }
+  ],
+  "ccRecipients": [],
+  "internetMessageHeaders": [
+    {
+      "name": "Received",
+      "value": "from mail.example.net by BN8PR.outlook.office365.com"
+    },
+    {
+      "name": "Message-ID",
+      "value": "<AAMkAD-promo-2@mail.example.net>"
+    },
+    {
+      "name": "MIME-Version",
+      "value": "1.0"
+    },
+    {
+      "name": "List-Unsubscribe",
+      "value": "<mailto:leave-123@sewingsupply.example>"
+    }
+  ]
+}
