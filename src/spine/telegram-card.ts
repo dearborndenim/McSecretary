@@ -519,14 +519,21 @@ export async function handleProposalCallback(
   return { ok: true, message: 'edit_requested' };
 }
 
+/** What a relayed decision did; `edit_applied` / `edit_noted` leave the proposal pending. */
+export type RelayOutcome = { ok: boolean; message: string; edit?: 'applied' | 'noted' };
+
 /**
  * A decision on a pending proposal relayed from outside Telegram (the Chief
- * digest, spec 2026-11-10). The same single path as a card tap: approve →
+ * digest, spec 2026-11-10). Approve and reject take the card's own path:
  * approveAndExecute (status-guarded claim, trust ledger, executor, requester
- * notice); reject → rejectProposal + trust ledger; edit → the card's
- * edit-requested state, so Robert's next `key=value` reply in the card's chat
- * applies it. `deps.reply` should post to the card's chat, so the thread shows
- * how the card ended. Whichever of Telegram or the relay decides first wins.
+ * notice) or rejectProposal + trust ledger; `deps.reply` should post to the
+ * card's chat. Whichever of Telegram or the relay decides first wins.
+ *
+ * Edit never arms the Telegram edit interceptor (setEditRequested), which would
+ * swallow Robert's next Telegram message. Text that parses as `key=value` edits
+ * (parseEdit/applyEdit, then `validate` when given) is applied to the payload and
+ * the proposal stays pending, so it comes back edited; anything else is only
+ * appended to the proposal's edits log as a note.
  */
 export async function relayProposalDecision(
   db: Database.Database,
@@ -535,7 +542,8 @@ export async function relayProposalDecision(
   by: string,
   deps: CardDeps,
   editText?: string,
-): Promise<CallbackResult> {
+  validate?: (payload: ActionPayload) => string | null,
+): Promise<RelayOutcome> {
   const p = getProposalById(db, id);
   if (!p) return { ok: false, message: `No proposal #${id}` };
   if (p.status !== 'pending') return { ok: false, message: `#${id} is already ${p.status}` };
@@ -547,12 +555,23 @@ export async function relayProposalDecision(
     await safeDecided(deps, p.id);
     return { ok: true, message: 'rejected' };
   }
-  if (p.telegram_chat_id) clearEditRequestedForChat(db, p.telegram_chat_id, p.id);
-  if (!setEditRequested(db, p.id, deps.now())) return { ok: false, message: `#${p.id} was already decided` };
-  appendEdit(db, p.id, { at: deps.now(), note: `edit requested (${by}): ${cap(editText ?? '', 2000)}` });
-  await safeReply(deps, `Edit for #${p.id} relayed (${by}): "${cap(editText ?? '', REASON_CAP)}". `
-    + 'Reply with key=value pairs to apply it (e.g. text=...), or "cancel". Nothing has been sent.');
-  return { ok: true, message: 'edit_requested' };
+  const text = (editText ?? '').trim();
+  const noted = (why: string): RelayOutcome => {
+    appendEdit(db, p.id, { at: deps.now(), note: `edit noted (${by}), not applied: ${cap(text, 2000)}` });
+    return { ok: true, message: why, edit: 'noted' };
+  };
+  const parsed = parseEdit(text);
+  if (!parsed.ok) return noted('not key=value edits; recorded as a note, nothing changed');
+  const original = JSON.parse(p.action_payload) as ActionPayload;
+  const edited = applyEdit(original, parsed.fields);
+  if (!edited.ok) return noted(`could not apply: ${edited.reason}`);
+  const payload = markTextEdited(original, edited.payload);
+  const bad = validate?.(payload) ?? null;
+  if (bad) return noted(`the edited draft is invalid: ${bad}`);
+  if (!updateActionPayload(db, p.id, payload)) return { ok: false, message: `#${p.id} was already decided` };
+  appendEdit(db, p.id, { at: deps.now(), note: `edit applied (${by}): ${cap(text, 2000)}` });
+  await safeReply(deps, `#${p.id} edited (${by}): ${cap(text, REASON_CAP)}. Still pending; nothing has been sent.`);
+  return { ok: true, message: 'edit applied; still pending', edit: 'applied' };
 }
 
 /**

@@ -379,6 +379,9 @@ async function handleChiefDigest(): Promise<void> {
   try {
     const built = await buildChiefDigest({
       db, env: process.env, now: () => new Date(), graphFetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(20_000) }), token: getGraphToken,
+      // The approve code goes to Robert's own Telegram chat only, never to Chief.
+      sendToRobert: (text) => sendMessageToUser(config.spine.monthlySummaryUserId, text, false),
+      log: console.log,
     });
     console.log(`Chief digest ${built.digest_id}: event #${built.event_id}`);
     try { spineWake?.('grok_task_chief', built.event_id); } catch (err) { console.error('Chief digest wake failed:', err); }

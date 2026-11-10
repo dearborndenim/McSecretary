@@ -4,7 +4,7 @@ import { getUserById } from '../db/user-queries.js';
 import { getProposalById } from '../db/proposal-queries.js';
 import { loadBrandConfig, listBrandIds } from './brand-config.js';
 import { executeProposal } from './executor.js';
-import { sendHandEmail, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
+import { sendHandEmail, validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { fileProposal } from './router.js';
 import {
   renderProposalCard, parseCallbackData, handleProposalCallback, handleEditReply, relayProposalDecision, type CardDeps, type InboxTransport,
@@ -126,7 +126,12 @@ export function buildSpine(d: SpineBuildDeps) {
     relay: async (id, decision, editText) => {
       const p = getProposalById(d.db, id);
       const chatId = p?.telegram_chat_id ?? (p ? chatFor(p.brand_id) : '');
-      return relayProposalDecision(d.db, id, decision, DECIDED_BY, cardDeps(chatId), editText ?? undefined);
+      // An edit relayed from Chief must still be a sendable email.
+      const validate = (payload: { method: unknown; path: unknown; body: unknown }) => {
+        const v = validateEmailPayload(payload);
+        return v.ok ? null : v.error;
+      };
+      return relayProposalDecision(d.db, id, decision, DECIDED_BY, cardDeps(chatId), editText ?? undefined, validate);
     },
   });
   const handleHttp = createSpineRouter({
