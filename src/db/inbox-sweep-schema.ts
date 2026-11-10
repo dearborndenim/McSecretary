@@ -78,6 +78,33 @@ export function insertSweepLog(db: Database.Database, r: SweepLogInput): void {
   );
 }
 
+export interface SweepLogRow {
+  message_id: string;
+  mailbox: string;
+  received_at: string;
+  sender: string | null;
+  subject: string | null;
+  lane: string;
+  folder: string | null;
+  bot: string | null;
+  unsubscribed: boolean;
+  mode: string;
+  note: string | null;
+  at: string;
+}
+
+/** Sweep decisions newest first (by decision time `at`), optionally only those at or after `since` (ISO). */
+export function listSweepLog(db: Database.Database, opts: { since: string | null; limit: number }): SweepLogRow[] {
+  const rows = db.prepare(`
+    SELECT message_id, mailbox, received_at, sender, subject, lane, folder, bot, unsubscribed, mode, note, at
+    FROM inbox_sweep_log
+    WHERE (? IS NULL OR at >= ?)
+    ORDER BY at DESC, id DESC
+    LIMIT ?
+  `).all(opts.since, opts.since, opts.limit) as Array<Omit<SweepLogRow, 'unsubscribed'> & { unsubscribed: number }>;
+  return rows.map((r) => ({ ...r, unsubscribed: r.unsubscribed === 1 }));
+}
+
 /** Triage categories that mark a sender as a real correspondent (never unsubscribed). */
 const CORRESPONDENT_CATEGORIES = ['customer_inquiry', 'supplier', 'team_internal', 'financial', 'personal'];
 

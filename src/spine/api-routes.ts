@@ -19,6 +19,7 @@ import { insertEvent, drainEvents, countPendingByType, countEventsSince } from '
 import { insertOutcome } from '../db/outcome-queries.js';
 import { countProposalsSince } from '../db/proposal-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
+import { listSweepLog } from '../db/inbox-sweep-schema.js';
 import { listTrustRowsForAgent, promoteTrust, getTrustRow, TRUST_WILDCARD } from '../db/trust-queries.js';
 import type { Routed } from './router.js';
 import type { OutcomeInput, ProposalInput, RunIndexInput, SpineEventInput, TrustLevel } from './types.js';
@@ -49,6 +50,8 @@ const BRAND_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 const NAME_MAX = 128;
 const MAX_PENDING_TYPES = 50;
+const SWEEP_LOG_DEFAULT_LIMIT = 500;
+const SWEEP_LOG_MAX_LIMIT = 2000;
 // design-module's collections list (the Design Artist's first read) is already >1 MB
 // (113 collections, ~90 more per designer fan-out this week) and growing; 8 MiB gives
 // headroom well past the next several fan-outs before this needs raising again.
@@ -513,6 +516,27 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const ok = upsertRun(deps.db, { ...r, agent, finished_at: r.finished_at ?? null, notes: r.notes ?? '', cost_usd: r.cost_usd ?? null });
         if (!ok) { json(res, 409, { error: 'run_id belongs to another agent' }); return true; }
         json(res, 200, { ok: true });
+        return true;
+      }
+
+      // Read-only Inbox Sweep log for the Mac mini. Granted only by an AGENT_POLICY
+      // entry with inbox_sweep_log: true; a key with no entry is refused too.
+      if (req.method === 'GET' && pathname === '/spine/inbox-sweep/log') {
+        if (!policy?.inbox_sweep_log) return refuse(res, agent, 'read', 'inbox sweep log');
+        const rawSince = params.get('since');
+        let since: string | null = null;
+        if (rawSince !== null) {
+          if (!isIsoString(rawSince)) { json(res, 400, { error: 'since must be an ISO date-time' }); return true; }
+          since = new Date(rawSince).toISOString();
+        }
+        const rawLimit = params.get('limit');
+        let limit = SWEEP_LOG_DEFAULT_LIMIT;
+        if (rawLimit !== null) {
+          if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1) { json(res, 400, { error: 'limit must be a positive integer' }); return true; }
+          limit = Math.min(Number(rawLimit), SWEEP_LOG_MAX_LIMIT);
+        }
+        const rows = listSweepLog(deps.db, { since, limit });
+        json(res, 200, { rows, count: rows.length, limit });
         return true;
       }
 

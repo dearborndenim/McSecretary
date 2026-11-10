@@ -15,6 +15,7 @@ import { getTrustRow } from '../../src/db/trust-queries.js';
 import { insertProposal } from '../../src/db/proposal-queries.js';
 import type { ProposalInput } from '../../src/spine/types.js';
 import { parseAgentPolicy } from '../../src/spine/agent-policy.js';
+import { insertSweepLog } from '../../src/db/inbox-sweep-schema.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 const KEY = 'k'.repeat(24);
@@ -751,7 +752,8 @@ describe('agent policy', () => {
                   "events":  { "post_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "source_hand": "grok-*", "drain_types": ["grok_task_*"] },
                   "hands_proxy": false, "outcomes": false, "rate": { "events_per_hour": 3, "proposals_per_hour": 2 } },
   "grok-inbox": { "events": { "drain_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "post_types": [] },
-                  "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_cs_case", "grok_result", "grok_drafts_waiting", "grok_inbox_rejects"] }, "hands_proxy": false },
+                  "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_cs_case", "grok_result", "grok_drafts_waiting", "grok_inbox_rejects"] }, "hands_proxy": false,
+                  "inbox_sweep_log": true },
   "grok-task":  { "events": { "post_types": ["grok_task_*"], "source_hand": "self", "drain_types": [] }, "propose": null, "hands_proxy": false },
   "grok-purchasing": { "events": { "post_types": [], "drain_types": ["purchasing_job"] }, "propose": null, "hands_proxy": false }
 }`;
@@ -914,6 +916,44 @@ describe('agent policy', () => {
     expect((await call('GET', '/spine/events/drain?types=po_received', KEY)).body.events).toHaveLength(1);
     expect((await call('GET', '/spine/events/drain?types=grok_task_chief', BOTS)).body.events).toHaveLength(1);
     expect((await call('GET', '/spine/events/drain?types=purchasing_job', PURCH)).body.events).toHaveLength(1);
+  });
+
+  describe('GET /spine/inbox-sweep/log', () => {
+    const log = (message_id: string, at: string, extra: Partial<Parameters<typeof insertSweepLog>[1]> = {}) => insertSweepLog(db, {
+      message_id, mailbox: 'rob@dearborndenim.com', received_at: at, sender: 'a@b.com', subject: 's', lane: 'promotions',
+      folder: 'Promotions', bot: null, unsubscribed: false, mode: 'shadow', note: null, at, ...extra,
+    });
+
+    it('refuses a missing key, a key with no entry and a key whose entry lacks inbox_sweep_log', async () => {
+      log('m1', '2026-11-09T10:00:00.000Z');
+      expect((await call('GET', '/spine/inbox-sweep/log')).status).toBe(401);
+      expect(await call('GET', '/spine/inbox-sweep/log', KEY))
+        .toEqual({ status: 403, body: { error: 'policy: marketing-manager may not read inbox sweep log' } });
+      expect((await call('GET', '/spine/inbox-sweep/log', BOTS)).status).toBe(403);
+      expect((await call('GET', '/spine/inbox-sweep/log', TASK)).status).toBe(403);
+    });
+
+    it('returns rows newest first with every column, honouring since and limit', async () => {
+      log('m1', '2026-11-09T10:00:00.000Z');
+      log('m2', '2026-11-09T11:00:00.000Z', { lane: 'error', folder: null, note: 'classifier: refusal', unsubscribed: true });
+      log('m3', '2026-11-09T12:00:00.000Z');
+      const all = await call('GET', '/spine/inbox-sweep/log', INBOX);
+      expect(all.status).toBe(200);
+      const rows = all.body.rows as Array<Record<string, unknown>>;
+      expect(rows.map((r) => r.message_id)).toEqual(['m3', 'm2', 'm1']);
+      expect(rows[1]).toEqual({
+        message_id: 'm2', mailbox: 'rob@dearborndenim.com', received_at: '2026-11-09T11:00:00.000Z', sender: 'a@b.com',
+        subject: 's', lane: 'error', folder: null, bot: null, unsubscribed: true, mode: 'shadow',
+        note: 'classifier: refusal', at: '2026-11-09T11:00:00.000Z',
+      });
+      const since = await call('GET', '/spine/inbox-sweep/log?since=2026-11-09T11:00:00Z', INBOX);
+      expect((since.body.rows as Array<{ message_id: string }>).map((r) => r.message_id)).toEqual(['m3', 'm2']);
+      const limited = await call('GET', '/spine/inbox-sweep/log?limit=1', INBOX);
+      expect((limited.body.rows as Array<{ message_id: string }>).map((r) => r.message_id)).toEqual(['m3']);
+      expect((await call('GET', '/spine/inbox-sweep/log?limit=99999', INBOX)).body.limit).toBe(2000);
+      expect((await call('GET', '/spine/inbox-sweep/log?limit=0', INBOX)).status).toBe(400);
+      expect((await call('GET', '/spine/inbox-sweep/log?since=yesterday', INBOX)).status).toBe(400);
+    });
   });
 
   it('GET /spine/policy/self returns the caller\'s own entry', async () => {
