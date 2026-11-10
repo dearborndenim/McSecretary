@@ -120,6 +120,11 @@ export function isKnownCorrespondent(db: Database.Database, address: string, dom
     `SELECT 1 FROM processed_emails WHERE lower(sender) = ? AND category IN (${placeholders}) LIMIT 1`,
   ).get(address.toLowerCase(), ...CORRESPONDENT_CATEGORIES);
   if (person !== undefined) return true;
+  return isRfqVendorDomain(db, domain);
+}
+
+/** A domain we sent an RFQ to (same domain or a subdomain either way). */
+export function isRfqVendorDomain(db: Database.Database, domain: string): boolean {
   if (!domain) return false;
   const vendor = db.prepare(`
     SELECT 1 FROM rfq_messages

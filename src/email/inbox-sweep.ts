@@ -26,6 +26,7 @@ import {
   domainOf,
   fromGraphMessage,
   isProtectedSender,
+  keepSenderReason,
   needsSecondPass,
   SWEEP_BOTS,
   SWEEP_LANES,
@@ -40,6 +41,7 @@ import {
   getSweepWatermark,
   insertSweepLog,
   isKnownCorrespondent,
+  isRfqVendorDomain,
   isSweepLogged,
   setSweepWatermark,
 } from '../db/inbox-sweep-schema.js';
@@ -481,7 +483,12 @@ async function sweepMailbox(
       second = await secondPass(deps, m);
       if (!second || !needsSecondPass(second)) notes.push(`${c!.lane} not confirmed by the single-message pass; kept`);
     }
-    const d = decideAction(rules[i]!, c, { second, protectedSender: isProtectedSender(m.sender) });
+    const keepSender = keepSenderReason(m, deps.companyDomains, isRfqVendorDomain(deps.db, domainOf(m.sender)));
+    const decideOpts = { second, protectedSender: isProtectedSender(m.sender) };
+    const d = decideAction(rules[i]!, c, { ...decideOpts, keepSender });
+    if (keepSender && d.folder === null && decideAction(rules[i]!, c, decideOpts).folder !== null) {
+      notes.push(`${keepSender === 'company' ? 'staff' : 'vendor/customer'} sender; kept in inbox`);
+    }
     let folder: string | null = d.folder;
     let unsubscribed = false;
 
