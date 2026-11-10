@@ -812,6 +812,14 @@ describe('agent policy', () => {
     expect(eventCount()).toBe(1);
   });
 
+  it('only grok-chief-approvals may post chief_draft_decision: the shared key and an unrestricted key are refused', async () => {
+    const decision = { ...ev('chief_draft_decision', 'grok-chief'), payload: { digest_id: 'cd-20261110T1300Z', decisions: [] } };
+    expect(await call('POST', '/spine/events', BOTS, decision))
+      .toEqual({ status: 403, body: { error: 'policy: grok-bots may not post chief_draft_decision' } });
+    expect((await call('POST', '/spine/events', KEY, { ...decision, source_hand: 'marketing-manager' })).status).toBe(403);
+    expect(eventCount()).toBe(0);
+  });
+
   it('grok-bots may drain grok_task_* only, and a refused type drains nothing', async () => {
     insertEvent(db, ev('grok_task_gina', 'grok-task'), NOW);
     insertEvent(db, ev('grok_task_bob', 'grok-task'), NOW);

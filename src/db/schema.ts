@@ -6,6 +6,7 @@ import { initializeLionsSchema } from '../lions/store.js';
 import { initializeStaffUiSchema } from './staff-ui-queries.js';
 import { initializeOperatorSchema } from './operator-queries.js';
 import { initializeInboxSweepSchema } from './inbox-sweep-schema.js';
+import { initializeChiefDigestSchema } from './chief-digest-schema.js';
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
@@ -71,4 +72,5 @@ export function initializeSchema(db: Database.Database): void {
   initializeStaffUiSchema(db);
   initializeOperatorSchema(db);
   initializeInboxSweepSchema(db);
+  initializeChiefDigestSchema(db);
 }

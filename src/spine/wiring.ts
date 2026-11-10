@@ -4,11 +4,12 @@ import { getUserById } from '../db/user-queries.js';
 import { getProposalById } from '../db/proposal-queries.js';
 import { loadBrandConfig, listBrandIds } from './brand-config.js';
 import { executeProposal } from './executor.js';
-import { sendHandEmail, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
+import { sendHandEmail, validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { fileProposal } from './router.js';
 import {
-  renderProposalCard, parseCallbackData, handleProposalCallback, handleEditReply, type CardDeps, type InboxTransport,
+  renderProposalCard, parseCallbackData, handleProposalCallback, handleEditReply, relayProposalDecision, type CardDeps, type InboxTransport,
 } from './telegram-card.js';
+import { createChiefDecisionHandler, DECIDED_BY } from './chief-digest.js';
 import { createSpineRouter } from './api-routes.js';
 import { parsePromoteCommand, runPromoteCommand } from './promote-command.js';
 import type { ProposalInput } from './types.js';
@@ -117,9 +118,25 @@ export function buildSpine(d: SpineBuildDeps) {
   const grokAction = createGrokActionHandler({
     db: d.db, now: d.now, env: d.env, loadBrand, handFetch: d.fetch, catalogue: getCatalogue, wake, agentPolicy: d.agentPolicy, log: console.log,
   });
+  // Chief digest decisions: a proposal takes the card's own path, its replies going to the card's chat.
+  const chiefDecision = createChiefDecisionHandler({
+    db: d.db, env: d.env, now: d.now, wake, log: console.log,
+    graphFetch: fetchWithTimeout,
+    token: getGraphToken ?? (async () => { throw new Error('Graph is not configured'); }),
+    relay: async (id, decision, editText) => {
+      const p = getProposalById(d.db, id);
+      const chatId = p?.telegram_chat_id ?? (p ? chatFor(p.brand_id) : '');
+      // An edit relayed from Chief must still be a sendable email.
+      const validate = (payload: { method: unknown; path: unknown; body: unknown }) => {
+        const v = validateEmailPayload(payload);
+        return v.ok ? null : v.error;
+      };
+      return relayProposalDecision(d.db, id, decision, DECIDED_BY, cardDeps(chatId), editText ?? undefined, validate);
+    },
+  });
   const handleHttp = createSpineRouter({
     db: d.db, now: d.now, agentKeys: d.agentKeys, brandsDir: d.brandsDir, file, handFetch: fetchWithTimeout, env: d.env,
-    agentPolicy: d.agentPolicy, feedbackRoot, filesDir: spineFilesDir(d.env), wake, grokAction,
+    agentPolicy: d.agentPolicy, feedbackRoot, filesDir: spineFilesDir(d.env), wake, grokAction, chiefDecision,
   });
 
   return {

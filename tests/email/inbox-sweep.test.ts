@@ -190,6 +190,21 @@ describe('runInboxSweep', () => {
     expect(out.eventId).toBe(1);
   });
 
+  it('live with the Chief digest on: still posts handoffs and tell_robert at once, without the counts; logs key_facts', async () => {
+    const h = harness('live');
+    await runInboxSweep({ ...h.deps, countsInDigest: true });
+    const ev = h.db.prepare('SELECT payload FROM spine_events').all() as { payload: string }[];
+    expect(ev).toHaveLength(1);
+    const args = JSON.parse(ev[0]!.payload).args;
+    expect(args.handoffs.map((x: { bot: string }) => x.bot).sort()).toEqual(['General Paton Bot', 'Sourcing Bot']);
+    expect(args.tell_robert).toHaveLength(3);
+    expect(args).not.toHaveProperty('counts');
+    expect(args).not.toHaveProperty('lane_counts');
+    expect(args).not.toHaveProperty('junk');
+    const kept = h.db.prepare("SELECT key_facts FROM inbox_sweep_log WHERE message_id = 'AAMkAD-dla-1'").get() as { key_facts: string };
+    expect(kept.key_facts).toMatch(/RFQ SPE1C1/);
+  });
+
   it('live: a second run over the same inbox acts on nothing twice', async () => {
     const h = harness('live');
     await runInboxSweep(h.deps);
