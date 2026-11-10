@@ -5,6 +5,7 @@ import { matchesType, mayPropose, sourceHandAllowed, type AgentPolicy, type Agen
 import { forwardBrandKey, isBrandActive, listBrandIds, loadBrandConfig, publicBrandEntry, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
+import { CHIEF_APPROVALS_AGENT, DECISION_EVENT } from './chief-digest.js';
 import {
   FEEDBACK_ACTION_TYPE, FEEDBACK_HAND, FEEDBACK_TO_AGENTS, feedbackRelPath, readFeedbackRows, validateFeedbackPayload,
 } from './feedback-hand.js';
@@ -43,6 +44,8 @@ export interface SpineRouterDeps {
   filesDir?: string;
   /** OPERATOR direct actions (src/staff/grok-action.ts): a `grok_action` event is answered, not queued. */
   grokAction?: (agent: string, event: SpineEventInput) => { status: number; body: unknown; done?: Promise<unknown> };
+  /** Chief digest decisions (src/spine/chief-digest.ts): a `chief_draft_decision` event is answered, not queued. */
+  chiefDecision?: (agent: string, event: SpineEventInput) => { status: number; body: unknown; done?: Promise<unknown> };
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -445,6 +448,8 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const parsed = await readObject(req, EVENT_FIELDS);
         if ('error' in parsed) { json(res, 400, { error: parsed.error }); return true; }
         const { event_type: eventType, source_hand: sourceHand } = parsed.body;
+        // Only the dedicated Chief approvals key may relay a draft decision, whatever any policy says.
+        if (eventType === DECISION_EVENT && agent !== CHIEF_APPROVALS_AGENT) return refuse(res, agent, 'post', DECISION_EVENT);
         if (policy && typeof eventType === 'string' && typeof sourceHand === 'string') {
           if (!matchesType(policy.events.post_types, eventType)) return refuse(res, agent, 'post', eventType);
           if (!sourceHandAllowed(policy, agent, sourceHand, known)) return refuse(res, agent, 'post as', sourceHand);
@@ -454,6 +459,13 @@ export function createSpineRouter(deps: SpineRouterDeps) {
         const eventCap = policy?.rate?.events_per_hour;
         if (eventCap && countEventsSince(deps.db, agent, hourAgo()) >= eventCap) {
           json(res, 429, { error: `policy: ${agent} is over ${eventCap} events per hour` });
+          return true;
+        }
+        if (eventType === DECISION_EVENT) {
+          if (!deps.chiefDecision) { json(res, 503, { error: 'chief digest decisions are not available' }); return true; }
+          const r = deps.chiefDecision(agent, parsed.body as unknown as SpineEventInput);
+          json(res, r.status, r.body);
+          r.done?.catch((err: unknown) => console.error(`chief_draft_decision run failed: ${err instanceof Error ? err.message : String(err)}`));
           return true;
         }
         if (eventType === 'grok_action' && deps.grokAction) {

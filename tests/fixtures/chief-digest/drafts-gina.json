@@ -1,0 +1,18 @@
+{
+  "value": [
+    {
+      "id": "AAMkAD-draft-gina-pr",
+      "changeKey": "CQAAABYAAAE1",
+      "createdDateTime": "2026-11-10T14:00:00Z",
+      "lastModifiedDateTime": "2026-11-10T14:05:00Z",
+      "isDraft": true,
+      "subject": "Chicago Tribune — factory visit",
+      "bodyPreview": "Hi Jen, Thanks for reaching out",
+      "body": { "contentType": "html", "content": "<html><head><style>p{color:red}</style></head><body><p>Hi Jen,</p><p>Thanks for reaching out &amp; Robert would be glad to host you.</p></body></html>" },
+      "toRecipients": [ { "emailAddress": { "name": "Jen", "address": "jen@chicagotribune.example" } } ],
+      "ccRecipients": [],
+      "bccRecipients": []
+    }
+  ],
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/gina@dearborndenim.com/mailFolders/drafts/messages?$skip=25"
+}

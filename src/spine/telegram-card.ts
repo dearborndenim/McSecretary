@@ -520,6 +520,42 @@ export async function handleProposalCallback(
 }
 
 /**
+ * A decision on a pending proposal relayed from outside Telegram (the Chief
+ * digest, spec 2026-11-10). The same single path as a card tap: approve →
+ * approveAndExecute (status-guarded claim, trust ledger, executor, requester
+ * notice); reject → rejectProposal + trust ledger; edit → the card's
+ * edit-requested state, so Robert's next `key=value` reply in the card's chat
+ * applies it. `deps.reply` should post to the card's chat, so the thread shows
+ * how the card ended. Whichever of Telegram or the relay decides first wins.
+ */
+export async function relayProposalDecision(
+  db: Database.Database,
+  id: number,
+  decision: 'approve' | 'reject' | 'edit',
+  by: string,
+  deps: CardDeps,
+  editText?: string,
+): Promise<CallbackResult> {
+  const p = getProposalById(db, id);
+  if (!p) return { ok: false, message: `No proposal #${id}` };
+  if (p.status !== 'pending') return { ok: false, message: `#${id} is already ${p.status}` };
+  if (decision === 'approve') return approveAndExecute(db, p, 'approved', by, deps);
+  if (decision === 'reject') {
+    if (!rejectProposal(db, p.id, by, deps.now())) return { ok: false, message: `#${p.id} was already decided` };
+    const t = recordTrustDecision(db, trustKey(p), 'rejected', deps.now());
+    await safeReply(deps, `Rejected #${p.id} (${by}).${t.demoted ? ' Trust for this action reset to level 1.' : ''}`);
+    await safeDecided(deps, p.id);
+    return { ok: true, message: 'rejected' };
+  }
+  if (p.telegram_chat_id) clearEditRequestedForChat(db, p.telegram_chat_id, p.id);
+  if (!setEditRequested(db, p.id, deps.now())) return { ok: false, message: `#${p.id} was already decided` };
+  appendEdit(db, p.id, { at: deps.now(), note: `edit requested (${by}): ${cap(editText ?? '', 2000)}` });
+  await safeReply(deps, `Edit for #${p.id} relayed (${by}): "${cap(editText ?? '', REASON_CAP)}". `
+    + 'Reply with key=value pairs to apply it (e.g. text=...), or "cancel". Nothing has been sent.');
+  return { ok: true, message: 'edit_requested' };
+}
+
+/**
  * Called for every text message before the normal assistant flow. Returns true
  * when the text was consumed as an edit reply. An edit request older than
  * EDIT_WINDOW_MS is dropped and the message falls through to the assistant.
