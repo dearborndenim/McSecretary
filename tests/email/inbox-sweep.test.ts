@@ -252,6 +252,19 @@ describe('runInboxSweep', () => {
     expect(row.note).toMatch(/Rob has engaged/);
   });
 
+  it('live: keeps a reply from an RFQ vendor in the inbox and still hands it off', async () => {
+    const h = harness('live');
+    insertRfqMessage(h.db, {
+      rfq_id: 'r1', vendor_email: 'sales@candiani-usa.example', subject: '[DD-RFQ-r1] Selvedge',
+      graph_message_id: 'g1', sent_at: '2026-11-01T00:00:00Z', proposal_id: null, brand_id: 'dearborn-denim', intents: '',
+    });
+    const out = await runInboxSweep(h.deps);
+    const row = logRows(h.db).find((r) => r.message_id === 'AAMkAD-gina-1')!;
+    expect(row).toMatchObject({ lane: 'gina_thread', folder: null, bot: 'Sourcing Bot', note: 'vendor/customer sender; kept in inbox' });
+    expect(h.graph.filter((r) => r.url.includes('AAMkAD-gina-1') && r.url.endsWith('/move'))).toEqual([]);
+    expect(out.handoffs.find((x) => x.bot === 'Sourcing Bot')).toMatchObject({ sender: 'jack.smithson@candiani-usa.example', folder: null });
+  });
+
   it('counts only a 2xx answer as unsubscribed', async () => {
     const h = harness('live', { unsubStatus: 302 });
     await runInboxSweep(h.deps);

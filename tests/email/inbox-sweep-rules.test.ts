@@ -7,6 +7,7 @@ import {
   fromGraphMessage,
   isAutomatedSender,
   isProtectedSender,
+  keepSenderReason,
   parseSweepMode,
   unsubscribeEligible,
   type RuleContext,
@@ -171,6 +172,66 @@ describe('decideAction', () => {
     expect(isProtectedSender('alerts@notify.wintrust.com')).toBe(true);
     expect(isProtectedSender('dibbs-rfq@dla.mil')).toBe(true);
     expect(isProtectedSender('news@mail.bestmadeco.example')).toBe(false);
+  });
+});
+
+describe('staff and vendor/customer senders stay in the inbox (shadow review 2026-11-10)', () => {
+  function mail(sender: string, over: Partial<SweepMessage> = {}): SweepMessage {
+    return {
+      id: 'm1', mailbox: ROB, receivedAt: '2026-11-09T15:00:00Z', sender, senderName: '', subject: '11/09 Fabric Received',
+      to: [ROB], cc: [], bodyPreview: '', bodyText: '', conversationId: 'c1', isRead: false, hasAttachments: false,
+      headers: [{ name: 'Received', value: 'from mail.example.net' }], ...over,
+    };
+  }
+  const keepFor = (m: SweepMessage, rfqVendor = false) => keepSenderReason(m, COMPANY_DOMAINS, rfqVendor);
+
+  it('names staff, vendor/customer and RFQ-vendor senders', () => {
+    expect(keepFor(mail('olivier@dearborndenim.com'))).toBe('company');
+    expect(keepFor(mail('robert@mcmillan-manufacturing.com'))).toBe('company');
+    expect(keepFor(mail('mvincent@vermontflannel.com', { subject: 'Re: 11/09 Fabric Received' }))).toBe('vendor');
+    expect(keepFor(mail('jen@usabrands.com'))).toBe('vendor');
+    expect(keepFor(mail('rich@culturestudio.net'))).toBe('vendor');
+    expect(keepFor(mail('jack@candiani-usa.example'), true)).toBe('vendor');
+    expect(keepFor(mail('jack@candiani-usa.example'))).toBeNull();
+  });
+
+  it('does not protect machine mail or calendar replies from those domains', () => {
+    expect(keepFor(mail('no-reply@dearborndenim.com'))).toBeNull();
+    expect(keepFor(mail('olivier@dearborndenim.com', { subject: 'Accepted: Production meeting' }))).toBeNull();
+    expect(keepFor(mail('olivier@dearborndenim.com', { subject: 'Declined: Production meeting' }))).toBeNull();
+    expect(keepFor(mail('news@easypost.com', { headers: [{ name: 'Precedence', value: 'bulk' }] }))).toBeNull();
+  });
+
+  it('keeps fyi, promotions and junk in the inbox and still posts a handoff', () => {
+    for (const keepSender of ['company', 'vendor'] as const) {
+      expect(decideAction(null, cls({ lane: 'fyi' }), { keepSender })).toMatchObject({ lane: 'fyi', folder: null });
+      expect(decideAction(null, cls({ lane: 'promotions' }), { keepSender }).folder).toBeNull();
+      expect(decideAction(null, cls({ lane: 'junk' }), { keepSender, second: cls({ lane: 'junk' }) }).folder).toBeNull();
+      expect(decideAction(null, cls({ lane: 'handoff', bot: 'Purchasing Bot' }), { keepSender }))
+        .toMatchObject({ folder: null, handoffBot: 'Purchasing Bot' });
+    }
+    // A vendor reply on a Gina thread (Rob on Cc): kept, Gina still gets the handoff.
+    const gina = applyDeterministicRules(fixture('gina-vendor-reply'), ctx)!;
+    expect(decideAction(gina, cls({ lane: 'fyi' }), { keepSender: 'vendor' }).folder).toBeNull();
+    expect(decideAction(gina, cls({ lane: 'handoff', bot: 'none' }), { keepSender: 'vendor' }))
+      .toMatchObject({ folder: null, handoffBot: 'Gina' });
+  });
+
+  it('leaves two-pass phishing and the classifier-free rules alone', () => {
+    expect(decideAction(null, cls({ lane: 'phishing' }), { keepSender: 'company', second: cls({ lane: 'phishing' }) }).folder)
+      .toBe('Sweep Junk');
+    expect(decideAction({ rule: 'dmarc', folder: 'DMARC Reports', classify: false }, undefined, { keepSender: 'company' }).folder)
+      .toBe('DMARC Reports');
+    expect(decideAction({ rule: 'gina_copy', folder: 'archive', classify: false }, undefined, { keepSender: 'company' }).folder)
+      .toBe('archive');
+    expect(decideAction(null, cls({ lane: 'fyi' }), { keepSender: null }).folder).toBe('archive');
+  });
+
+  it('never unsubscribes EasyPost, USA Brands or Culture Studio', () => {
+    const base = fixture('promo-one-click');
+    for (const sender of ['marketing@easypost.com', 'news@mail.easypost.com', 'news@usabrands.com', 'news@culturestudio.net']) {
+      expect(unsub({ ...base, sender })).toEqual({ ok: false, reason: 'known vendor or customer domain' });
+    }
   });
 });
 

@@ -197,6 +197,35 @@ export function isAutomatedSender(m: SweepMessage): boolean {
   return AUTOMATED_LOCAL_PART.test(local);
 }
 
+/** A calendar reply ("Accepted: …", "Declined: …"): the meeting tool, not a person writing. */
+const CALENDAR_RESPONSE_SUBJECT = /^\s*(accepted|declined|tentative|tentatively accepted|new time proposed)\s*:/i;
+
+export function isCalendarResponse(m: SweepMessage): boolean {
+  return CALENDAR_RESPONSE_SUBJECT.test(m.subject);
+}
+
+/** Why a sender's mail must stay in the inbox (Robert's shadow review, 2026-11-10). */
+export type KeepSender = 'company' | 'vendor';
+
+/**
+ * Mail from staff (a company domain) or a vendor/customer (`VENDOR_DOMAINS`, or
+ * a domain we sent an RFQ to) is never archived as fyi, promotions or junk: a
+ * person there wrote to Rob. Machine mail from those domains (no-reply and
+ * bulk senders, `isAutomatedSender`) and calendar replies are not protected.
+ * Gina's own copies never get here: the gina_copy rule files them first.
+ */
+export function keepSenderReason(
+  m: SweepMessage,
+  companyDomains: string[],
+  rfqVendorDomain: boolean,
+): KeepSender | null {
+  const domain = domainOf(m.sender);
+  if (!domain || isAutomatedSender(m) || isCalendarResponse(m)) return null;
+  if (domainIn(domain, companyDomains)) return 'company';
+  if (rfqVendorDomain || domainIn(domain, VENDOR_DOMAINS)) return 'vendor';
+  return null;
+}
+
 export function isDmarcReport(m: SweepMessage): boolean {
   if (/report domain:/i.test(m.subject)) return true;
   return m.hasAttachments && /dmarc/i.test(m.sender);
@@ -273,6 +302,12 @@ export interface DecideOptions {
   second?: SweepClassification | null;
   /** Government, bank or payment sender (`isProtectedSender`). */
   protectedSender?: boolean;
+  /**
+   * Staff or vendor/customer sender (`keepSenderReason`): the message stays in
+   * the inbox whatever the lane, except two-pass phishing; a handoff is still
+   * posted to its owner.
+   */
+  keepSender?: KeepSender | null;
 }
 
 /** Junk or phishing with confidence: the batch lanes that need the second pass. */
@@ -294,8 +329,10 @@ function confirmedJunk(c: SweepClassification, second: SweepClassification | nul
  * Combine the rule hit (if any) and the classifier's answers. When in doubt the
  * message stays in the inbox: no answer, low confidence, junk/phishing the
  * single-message pass does not confirm, anything urgent today that is not
- * junk/phishing, and a government/bank sender unless it is a gov bid or both
- * passes call it phishing.
+ * junk/phishing, a government/bank sender unless it is a gov bid or both
+ * passes call it phishing, and a staff or vendor/customer sender (`keepSender`)
+ * unless both passes call it phishing. Rule hits that skip the classifier
+ * (RFQ reply, DMARC, MMI report, Gina's copies) are not affected.
  */
 export function decideAction(
   rule: RuleHit | null,
@@ -305,7 +342,12 @@ export function decideAction(
   if (rule && !rule.classify) {
     return { lane: rule.rule, folder: rule.folder, handoffBot: null, tell: null, keyFacts: '' };
   }
-  const d = classifierDecision(rule, c, opts.second);
+  const d = protectedDecision(classifierDecision(rule, c, opts.second), c, opts);
+  if (opts.keepSender && d.folder !== null && d.lane !== 'phishing') return { ...d, folder: null };
+  return d;
+}
+
+function protectedDecision(d: SweepDecision, c: SweepClassification | undefined, opts: DecideOptions): SweepDecision {
   if (!opts.protectedSender || d.folder === null) return d;
   const bothPhishing = c?.lane === 'phishing' && opts.second?.lane === 'phishing'
     && (opts.second?.confidence ?? 0) >= SWEEP_MIN_CONFIDENCE;
@@ -379,14 +421,16 @@ export const FINANCIAL_DOMAINS = [
  * Vendor and customer domains known to the repos (static, so it holds when the
  * DB is empty): the email domains of the Sourcing agent's vendor registry and
  * candidates (claude_code `agents/sourcing/inputs/vendors*.json`, freemail
- * dropped) plus Vermont Flannel (an MMI customer). kanban-purchaser's vendor
+ * dropped) plus Vermont Flannel and its parent USA Brands (MMI customers),
+ * Culture Studio (corporate-sales customer) and EasyPost (shipping). kanban-purchaser's vendor
  * list has no read endpoint McSecretary can call, so its vendors are covered
  * only through `rfq_messages`, triage categories and the engagement check.
  */
 export const VENDOR_DOMAINS = [
   'carrtextile.com', 'conedenim.com', 'mmitextiles.com', 'moodfabrics.com', 'carolinacotton.com',
   'eaglefabrics.com', 'fabricwholesaledirect.com', 'kendortextiles.com', 'mvmills.com',
-  'zippershipper.com', 'zipperstop.com', 'vermontflannel.com',
+  'zippershipper.com', 'zipperstop.com', 'vermontflannel.com', 'usabrands.com', 'culturestudio.net',
+  'easypost.com',
 ];
 
 /** `domain` is `d` or a subdomain of it, for some `d` in `list`. */
