@@ -25,6 +25,11 @@ export interface AgentPolicyEntry {
    * grant it: an agent with no entry is refused here, unlike everywhere else.
    */
   inbox_sweep_log: boolean;
+  /**
+   * GET /spine/admin/{proposals,conversations,audit} (read-only, redacted). Like
+   * inbox_sweep_log, only an entry can grant it; a key with no entry is refused.
+   */
+  admin_read: boolean;
   rate: { events_per_hour: number | null; proposals_per_hour: number | null; files_per_hour: number | null } | null;
 }
 export type AgentPolicy = Map<string, AgentPolicyEntry>;
@@ -33,7 +38,7 @@ export type AgentPolicy = Map<string, AgentPolicyEntry>;
 export const RESTRICTED_PREFIXES = ['grok-'];
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
-const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'runs', 'files', 'inbox_sweep_log', 'rate'];
+const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'runs', 'files', 'inbox_sweep_log', 'admin_read', 'rate'];
 const PROPOSE_FIELDS = ['hands', 'action_types'];
 const EVENTS_FIELDS = ['post_types', 'drain_types', 'source_hand'];
 const RATE_FIELDS = ['events_per_hour', 'proposals_per_hour', 'files_per_hour'];
@@ -127,6 +132,7 @@ function parseEntry(agent: string, raw: unknown): AgentPolicyEntry {
     runs: parseFlag(agent, 'runs', raw.runs),
     files: parseFlag(agent, 'files', raw.files),
     inbox_sweep_log: parseFlag(agent, 'inbox_sweep_log', raw.inbox_sweep_log),
+    admin_read: parseFlag(agent, 'admin_read', raw.admin_read),
     rate,
   };
 }
