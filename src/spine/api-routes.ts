@@ -21,6 +21,9 @@ import { insertOutcome } from '../db/outcome-queries.js';
 import { countProposalsSince } from '../db/proposal-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
 import { listSweepLog } from '../db/inbox-sweep-schema.js';
+import {
+  ADMIN_READ_DEFAULT_LIMIT, ADMIN_READ_MAX_LIMIT, listAdminAudit, listAdminConversations, listAdminProposals,
+} from './admin-read.js';
 import { listTrustRowsForAgent, promoteTrust, getTrustRow, TRUST_WILDCARD } from '../db/trust-queries.js';
 import type { Routed } from './router.js';
 import type { OutcomeInput, ProposalInput, RunIndexInput, SpineEventInput, TrustLevel } from './types.js';
@@ -548,6 +551,41 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           limit = Math.min(Number(rawLimit), SWEEP_LOG_MAX_LIMIT);
         }
         const rows = listSweepLog(deps.db, { since, limit });
+        json(res, 200, { rows, count: rows.length, limit });
+        return true;
+      }
+
+      // Read-only admin views (cards, chat log, audit) for the Mac mini, redacted.
+      // Granted only by an AGENT_POLICY entry with admin_read: true; a key with no entry is refused too.
+      if (req.method === 'GET' && (pathname === '/spine/admin/proposals'
+        || pathname === '/spine/admin/conversations' || pathname === '/spine/admin/audit')) {
+        if (!policy?.admin_read) return refuse(res, agent, 'read', pathname.slice('/spine/'.length));
+        const rawSince = params.get('since');
+        let since: string | null = null;
+        if (rawSince !== null) {
+          if (!isIsoString(rawSince)) { json(res, 400, { error: 'since must be an ISO date-time' }); return true; }
+          since = new Date(rawSince).toISOString();
+        }
+        const rawLimit = params.get('limit');
+        let limit = ADMIN_READ_DEFAULT_LIMIT;
+        if (rawLimit !== null) {
+          if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1) { json(res, 400, { error: 'limit must be a positive integer' }); return true; }
+          limit = Math.min(Number(rawLimit), ADMIN_READ_MAX_LIMIT);
+        }
+        let rows: Record<string, unknown>[];
+        if (pathname === '/spine/admin/proposals') {
+          const rawId = params.get('id');
+          if (rawId !== null && !/^\d+$/.test(rawId)) { json(res, 400, { error: 'id must be a positive integer' }); return true; }
+          const status = params.get('status');
+          if (status !== null && (status.length === 0 || status.length > 64)) { json(res, 400, { error: 'status must be 1-64 chars' }); return true; }
+          rows = listAdminProposals(deps.db, { since, limit, status, id: rawId === null ? null : Number(rawId) });
+        } else if (pathname === '/spine/admin/conversations') {
+          const userId = params.get('user_id');
+          if (userId !== null && (userId.length === 0 || userId.length > NAME_MAX)) { json(res, 400, { error: `user_id must be 1-${NAME_MAX} chars` }); return true; }
+          rows = listAdminConversations(deps.db, { since, limit, user_id: userId });
+        } else {
+          rows = listAdminAudit(deps.db, { since, limit });
+        }
         json(res, 200, { rows, count: rows.length, limit });
         return true;
       }

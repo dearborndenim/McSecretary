@@ -16,6 +16,7 @@ import { insertProposal } from '../../src/db/proposal-queries.js';
 import type { ProposalInput } from '../../src/spine/types.js';
 import { parseAgentPolicy } from '../../src/spine/agent-policy.js';
 import { insertSweepLog } from '../../src/db/inbox-sweep-schema.js';
+import { insertConversationMessage } from '../../src/db/conversation-queries.js';
 
 const NOW = '2026-09-07T12:00:00.000Z';
 const KEY = 'k'.repeat(24);
@@ -753,7 +754,7 @@ describe('agent policy', () => {
                   "hands_proxy": false, "outcomes": false, "rate": { "events_per_hour": 3, "proposals_per_hour": 2 } },
   "grok-inbox": { "events": { "drain_types": ["grok_research", "grok_draft", "grok_sent", "grok_lead", "grok_cs_case", "grok_result", "grok_report", "grok_profile", "grok_daily"], "post_types": [] },
                   "propose": { "hands": ["notes"], "action_types": ["grok_lead", "grok_cs_case", "grok_result", "grok_drafts_waiting", "grok_inbox_rejects"] }, "hands_proxy": false,
-                  "inbox_sweep_log": true },
+                  "inbox_sweep_log": true, "admin_read": true },
   "grok-task":  { "events": { "post_types": ["grok_task_*"], "source_hand": "self", "drain_types": [] }, "propose": null, "hands_proxy": false },
   "grok-purchasing": { "events": { "post_types": [], "drain_types": ["purchasing_job"] }, "propose": null, "hands_proxy": false }
 }`;
@@ -961,6 +962,87 @@ describe('agent policy', () => {
       expect((await call('GET', '/spine/inbox-sweep/log?limit=99999', INBOX)).body.limit).toBe(2000);
       expect((await call('GET', '/spine/inbox-sweep/log?limit=0', INBOX)).status).toBe(400);
       expect((await call('GET', '/spine/inbox-sweep/log?since=yesterday', INBOX)).status).toBe(400);
+    });
+  });
+
+  describe('GET /spine/admin/*', () => {
+    const SECRET = 'sk-ant-api03-' + 'A1b2C3d4E5f6G7h8'.repeat(3);
+    const card = (title: string, created: string, extra: Record<string, unknown> = {}) => {
+      const id = insertProposal(db, {
+        agent: 'marketing-manager', brand_id: 'dearborn-denim', action_type: 'grok_lead',
+        action_payload: { hand: 'notes', method: 'POST', path: '/note', body: { title, summary: 'sum', details: { api_key: 'abc', note: `use Bearer ${SECRET}` } } },
+        reason: 'r', evidence: { message_id: 'AAMkAD1234567890abcdefABCDEF1234567890', blob: 'Zx9'.repeat(12), ...extra },
+        cost_usd: 0, reversible: true, level_required: 1, expires_at: '2026-12-01T00:00:00.000Z',
+      } as ProposalInput, created).id;
+      return id;
+    };
+
+    it('refuses a missing key, a key with no entry and an entry without admin_read', async () => {
+      for (const p of ['proposals', 'conversations', 'audit']) {
+        expect((await call('GET', `/spine/admin/${p}`)).status).toBe(401);
+        expect(await call('GET', `/spine/admin/${p}`, KEY))
+          .toEqual({ status: 403, body: { error: `policy: marketing-manager may not read admin/${p}` } });
+        expect((await call('GET', `/spine/admin/${p}`, BOTS)).status).toBe(403);
+      }
+    });
+
+    it('reads proposals newest first with card text, filters and redaction', async () => {
+      const a = card('first', '2026-11-09T10:00:00.000Z');
+      const b = card('second', '2026-11-10T10:00:00.000Z');
+      db.prepare("UPDATE proposals SET status = 'executed', execution_result = ? WHERE id = ?")
+        .run(JSON.stringify({ status: 200, body: { token: 'tok', ok: true, long: 'x'.repeat(9000) } }), a);
+      const all = await call('GET', '/spine/admin/proposals', INBOX);
+      expect(all.status).toBe(200);
+      const rows = all.body.rows as Array<Record<string, any>>;
+      expect(rows.map((r) => r.id)).toEqual([b, a]);
+      expect(rows[0].card_text).toContain('second');
+      expect(rows[0].reversible).toBe(true);
+      expect(rows[0].action_payload.body.details).toEqual({ api_key: '[redacted]', note: 'use Bearer [redacted]' });
+      expect(rows[0].evidence.message_id).toBe('AAMkAD1234567890abcdefABCDEF1234567890');
+      expect(rows[0].evidence.blob).toBe('[redacted]');
+      expect(JSON.stringify(all.body)).not.toContain(SECRET);
+      const executed = rows[1].execution_result.body;
+      expect(executed.token).toBe('[redacted]');
+      expect(executed.long.length).toBeLessThan(8100);
+      expect(executed.long).toContain('[truncated 1000 chars]');
+
+      const byStatus = await call('GET', '/spine/admin/proposals?status=executed', INBOX);
+      expect((byStatus.body.rows as Array<{ id: number }>).map((r) => r.id)).toEqual([a]);
+      const byId = await call('GET', `/spine/admin/proposals?id=${b}`, INBOX);
+      expect((byId.body.rows as Array<{ id: number }>).map((r) => r.id)).toEqual([b]);
+      const since = await call('GET', '/spine/admin/proposals?since=2026-11-10T00:00:00Z', INBOX);
+      expect((since.body.rows as Array<{ id: number }>).map((r) => r.id)).toEqual([b]);
+      expect((await call('GET', '/spine/admin/proposals?limit=1', INBOX)).body.count).toBe(1);
+      expect((await call('GET', '/spine/admin/proposals?limit=5000', INBOX)).body.limit).toBe(1000);
+      expect((await call('GET', '/spine/admin/proposals?limit=0', INBOX)).status).toBe(400);
+      expect((await call('GET', '/spine/admin/proposals?since=yesterday', INBOX)).status).toBe(400);
+      expect((await call('GET', '/spine/admin/proposals?id=abc', INBOX)).status).toBe(400);
+    });
+
+    it('reads the conversation log and audit log with since and user_id filters', async () => {
+      db.prepare("INSERT INTO users (id, name, email, role) VALUES ('robert-mcmillan','R','r@dd.com','admin'), ('olivier','O','o@dd.com','member')").run();
+      insertConversationMessage(db, 'robert-mcmillan', '2026-11-09', 'rob', 'approve 12');
+      insertConversationMessage(db, 'olivier', '2026-11-09', 'rob', `my password=hunter2 ok`);
+      db.prepare("UPDATE conversation_log SET timestamp = '2026-11-09 10:00:00' WHERE user_id = 'robert-mcmillan'").run();
+      db.prepare("UPDATE conversation_log SET timestamp = '2026-11-10 10:00:00' WHERE user_id = 'olivier'").run();
+      const conv = await call('GET', '/spine/admin/conversations', INBOX);
+      const rows = conv.body.rows as Array<Record<string, unknown>>;
+      expect(rows.map((r) => r.user_id)).toEqual(['olivier', 'robert-mcmillan']);
+      expect(rows[0].message).toBe('my password=[redacted] ok');
+      const mine = await call('GET', '/spine/admin/conversations?user_id=robert-mcmillan', INBOX);
+      expect((mine.body.rows as Array<{ message: string }>).map((r) => r.message)).toEqual(['approve 12']);
+      const since = await call('GET', '/spine/admin/conversations?since=2026-11-10T00:00:00Z', INBOX);
+      expect((since.body.rows as Array<{ user_id: string }>).map((r) => r.user_id)).toEqual(['olivier']);
+      expect((await call('GET', '/spine/admin/conversations?limit=-1', INBOX)).status).toBe(400);
+
+      db.prepare(`INSERT INTO audit_log (timestamp, action_type, target_id, target_type, details, confidence, approved_by, user_id)
+        VALUES ('2026-11-09 10:00:00', 'archive', 'm1', 'email', ?, 0.9, 'auto', 'robert-mcmillan')`)
+        .run(JSON.stringify({ subject: 's', authorization: 'Bearer x' }));
+      const audit = await call('GET', '/spine/admin/audit', INBOX);
+      expect(audit.body.rows).toEqual([expect.objectContaining({
+        action_type: 'archive', details: { subject: 's', authorization: '[redacted]' }, was_reversed: false,
+      })]);
+      expect((await call('GET', '/spine/admin/audit?since=2026-11-10T00:00:00Z', INBOX)).body.count).toBe(0);
     });
   });
 
