@@ -56,6 +56,7 @@ import { getActiveAlerts, getLatestSnapshot } from './lions/store.js';
 import { lionsConfig } from './lions/config.js';
 import { buildSpine } from './spine/wiring.js';
 import { buildChiefDigest, CHIEF_DIGEST_SCHEDULE, CHIEF_DIGEST_TASK, digestModeOn } from './spine/chief-digest.js';
+import { buildInboxReport, createReportClassifier, INBOX_REPORT_SCHEDULE, INBOX_REPORT_TASK, inboxReportModeOn } from './email/inbox-report.js';
 import { createTelegramTransport } from './spine/telegram-card.js';
 import { parseAgentKeys } from './spine/agent-keys.js';
 import { parseAgentPolicy } from './spine/agent-policy.js';
@@ -374,6 +375,27 @@ let inboxSweepRunning = false;
  * 7:00, 12:00, 17:00 CT: the Chief digest (src/spine/chief-digest.ts), gated by
  * CHIEF_DIGEST_MODE (off by default). Errors are logged, never thrown.
  */
+/**
+ * Weekdays 7:00 / 12:00 / 17:00 CT: the Inbox Report (src/email/inbox-report.ts,
+ * OP-20261113-011) for Rob's two mailboxes, posted to Chief on grok_task_chief.
+ * Gated by INBOX_REPORT_MODE (on|off, default off). Read-only.
+ */
+async function handleInboxReport(): Promise<void> {
+  if (!inboxReportModeOn(process.env)) return;
+  try {
+    const mailboxes = [process.env.OUTLOOK_USER_EMAIL_1 ?? '', process.env.OUTLOOK_USER_EMAIL_2 ?? ''].filter(Boolean);
+    const built = await buildInboxReport({
+      db, mailboxes, now: () => new Date(), classify: createReportClassifier(anthropic),
+      graphFetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(30_000) }), token: getGraphToken,
+    });
+    if (built.event_id === null) { console.log(`Inbox report ${built.report_id}: already posted`); return; }
+    console.log(`Inbox report ${built.report_id}: event #${built.event_id}, ${built.text.length} chars`);
+    try { spineWake?.('grok_task_chief', built.event_id); } catch (err) { console.error('Inbox report wake failed:', err); }
+  } catch (err) {
+    console.error('Inbox report failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function handleChiefDigest(): Promise<void> {
   if (!digestModeOn(process.env)) return;
   try {
@@ -2008,6 +2030,7 @@ async function main() {
     { name: 'Task Polling', schedule: '*/15 7-16 * * 1-5', handler: handleTaskPolling, description: 'Every 15 min during work hours — detect completed tasks' },
     { name: 'Email Scan', schedule: '*/30 * * * *', handler: handleEmailScan, description: 'Every 30 min, 24/7 — auto-tag new untagged emails as spam or not' },
     { name: CHIEF_DIGEST_TASK, schedule: CHIEF_DIGEST_SCHEDULE, handler: handleChiefDigest, description: '7 AM / noon / 5 PM CT daily — drafts awaiting Robert + inbox-sweep update to Chief (CHIEF_DIGEST_MODE off|on)' },
+    { name: INBOX_REPORT_TASK, schedule: INBOX_REPORT_SCHEDULE, handler: handleInboxReport, description: 'Weekdays 7 AM / noon / 5 PM CT — inbox report of both of Rob\'s mailboxes to Chief (INBOX_REPORT_MODE off|on)' },
     { name: 'Inbox Sweep', schedule: '*/15 * * * *', handler: handleInboxSweep, description: 'Every 15 min, 24/7 — file new mail Rob does not need (INBOX_SWEEP_MODE off|shadow|live)' },
     { name: 'Invite Reminders', schedule: '0 9 * * *', handler: handleInviteReminders, description: 'Daily 9 AM — resend invite to entries >48h old with no /start' },
     { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
