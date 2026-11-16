@@ -34,8 +34,12 @@ export interface AgentPolicyEntry {
 }
 export type AgentPolicy = Map<string, AgentPolicyEntry>;
 
-/** Agents whose names start with one of these must have an entry, or boot fails. */
-export const RESTRICTED_PREFIXES = ['grok-'];
+/**
+ * Agents whose names start with one of these must have an entry, or boot fails. `cs-agent-alerts`
+ * (the CS bot's outage alerts, src/spine/cs-agent-alerts.ts) auto-runs an email action, so it may
+ * never run as an unrestricted key.
+ */
+export const RESTRICTED_PREFIXES = ['grok-', 'cs-agent-alerts'];
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
 const ENTRY_FIELDS = ['propose', 'events', 'hands_proxy', 'outcomes', 'brands', 'runs', 'files', 'inbox_sweep_log', 'admin_read', 'rate'];

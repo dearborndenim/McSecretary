@@ -5,6 +5,7 @@ import { matchesType, mayPropose, sourceHandAllowed, type AgentPolicy, type Agen
 import { forwardBrandKey, isBrandActive, listBrandIds, loadBrandConfig, publicBrandEntry, resolveHand } from './brand-config.js';
 import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
+import { checkCsAlertProposal } from './cs-agent-alerts.js';
 import { CHIEF_APPROVALS_AGENT, DECISION_EVENT } from './chief-digest.js';
 import {
   FEEDBACK_ACTION_TYPE, FEEDBACK_HAND, FEEDBACK_TO_AGENTS, feedbackRelPath, readFeedbackRows, validateFeedbackPayload,
@@ -434,6 +435,9 @@ export function createSpineRouter(deps: SpineRouterDeps) {
             return refuse(res, agent, `propose ${actionType.slice(0, 64)} on`, hand);
           }
         }
+        // Whatever AGENT_POLICY says: the auto-run cs_agent_alert email only ever reaches @dearborndenim.com.
+        const alertRule = checkCsAlertProposal(agent, parsed.body);
+        if (alertRule) { json(res, 403, { error: `policy: ${alertRule}` }); return true; }
         const bad = validateProposal(parsed.body)
           ?? validateBrandAndHand(deps.brandsDir, parsed.body.brand_id as string, (parsed.body.action_payload as { hand: string }).hand);
         if (bad) { json(res, 400, { error: bad }); return true; }
