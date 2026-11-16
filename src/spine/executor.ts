@@ -3,6 +3,7 @@ import { getProposalById, recordExecution } from '../db/proposal-queries.js';
 import { insertEvent } from '../db/event-queries.js';
 import { getUserById } from '../db/user-queries.js';
 import { forwardBrandKey, resolveHand, type BrandConfig } from './brand-config.js';
+import { CS_ALERT_ACTION_TYPE } from './cs-agent-alerts.js';
 import { validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { validateGraphPayload, runGraphDispatch, GRAPH_ACTION_TYPE } from './graph-hand.js';
 import { copyScalarKeys, isPlainObject } from './json-object.js';
@@ -237,6 +238,8 @@ function emitExecutedEvent(
   // rule keeps apart from every agent name) wakes no agent, and an undrained
   // event would sit in the 5 AM health report for ever.
   if (getUserById(db, row.agent)) return;
+  // The CS bot's outage email is the end of the line: no agent drains its event.
+  if (row.action_type === CS_ALERT_ACTION_TYPE) return;
   const truncated = truncateResponseForEvent(responseBody);
   const response = payload.hand === 'notes' ? {} : truncated;
   const eventPayload: Record<string, unknown> = {

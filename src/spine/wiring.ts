@@ -6,6 +6,7 @@ import { loadBrandConfig, listBrandIds } from './brand-config.js';
 import { executeProposal } from './executor.js';
 import { sendHandEmail, validateEmailPayload, type EmailHandRequest, type EmailHandResult } from './email-hand.js';
 import { fileProposal } from './router.js';
+import { seedCsAlertTrust } from './cs-agent-alerts.js';
 import {
   renderProposalCard, parseCallbackData, handleProposalCallback, handleEditReply, relayProposalDecision, type CardDeps, type InboxTransport,
 } from './telegram-card.js';
@@ -45,6 +46,8 @@ const DEFAULT_HAND_TIMEOUT_MS = 20_000;
 const LEGACY_BRAND_ID = 'dearborn-denim';
 
 export function buildSpine(d: SpineBuildDeps) {
+  // The CS bot's outage alert auto-runs from its first filing (level 2, only when its key exists).
+  if (seedCsAlertTrust(d.db, d.agentKeys.values(), d.now())) console.log('spine: cs-agent-alerts cs_agent_alert seeded at trust level 2');
   const handTimeoutMs = d.handTimeoutMs ?? DEFAULT_HAND_TIMEOUT_MS;
   const fetchWithTimeout = (url: string, init: RequestInit) =>
     d.fetch(url, { ...init, signal: AbortSignal.timeout(handTimeoutMs) });
