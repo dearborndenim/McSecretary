@@ -240,6 +240,8 @@ export interface EmailHandRequest {
   /** The proposal's `evidence` object — `rfq_id` and the `intents` CSV come from it. */
   evidence: Record<string, unknown>;
   body: EmailHandBody;
+  /** Send as the mailbox itself, never the RFQ_FROM_ADDRESS alias (internal alerts are not sourcing mail). */
+  plainSender?: boolean;
 }
 
 export interface EmailHandSuccess {
@@ -420,7 +422,7 @@ export async function sendHandEmail(
 ): Promise<EmailHandResult> {
   const mailbox = mailboxAddress(deps.env);
   if (!mailbox) return { ok: false, error: 'No sending mailbox configured (set RFQ_MAILBOX or RFQ_FROM_ADDRESS)' };
-  const from = fromAddress(deps.env);
+  const from = req.plainSender ? mailbox : fromAddress(deps.env);
   const sender: EmailSender = { mailbox, from };
 
   const dmTarget = designModuleTarget(deps, req.brandId);

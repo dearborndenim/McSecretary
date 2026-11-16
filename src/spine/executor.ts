@@ -418,7 +418,7 @@ export async function executeProposal(
     try {
       let evidence: Record<string, unknown> = {};
       try { evidence = JSON.parse(row.evidence) as Record<string, unknown>; } catch { /* evidence is advisory */ }
-      sent = await deps.sendEmail({ proposalId: row.id, brandId: row.brand_id, evidence, body: valid.body });
+      sent = await deps.sendEmail({ proposalId: row.id, brandId: row.brand_id, evidence, body: valid.body, plainSender: row.action_type === CS_ALERT_ACTION_TYPE });
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
