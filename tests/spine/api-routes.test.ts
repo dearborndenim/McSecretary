@@ -469,6 +469,7 @@ describe('spine routes', () => {
       expect(JSON.parse(out.body)).toEqual({ brands: [
         { brand_id: 'dearborn-denim', active: true },
         { brand_id: 'knits', active: true },
+        { brand_id: 'lake-america', active: true },
         { brand_id: 'long-ryder', active: true },
       ] });
     });
