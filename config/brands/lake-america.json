@@ -1,0 +1,54 @@
+{
+  "_generated_from": "brands/lake-america/brand.json",
+  "brand_id": "lake-america",
+  "display_name": "Sollaby",
+  "inbox_user_id": "robert-mcmillan",
+  "shopify_store": "",
+  "currency": "USD",
+  "timezone": "America/Chicago",
+  "quickbooks_class": "Sollaby",
+  "meta_ad_account": "",
+  "silent_budget_usd": 0,
+  "exploration_share": 0.2,
+  "proposal_expiry_hours": 48,
+  "hands": {
+    "ad-manager": {
+      "url_env": "AD_MANAGER_LAKE_AMERICA_URL",
+      "key_env": "AD_MANAGER_LAKE_AMERICA_KEY"
+    },
+    "content-engine": {
+      "url_env": "CONTENT_ENGINE_LAKE_AMERICA_URL",
+      "key_env": "CONTENT_ENGINE_LAKE_AMERICA_KEY"
+    },
+    "product-dev": {
+      "url_env": "PRODUCT_DEV_URL",
+      "key_env": "PRODUCT_DEV_KEY",
+      "forward_brand": "brand"
+    },
+    "piece-work-scanner": {
+      "url_env": "PIECE_WORK_SCANNER_URL",
+      "key_env": "PIECE_WORK_SCANNER_API_KEY"
+    },
+    "purchase-order-receiver": {
+      "url_env": "PO_RECEIVER_URL",
+      "key_env": "PO_RECEIVER_API_KEY"
+    },
+    "kanban-purchaser": {
+      "url_env": "KANBAN_PURCHASER_URL",
+      "key_env": "KANBAN_PURCHASER_KEY"
+    },
+    "quickbooks-sync": {
+      "url_env": "QUICKBOOKS_SYNC_URL",
+      "key_env": "QUICKBOOKS_SYNC_KEY"
+    },
+    "design-module": {
+      "url_env": "DESIGN_MODULE_URL",
+      "key_env": "DESIGN_MODULE_KEY",
+      "forward_brand": "brand"
+    },
+    "cs-desk": {
+      "url_env": "CS_DESK_URL",
+      "key_env": "CS_DESK_KEY"
+    }
+  }
+}

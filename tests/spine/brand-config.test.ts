@@ -59,7 +59,7 @@ describe('brand config', () => {
   });
 
   it('loads knits (Ballow) with its _comment key, and lists every brand', () => {
-    expect(listBrandIds(DIR)).toEqual(['dearborn-denim', 'knits', 'long-ryder']);
+    expect(listBrandIds(DIR)).toEqual(['dearborn-denim', 'knits', 'lake-america', 'long-ryder']);
     const k = loadBrandConfig(DIR, 'knits');
     expect(k.display_name).toBe('Ballow');
     expect(k.silent_budget_usd).toBe(0);
@@ -74,6 +74,14 @@ describe('brand config', () => {
     for (const h of ['product-dev', 'design-module', 'piece-work-scanner', 'purchase-order-receiver', 'kanban-purchaser', 'quickbooks-sync']) {
       expect(k.hands[h], h).toEqual(dd.hands[h]);
     }
+  });
+
+  it('loads lake-america (Sollaby): no store yet, and no Dearborn-only factory-fenix hand', () => {
+    const s = loadBrandConfig(DIR, 'lake-america');
+    expect(s.display_name).toBe('Sollaby');
+    expect(s.shopify_store).toBe('');
+    expect(s.hands['factory-fenix']).toBeUndefined();
+    expect(forwardBrandKey(s, 'design-module')).toBe('brand');
   });
 
   describe('forward_brand validation', () => {
