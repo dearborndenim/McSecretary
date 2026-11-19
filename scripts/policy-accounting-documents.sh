@@ -1,9 +1,15 @@
 #!/bin/zsh
 # Accounting document feed (spec docs/superpowers/specs/2026-11-19-accounting-document-feed-design.md, Piece S,
 # in the claude_code repo): quickbooks-sync must be allowed to drain `accounting_document`, the event the Inbox Sweep
-# posts (INBOX_SWEEP_ACCOUNTING=on).
-#   - Drain: the quickbooks-sync AGENT_POLICY entry gains events.drain_types += accounting_document. An agent with no
-#     entry is unrestricted (it may already drain anything), so then nothing is added and no entry is created.
+# posts (INBOX_SWEEP_ACCOUNTING=on), and to file its daily "needs attention" note (quickbooks-sync PR 21,
+# src/ap/documents.py: action_type ap_documents_attention on the built-in notes hand, level_required 2).
+#   - The quickbooks-sync AGENT_POLICY entry gains events.drain_types += accounting_document,
+#     propose.action_types += ap_documents_attention and propose.hands += notes (each only if missing; an entry with
+#     propose null gets propose {hands:[notes], action_types:[ap_documents_attention]}). An agent with no entry is
+#     unrestricted (it may already drain and file anything), so then nothing is added and no entry is created.
+#   - Delivery is the trust ledger, not this policy: with no ledger row at level >= 2 for
+#     (<agent>, dearborn-denim, ap_documents_attention) the note arrives as an Approve/Edit/Reject card. The script
+#     prints the promote command for that; it runs nothing.
 #   - Post: the sweep inserts the event in-process (insertEvent, source_hand inbox-sweep); AGENT_POLICY only governs
 #     HTTP keys, so there is nothing to grant. If an `inbox-sweep` entry ever exists, its post_types gain the type.
 # Reads the live AGENT_POLICY and AGENT_KEYS through `railway run` (read only), adds only what is missing (idempotent),
@@ -15,6 +21,7 @@
 # Usage: scripts/policy-accounting-documents.sh
 # Dry run on a local file (no Railway; the sample is reconstructed from the payables plan, NOT the live value):
 #   LOCAL_POLICY=scripts/policy-accounting-documents.sample-before.json OUT=/tmp/x.json scripts/policy-accounting-documents.sh
+#   (the result equals scripts/policy-accounting-documents.sample-after.json; a second run on it adds nothing)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${OUT:-$HOME/.foreman/agent-policy.accounting-documents.json}  # outside the repo: never commit the live policy
@@ -29,6 +36,7 @@ const fs = require("fs");
 (async () => {
   const { parseAgentPolicy, matchesType } = await import("./src/spine/agent-policy.ts");
   const TYPE = "accounting_document";
+  const NOTE = "ap_documents_attention";
   const agent = process.env.QBS_AGENT;
   const names = (process.env.AGENT_KEYS ?? "").split(",").map((s) => s.split(":")[0].trim()).filter(Boolean);
   if (!names.includes(agent)) throw new Error("AGENT_KEYS has no key named " + agent + "; set QBS_AGENT to the name quickbooks-sync drains with");
@@ -36,11 +44,16 @@ const fs = require("fs");
   const added = [];
   const e = p[agent];
   if (!e) {
-    console.log(agent + " has no AGENT_POLICY entry: unrestricted, it may already drain " + TYPE + "; no entry created");
+    console.log(agent + " has no AGENT_POLICY entry: unrestricted, it may already drain " + TYPE + " and file " + NOTE + " on notes; no entry created");
   } else {
     e.events ??= {};
     e.events.drain_types ??= [];
     if (!matchesType(e.events.drain_types, TYPE)) { e.events.drain_types.push(TYPE); added.push(agent + ".events.drain_types += " + TYPE); }
+    e.propose ??= { hands: [], action_types: [] };
+    e.propose.hands ??= [];
+    e.propose.action_types ??= [];
+    if (!e.propose.action_types.includes(NOTE)) { e.propose.action_types.push(NOTE); added.push(agent + ".propose.action_types += " + NOTE); }
+    if (!e.propose.hands.includes("notes")) { e.propose.hands.push("notes"); added.push(agent + ".propose.hands += notes"); }
   }
   const sweep = p["inbox-sweep"];
   if (sweep) {
@@ -63,3 +76,6 @@ if [[ $CHANGED == 1 ]]; then
 else
   echo "Wrote $OUT (unchanged policy). No Railway change is needed."
 fi
+echo "Note delivery: ap_documents_attention files at level_required 2; until the trust ledger has it at level 2 it is a card."
+echo "  To deliver it as a plain note (executed + one Telegram line, no buttons), Robert promotes it once, e.g. on Telegram:"
+echo "  promote $QBS_AGENT ap_documents_attention 2   (or: npx tsx src/admin.ts promote --agent $QBS_AGENT --action ap_documents_attention --level 2)"

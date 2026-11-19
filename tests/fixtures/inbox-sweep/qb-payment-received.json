@@ -1,21 +1,31 @@
 {
+  "_comment": "Sender, subject and bodyPreview are verbatim from rob@'s mailbox (QuickBooks notices of 2026-10-21 / 2026-11-13). The preview is cut off by Graph; body.content repeats it because the full body was not captured. id, receivedDateTime, conversationId and internetMessageId are placeholders.",
   "id": "AAMkAD-qbpay-1",
   "receivedDateTime": "2026-11-09T14:11:30Z",
   "hasAttachments": false,
   "subject": "Payment received: Invoice #1700-(USA Brands)",
-  "bodyPreview": "You received a payment. Customer: USA Brands Invoice: 1700 Amount: $22,074.20",
+  "bodyPreview": "View sale $11440.50 Payment has been received Payment details Paid to FOUR STAR DENIM AND APPAREL LLC Customer name USA Brands Customer email billing@usabrands.com Invoice no. 1700 Paid da...",
   "isRead": false,
   "conversationId": "conv-AAMkAD-qbpay-1",
-  "internetMessageId": "<qbo.payment.1700@notification.intuit.com>",
+  "internetMessageId": "<placeholder.AAMkAD-qbpay-1@notification.intuit.com>",
   "body": {
     "contentType": "text",
-    "content": "You received a payment.\n\nCustomer: USA Brands\nInvoice: 1700\nPayment amount: $22,074.20\n\nThis payment was recorded in QuickBooks."
+    "content": "View sale $11440.50 Payment has been received Payment details Paid to FOUR STAR DENIM AND APPAREL LLC Customer name USA Brands Customer email billing@usabrands.com Invoice no. 1700 Paid da..."
   },
-  "from": { "emailAddress": { "name": "QuickBooks", "address": "quickbooks@notification.intuit.com" } },
-  "toRecipients": [{ "emailAddress": { "name": "rob", "address": "rob@dearborndenim.com" } }],
+  "from": {
+    "emailAddress": {
+      "name": "QuickBooks",
+      "address": "quickbooks@notification.intuit.com"
+    }
+  },
+  "toRecipients": [
+    {
+      "emailAddress": {
+        "name": "rob",
+        "address": "rob@dearborndenim.com"
+      }
+    }
+  ],
   "ccRecipients": [],
-  "internetMessageHeaders": [
-    { "name": "Message-ID", "value": "<qbo.payment.1700@notification.intuit.com>" },
-    { "name": "Auto-Submitted", "value": "auto-generated" }
-  ]
+  "internetMessageHeaders": []
 }

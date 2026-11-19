@@ -334,7 +334,7 @@ describe('parseSweepClassifications: accounting (spec 2026-11-19 Piece S)', () =
 });
 
 describe('runInboxSweep: accounting documents (spec 2026-11-19 Piece S)', () => {
-  const EXTRA = ['white-oak-received', 'qb-payment-received'];
+  const EXTRA = ['white-oak-received', 'qb-payment-received', 'qb-payment-received-1708'];
   const accountingEvents = (db: Database.Database) =>
     (db.prepare("SELECT source_hand, brand_id, urgent, payload FROM spine_events WHERE event_type = 'accounting_document' ORDER BY id").all() as
       { source_hand: string; brand_id: string; urgent: number; payload: string }[]).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
@@ -346,12 +346,13 @@ describe('runInboxSweep: accounting documents (spec 2026-11-19 Piece S)', () => 
     const h = harness('live', { extraInbox: EXTRA });
     const out = await runInboxSweep({ ...h.deps, accounting: true });
     const ev = accountingEvents(h.db);
-    expect(ev.map((e) => e.payload.message_id)).toEqual(['AAMkAD-whiteoak-1', 'AAMkAD-qbpay-1']);
+    expect(ev.map((e) => e.payload.message_id)).toEqual(['AAMkAD-whiteoak-1', 'AAMkAD-qbpay-1', 'AAMkAD-qbpay-2']);
+    expect(ev[2]!.payload).toMatchObject({ invoice_numbers: ['1708'], amounts: [4163.26], total: 4163.26 });
     expect(ev.every((e) => e.source_hand === 'inbox-sweep' && e.brand_id === 'dearborn-denim' && e.urgent === 0)).toBe(true);
     expect(ev[1]!.payload).toEqual({
       mailbox: ROB,
       message_id: 'AAMkAD-qbpay-1',
-      internet_message_id: '<qbo.payment.1700@notification.intuit.com>',
+      internet_message_id: '<placeholder.AAMkAD-qbpay-1@notification.intuit.com>',
       conversation_id: 'conv-AAMkAD-qbpay-1',
       received_at: '2026-11-09T14:11:30Z',
       from: 'quickbooks@notification.intuit.com',
@@ -361,22 +362,22 @@ describe('runInboxSweep: accounting documents (spec 2026-11-19 Piece S)', () => 
       kind: 'customer_remittance',
       counterparty: 'USA Brands',
       invoice_numbers: ['1700'],
-      amounts: [22074.2],
-      total: 22074.2,
+      amounts: [11440.5],
+      total: 11440.5,
       payment_date: null,
       summary: 'QuickBooks: payment received from USA Brands for invoice 1700',
       confidence: 1,
     });
     expect(ev[0]!.payload).toMatchObject({ kind: 'payment_received_by_vendor', from: 'wlee@whiteoaksf.com', invoice_numbers: ['80363'] });
-    expect(out.accountingEventIds).toHaveLength(2);
+    expect(out.accountingEventIds).toHaveLength(3);
     expect(h.graph.find((r) => r.url.includes('/mailFolders/inbox/messages'))!.url).toContain('internetMessageId');
-    expect(accountingLog(h.db).map((r) => r.message_id)).toEqual(['AAMkAD-whiteoak-1', 'AAMkAD-qbpay-1']);
+    expect(accountingLog(h.db).map((r) => r.message_id)).toEqual(['AAMkAD-whiteoak-1', 'AAMkAD-qbpay-1', 'AAMkAD-qbpay-2']);
 
     // The same messages again (a re-run, or a log row lost): no second event.
     h.db.prepare('DELETE FROM inbox_sweep_log').run();
     h.db.prepare('DELETE FROM inbox_sweep_state').run();
     await runInboxSweep({ ...h.deps, accounting: true });
-    expect(accountingEvents(h.db)).toHaveLength(2);
+    expect(accountingEvents(h.db)).toHaveLength(3);
     expect(postAccountingEvent(h.db, ev[0]!.payload, '2026-11-09T15:00:00Z')).toBeNull();
   });
 
@@ -388,6 +389,7 @@ describe('runInboxSweep: accounting documents (spec 2026-11-19 Piece S)', () => 
     const rows = accountingLog(h.db);
     expect(rows.map((r) => [r.message_id, JSON.parse(r.accounting).kind])).toEqual([
       ['AAMkAD-whiteoak-1', 'payment_received_by_vendor'], ['AAMkAD-qbpay-1', 'customer_remittance'],
+      ['AAMkAD-qbpay-2', 'customer_remittance'],
     ]);
     expect(rows.every((r) => /would post accounting_document/.test(r.note))).toBe(true);
   });

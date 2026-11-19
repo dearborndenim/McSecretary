@@ -318,24 +318,46 @@ describe('accounting documents (spec 2026-11-19 Piece S)', () => {
     amounts: [], total: null, payment_date: null, summary: 'White Oak confirms payment for AFI 80363.', confidence: 0.82,
   };
 
-  it('reads a QuickBooks "Payment received" notification as a customer remittance without the model', () => {
+  it('reads the real QuickBooks "Payment received" notices without the model', () => {
     expect(quickbooksPaymentReceived(qb)).toEqual({
       kind: 'customer_remittance',
       counterparty: 'USA Brands',
       invoice_numbers: ['1700'],
-      amounts: [22074.2],
-      total: 22074.2,
-      payment_date: null,
+      amounts: [11440.5],
+      total: 11440.5,
+      payment_date: null, // the preview stops at "Paid da..."
       summary: 'QuickBooks: payment received from USA Brands for invoice 1700',
       confidence: 1,
     });
+    expect(quickbooksPaymentReceived(fixture('qb-payment-received-1708'))).toMatchObject({
+      counterparty: 'USA Brands', invoice_numbers: ['1708'], amounts: [4163.26], total: 4163.26,
+    });
   });
 
-  it('takes no amount it cannot read from a labelled line, and ignores the subject from a non-QuickBooks sender', () => {
-    const noAmount = { ...qb, bodyText: 'You received a payment.', bodyPreview: 'You received a payment.' };
-    expect(quickbooksPaymentReceived(noAmount)).toMatchObject({ invoice_numbers: ['1700'], amounts: [], total: null });
+  it('accepts a subdomain of intuit.com and nothing that only looks like it', () => {
+    expect(qb.sender).toBe('quickbooks@notification.intuit.com');
+    expect(quickbooksPaymentReceived({ ...qb, sender: 'quickbooks@intuit.com' })).not.toBeNull();
     expect(quickbooksPaymentReceived({ ...qb, sender: 'billing@intuit-payments.example' })).toBeNull();
+    expect(quickbooksPaymentReceived({ ...qb, sender: 'quickbooks@notification.intuit.com.evil.example' })).toBeNull();
+  });
+
+  it('takes no stray dollar figure, refuses a body invoice that differs from the subject, and ignores another subject', () => {
+    const body = (text: string) => ({ ...qb, bodyText: text, bodyPreview: text });
+    expect(quickbooksPaymentReceived(body('Your balance is $500.00. Invoice no. 1700'))).toMatchObject({ amounts: [], total: null });
+    expect(quickbooksPaymentReceived(body('Payment amount: $1,234.56 Invoice no. 1700'))).toMatchObject({ amounts: [1234.56] });
+    expect(quickbooksPaymentReceived(body('View sale $11,440.50 Payment has been received'))).toMatchObject({ amounts: [11440.5] });
+    expect(quickbooksPaymentReceived(body('View sale $11440.50 Payment has been received Invoice no. 1701'))).toBeNull();
     expect(quickbooksPaymentReceived({ ...qb, subject: 'Invoice 1700 from Dearborn Denim' })).toBeNull();
+  });
+
+  it('reads "Paid date" only when it is unambiguous', () => {
+    const paid = (tail: string) => quickbooksPaymentReceived({ ...qb, bodyText: `${qb.bodyPreview.replace(/ Paid da\.\.\.$/, '')} Paid date ${tail}` })?.payment_date;
+    expect(paid('10/21/2026')).toBe('2026-10-21');
+    expect(paid('October 21, 2026')).toBe('2026-10-21');
+    expect(paid('Nov 13, 2026')).toBe('2026-11-13');
+    expect(paid('21/10/2026')).toBeNull();
+    expect(paid('2026-10-21')).toBeNull();
+    expect(paid('Octember 21, 2026')).toBeNull();
   });
 
   it('the QuickBooks rule wins over the classifier; junk, phishing and promotions never carry one; < 0.6 is dropped', () => {

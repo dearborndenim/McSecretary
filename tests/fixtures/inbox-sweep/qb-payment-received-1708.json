@@ -1,0 +1,31 @@
+{
+  "_comment": "Sender, subject and bodyPreview are verbatim from rob@'s mailbox (QuickBooks notices of 2026-10-21 / 2026-11-13). The preview is cut off by Graph; body.content repeats it because the full body was not captured. id, receivedDateTime, conversationId and internetMessageId are placeholders.",
+  "id": "AAMkAD-qbpay-2",
+  "receivedDateTime": "2026-11-09T14:12:30Z",
+  "hasAttachments": false,
+  "subject": "Payment received: Invoice #1708-(USA Brands)",
+  "bodyPreview": "View sale $4163.26 Payment has been received ...",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-qbpay-2",
+  "internetMessageId": "<placeholder.AAMkAD-qbpay-2@notification.intuit.com>",
+  "body": {
+    "contentType": "text",
+    "content": "View sale $4163.26 Payment has been received ..."
+  },
+  "from": {
+    "emailAddress": {
+      "name": "QuickBooks",
+      "address": "quickbooks@notification.intuit.com"
+    }
+  },
+  "toRecipients": [
+    {
+      "emailAddress": {
+        "name": "rob",
+        "address": "rob@dearborndenim.com"
+      }
+    }
+  ],
+  "ccRecipients": [],
+  "internetMessageHeaders": []
+}

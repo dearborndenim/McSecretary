@@ -253,12 +253,45 @@ export function parseSweepAccounting(v: unknown): SweepAccounting | null {
 const QUICKBOOKS_DOMAINS = ['intuit.com', 'quickbooks.com'];
 const QB_PAYMENT_SUBJECT = /^\s*payment received:\s*invoice\s*#\s*([A-Za-z0-9][A-Za-z0-9./-]*?)\s*-\s*\((.+)\)\s*$/i;
 const QB_AMOUNT = /\b(?:payment amount|amount paid|amount received|payment total|amount)\s*:?\s*\$\s*([\d,]+\.\d{2})\b/i;
+/** The real notice (rob@, 2026-10-21 and 2026-11-13): "View sale $11440.50 Payment has been received …". */
+const QB_AMOUNT_BEFORE_RECEIVED = /\$\s*([\d,]+\.\d{2})\s*payment has been received/i;
+const QB_BODY_INVOICE = /\binvoice no\.?\s*:?\s*([A-Za-z0-9][A-Za-z0-9./-]*)/i;
+const QB_PAID_DATE_NUMERIC = /\bpaid date\s*:?\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\b/i;
+const QB_PAID_DATE_WORDS = /\bpaid date\s*:?\s*([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\b/i;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+function isoDate(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1) return null;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * "Paid date" followed by M/D/YYYY (QuickBooks US format) or a month name
+ * ("October 21, 2026", "Oct 21, 2026"); null for anything else or an impossible date.
+ */
+function qbPaidDate(text: string): string | null {
+  const n = QB_PAID_DATE_NUMERIC.exec(text);
+  if (n) return isoDate(Number(n[3]), Number(n[1]), Number(n[2]));
+  const w = QB_PAID_DATE_WORDS.exec(text);
+  if (!w) return null;
+  const name = w[1]!.toLowerCase();
+  const full = MONTH_NAMES.indexOf(name);
+  const abbreviated = name.length === 3 || name === 'sept';
+  const month = full >= 0 ? full + 1 : abbreviated ? MONTHS.indexOf(name.slice(0, 3)) + 1 : 0;
+  return month > 0 ? isoDate(Number(w[3]), month, Number(w[2])) : null;
+}
 
 /**
  * Deterministic pre-rule (no model call): a QuickBooks "Payment received:
- * Invoice #N-(Customer)" notification from an Intuit/QuickBooks sender is a
- * `customer_remittance` for invoice N from that customer. The amount is taken
- * only from a labelled "Amount: $X" line in the body; otherwise left empty.
+ * Invoice #N-(Customer)" notification from an Intuit/QuickBooks sender (any
+ * subdomain, e.g. notification.intuit.com) is a `customer_remittance` for
+ * invoice N from that customer. Amount: a labelled "Amount: $X", else the
+ * amount right before "Payment has been received"; never any other dollar
+ * figure. A body "Invoice no. M" that differs from N → null (the classifier
+ * decides). payment_date from an unambiguous "Paid date", else null.
  */
 export function quickbooksPaymentReceived(m: SweepMessage): SweepAccounting | null {
   if (!domainIn(domainOf(m.sender), QUICKBOOKS_DOMAINS)) return null;
@@ -266,7 +299,10 @@ export function quickbooksPaymentReceived(m: SweepMessage): SweepAccounting | nu
   if (!hit) return null;
   const invoice = hit[1]!;
   const customer = hit[2]!.trim().slice(0, 200);
-  const amountHit = QB_AMOUNT.exec(m.bodyText || m.bodyPreview);
+  const body = m.bodyText || m.bodyPreview;
+  const bodyInvoice = QB_BODY_INVOICE.exec(body);
+  if (bodyInvoice && bodyInvoice[1]!.replace(/\.$/, '') !== invoice) return null;
+  const amountHit = QB_AMOUNT.exec(body) ?? QB_AMOUNT_BEFORE_RECEIVED.exec(body);
   const amount = amountHit ? Number(amountHit[1]!.replace(/,/g, '')) : null;
   const amounts = amount !== null && Number.isFinite(amount) ? [amount] : [];
   return {
@@ -275,7 +311,7 @@ export function quickbooksPaymentReceived(m: SweepMessage): SweepAccounting | nu
     invoice_numbers: [invoice],
     amounts,
     total: amounts[0] ?? null,
-    payment_date: null,
+    payment_date: qbPaidDate(body),
     summary: `QuickBooks: payment received from ${customer} for invoice ${invoice}`.slice(0, 200),
     confidence: 1,
   };
