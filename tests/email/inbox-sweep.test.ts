@@ -6,6 +6,7 @@ import { getSweepWatermark, isKnownCorrespondent } from '../../src/db/inbox-swee
 import { insertRfqMessage } from '../../src/db/rfq-queries.js';
 import {
   parseSweepClassifications,
+  postAccountingEvent,
   runInboxSweep,
   SweepClassifierError,
   type InboxSweepDeps,
@@ -38,11 +39,21 @@ interface Recorded { method: string; url: string; body?: string; headers: Record
 function stubClassifier(messages: SweepMessage[]): Promise<SweepClassification[]> {
   return Promise.resolve(messages.map((m, i) => {
     const c = { index: i + 1, bot: 'none', key_facts: m.subject, urgent_today: false, confidence: 0.95 } as const;
-    if (/Fall Sale|specials/.test(m.subject)) return { ...c, lane: 'promotions' };
-    if (/Fraud alert/.test(m.subject)) return { ...c, lane: 'keep', urgent_today: true };
+    const promoReading = { kind: 'order_confirmation', counterparty: 'Best Made', invoice_numbers: [], amounts: [], total: null, payment_date: null, summary: 'sale', confidence: 0.9 } as const;
+    if (/Fall Sale|specials/.test(m.subject)) return { ...c, lane: 'promotions', accounting: promoReading };
+    if (/Fraud alert/.test(m.subject)) return { ...c, lane: 'keep', urgent_today: true, accounting: { ...promoReading, kind: 'bank_or_loan_notice', confidence: 0.4 } };
     if (/Overdue invoice/.test(m.subject)) return { ...c, lane: 'phishing' };
     if (/RFQ SPE1C1/.test(m.subject)) return { ...c, lane: 'gov_bid', bot: 'General Paton Bot' };
     if (/Selvedge/.test(m.subject)) return { ...c, lane: 'handoff', bot: 'Sourcing Bot' };
+    if (/American Fabrics/.test(m.subject)) {
+      return {
+        ...c, lane: 'keep', accounting: {
+          kind: 'payment_received_by_vendor', counterparty: 'American Fabrics International', invoice_numbers: ['80363'],
+          amounts: [], total: null, payment_date: null, summary: 'White Oak confirms our payment for AFI 80363 arrived.', confidence: 0.82,
+        },
+      };
+    }
+    if (/Payment received/.test(m.subject)) return { ...c, lane: 'fyi', accounting: null };
     return { ...c, lane: 'keep' };
   }));
 }
@@ -51,12 +62,14 @@ interface HarnessOptions {
   /** Mailbox whose "read message from sender" filter answers with a hit. */
   readHitBox?: string;
   unsubStatus?: number;
+  /** Graph messages added after the standard fixtures. */
+  extraInbox?: string[];
 }
 
 function harness(mode: InboxSweepDeps['mode'], opts: HarnessOptions = {}) {
   const graph: Recorded[] = [];
   const unsub: Recorded[] = [];
-  const inbox = FIXTURES.map(raw);
+  const inbox = [...FIXTURES, ...(opts.extraInbox ?? [])].map(raw);
   const record = (list: Recorded[], url: string, init?: RequestInit): Recorded => {
     const r = {
       method: init?.method ?? 'GET',
@@ -285,6 +298,125 @@ describe('runInboxSweep', () => {
     await runInboxSweep(h.deps);
     expect(h.unsub).toHaveLength(1);
     expect(logRows(h.db).find((r) => r.message_id === 'AAMkAD-promo-1')).toMatchObject({ unsubscribed: 0 });
+  });
+});
+
+describe('parseSweepClassifications: accounting (spec 2026-11-19 Piece S)', () => {
+  const recorded = readFileSync(new URL('../fixtures/inbox-sweep/classifier-accounting-output.json', import.meta.url), 'utf8');
+  const out = parseSweepClassifications(recorded, 13);
+  const byIndex = (i: number) => out.find((c) => c.index === i)!;
+
+  it('maps every kind of the contract from the recorded output', () => {
+    expect(out.slice(0, 10).map((c) => c.accounting?.kind)).toEqual([
+      'vendor_invoice', 'vendor_statement', 'payment_sent', 'payment_received_by_vendor', 'customer_remittance',
+      'past_due_notice', 'order_confirmation', 'credit_memo', 'bank_or_loan_notice', 'tax_notice',
+    ]);
+    expect(byIndex(2).accounting).toEqual({
+      kind: 'vendor_statement', counterparty: 'American Fabrics International', invoice_numbers: ['80395', '80399'],
+      amounts: [15342.65, 6392.1], total: 21734.75, payment_date: null,
+      summary: 'AFI lists invoices 80395 and 80399 open, $21,734.75 in total.', confidence: 0.9,
+    });
+    expect(byIndex(5).accounting).toMatchObject({ invoice_numbers: ['1700', '1701', '1702'], payment_date: '2026-11-03', total: 37404.34 });
+    expect(byIndex(11).accounting).toBeNull();
+  });
+
+  it('a bad accounting value is null or cleaned, never a thrown batch, and the lanes are read as without it', () => {
+    expect(byIndex(12)).toMatchObject({ lane: 'keep', accounting: null });
+    expect(byIndex(13).accounting).toEqual({
+      kind: 'vendor_invoice', counterparty: null, invoice_numbers: ['A-1'], amounts: [10.5], total: null,
+      payment_date: null, summary: 'Invoice A-1.', confidence: 1,
+    });
+    const withoutAccounting = JSON.parse(recorded) as { results: Record<string, unknown>[] };
+    for (const r of withoutAccounting.results) delete r.accounting;
+    const lanes = (cs: SweepClassification[]) => cs.map(({ accounting: _a, ...rest }) => rest);
+    expect(lanes(out)).toEqual(parseSweepClassifications(JSON.stringify(withoutAccounting), 13));
+  });
+});
+
+describe('runInboxSweep: accounting documents (spec 2026-11-19 Piece S)', () => {
+  const EXTRA = ['white-oak-received', 'qb-payment-received', 'qb-payment-received-1708'];
+  const accountingEvents = (db: Database.Database) =>
+    (db.prepare("SELECT source_hand, brand_id, urgent, payload FROM spine_events WHERE event_type = 'accounting_document' ORDER BY id").all() as
+      { source_hand: string; brand_id: string; urgent: number; payload: string }[]).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
+  const accountingLog = (db: Database.Database) =>
+    db.prepare('SELECT message_id, accounting, note FROM inbox_sweep_log WHERE accounting IS NOT NULL ORDER BY id').all() as
+      { message_id: string; accounting: string; note: string }[];
+
+  it('live: posts one accounting_document per accounting message, never for promotions or a reading under 0.6, and never twice', async () => {
+    const h = harness('live', { extraInbox: EXTRA });
+    const out = await runInboxSweep({ ...h.deps, accounting: true });
+    const ev = accountingEvents(h.db);
+    expect(ev.map((e) => e.payload.message_id)).toEqual(['AAMkAD-whiteoak-1', 'AAMkAD-qbpay-1', 'AAMkAD-qbpay-2']);
+    expect(ev[2]!.payload).toMatchObject({ invoice_numbers: ['1708'], amounts: [4163.26], total: 4163.26 });
+    expect(ev.every((e) => e.source_hand === 'inbox-sweep' && e.brand_id === 'dearborn-denim' && e.urgent === 0)).toBe(true);
+    expect(ev[1]!.payload).toEqual({
+      mailbox: ROB,
+      message_id: 'AAMkAD-qbpay-1',
+      internet_message_id: '<placeholder.AAMkAD-qbpay-1@notification.intuit.com>',
+      conversation_id: 'conv-AAMkAD-qbpay-1',
+      received_at: '2026-11-09T14:11:30Z',
+      from: 'quickbooks@notification.intuit.com',
+      from_name: 'QuickBooks',
+      subject: 'Payment received: Invoice #1700-(USA Brands)',
+      has_attachments: false,
+      kind: 'customer_remittance',
+      counterparty: 'USA Brands',
+      invoice_numbers: ['1700'],
+      amounts: [11440.5],
+      total: 11440.5,
+      payment_date: null,
+      summary: 'QuickBooks: payment received from USA Brands for invoice 1700',
+      confidence: 1,
+    });
+    expect(ev[0]!.payload).toMatchObject({ kind: 'payment_received_by_vendor', from: 'wlee@whiteoaksf.com', invoice_numbers: ['80363'] });
+    expect(out.accountingEventIds).toHaveLength(3);
+    expect(h.graph.find((r) => r.url.includes('/mailFolders/inbox/messages'))!.url).toContain('internetMessageId');
+    expect(accountingLog(h.db).map((r) => r.message_id)).toEqual(['AAMkAD-whiteoak-1', 'AAMkAD-qbpay-1', 'AAMkAD-qbpay-2']);
+
+    // The same messages again (a re-run, or a log row lost): no second event.
+    h.db.prepare('DELETE FROM inbox_sweep_log').run();
+    h.db.prepare('DELETE FROM inbox_sweep_state').run();
+    await runInboxSweep({ ...h.deps, accounting: true });
+    expect(accountingEvents(h.db)).toHaveLength(3);
+    expect(postAccountingEvent(h.db, ev[0]!.payload, '2026-11-09T15:00:00Z')).toBeNull();
+  });
+
+  it('shadow: logs the accounting document in the sweep log only; posts nothing', async () => {
+    const h = harness('shadow', { extraInbox: EXTRA });
+    const out = await runInboxSweep({ ...h.deps, accounting: true });
+    expect(eventCount(h.db)).toBe(0);
+    expect(out.accountingEventIds).toEqual([]);
+    const rows = accountingLog(h.db);
+    expect(rows.map((r) => [r.message_id, JSON.parse(r.accounting).kind])).toEqual([
+      ['AAMkAD-whiteoak-1', 'payment_received_by_vendor'], ['AAMkAD-qbpay-1', 'customer_remittance'],
+      ['AAMkAD-qbpay-2', 'customer_remittance'],
+    ]);
+    expect(rows.every((r) => /would post accounting_document/.test(r.note))).toBe(true);
+  });
+
+  it('flag off: no accounting event, nothing logged, and the Graph read is the old one', async () => {
+    const h = harness('live', { extraInbox: EXTRA });
+    const out = await runInboxSweep(h.deps);
+    expect(accountingEvents(h.db)).toEqual([]);
+    expect(accountingLog(h.db)).toEqual([]);
+    expect(out.accountingEventIds).toEqual([]);
+    expect(h.graph.find((r) => r.url.includes('/mailFolders/inbox/messages'))!.url).not.toContain('internetMessageId');
+  });
+
+  it('never changes a lane, move, handoff, unsubscribe or the Chief event', async () => {
+    const off = harness('live', { extraInbox: EXTRA });
+    const on = harness('live', { extraInbox: EXTRA });
+    await runInboxSweep(off.deps);
+    await runInboxSweep({ ...on.deps, accounting: true });
+    const decisions = (db: Database.Database) =>
+      db.prepare('SELECT message_id, lane, folder, bot, unsubscribed, key_facts FROM inbox_sweep_log ORDER BY id').all();
+    expect(decisions(on.db)).toEqual(decisions(off.db));
+    const writes = (g: Recorded[]) => g.filter((r) => r.method !== 'GET').map((r) => [r.method, r.url, r.body]);
+    expect(writes(on.graph)).toEqual(writes(off.graph));
+    expect(on.unsub).toEqual(off.unsub);
+    const chief = (db: Database.Database) =>
+      db.prepare("SELECT payload FROM spine_events WHERE event_type = 'grok_task_chief'").all();
+    expect(chief(on.db)).toEqual(chief(off.db));
   });
 });
 

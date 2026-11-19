@@ -21,6 +21,8 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { GRAPH_BASE, graphSegment } from '../auth/graph-base.js';
 import { ensureFolder, folderIdFromList, moveToFolder, type GraphDeps } from './actions.js';
 import {
+  accountingFor,
+  ACCOUNTING_KINDS,
   applyDeterministicRules,
   decideAction,
   domainOf,
@@ -28,9 +30,11 @@ import {
   isProtectedSender,
   keepSenderReason,
   needsSecondPass,
+  parseSweepAccounting,
   SWEEP_BOTS,
   SWEEP_LANES,
   unsubscribeEligible,
+  type SweepAccounting,
   type SweepBot,
   type SweepClassification,
   type SweepLane,
@@ -57,38 +61,72 @@ const BODY_CHARS_FOR_CLASSIFIER = 2000;
 
 export const SWEEP_MESSAGE_SELECT =
   'id,from,toRecipients,ccRecipients,subject,bodyPreview,body,receivedDateTime,isRead,hasAttachments,conversationId,internetMessageHeaders';
+/** INBOX_SWEEP_ACCOUNTING=on also reads the RFC 5322 id for the `accounting_document` event. */
+export const SWEEP_MESSAGE_SELECT_ACCOUNTING = `${SWEEP_MESSAGE_SELECT},internetMessageId`;
 
 // ---------------------------------------------------------------------------
 // Classifier: schema, prompt, parse
 // ---------------------------------------------------------------------------
 
-export const SWEEP_OUTPUT_FORMAT: Anthropic.Messages.JSONOutputFormat = {
-  type: 'json_schema',
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['results'],
-    properties: {
-      results: {
-        type: 'array',
-        description: 'One entry per email in the input, by its index.',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['index', 'lane', 'bot', 'key_facts', 'urgent_today', 'confidence'],
-          properties: {
-            index: { type: 'integer', description: 'The email index from the input.' },
-            lane: { type: 'string', enum: [...SWEEP_LANES] },
-            bot: { type: 'string', enum: [...SWEEP_BOTS], description: 'Owner for a handoff or gov_bid; none otherwise.' },
-            key_facts: { type: 'string', description: 'One or two sentences the owner needs: who, what, amounts, dates, deadlines.' },
-            urgent_today: { type: 'boolean', description: 'Bank fraud, a deadline within 48 hours, or a legal notice.' },
-            confidence: { type: 'number', description: 'Confidence in the lane, from 0 (guess) to 1 (certain).' },
+const SWEEP_RESULT_PROPERTIES = {
+  index: { type: 'integer', description: 'The email index from the input.' },
+  lane: { type: 'string', enum: [...SWEEP_LANES] },
+  bot: { type: 'string', enum: [...SWEEP_BOTS], description: 'Owner for a handoff or gov_bid; none otherwise.' },
+  key_facts: { type: 'string', description: 'One or two sentences the owner needs: who, what, amounts, dates, deadlines.' },
+  urgent_today: { type: 'boolean', description: 'Bank fraud, a deadline within 48 hours, or a legal notice.' },
+  confidence: { type: 'number', description: 'Confidence in the lane, from 0 (guess) to 1 (certain).' },
+};
+const SWEEP_RESULT_REQUIRED = ['index', 'lane', 'bot', 'key_facts', 'urgent_today', 'confidence'];
+
+/** The `accounting` field (INBOX_SWEEP_ACCOUNTING=on only): null, or the contract's classifier-filled fields. */
+const ACCOUNTING_PROPERTY = {
+  anyOf: [
+    { type: 'null' },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind', 'counterparty', 'invoice_numbers', 'amounts', 'total', 'payment_date', 'summary', 'confidence'],
+      properties: {
+        kind: { type: 'string', enum: [...ACCOUNTING_KINDS] },
+        counterparty: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'The other company, as named in the email; null if not stated.' },
+        invoice_numbers: { type: 'array', items: { type: 'string' }, description: 'Invoice numbers exactly as written; empty if none.' },
+        amounts: { type: 'array', items: { type: 'number' }, description: 'Dollar amounts, one per invoice when listed; empty if none.' },
+        total: { anyOf: [{ type: 'number' }, { type: 'null' }], description: 'The stated total; null if not stated.' },
+        payment_date: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'YYYY-MM-DD of the payment if stated; null otherwise.' },
+        summary: { type: 'string', description: 'One sentence, at most 200 characters.' },
+        confidence: { type: 'number', description: 'Confidence in the kind, from 0 to 1.' },
+      },
+    },
+  ],
+};
+
+function sweepOutputFormat(accounting: boolean): Anthropic.Messages.JSONOutputFormat {
+  return {
+    type: 'json_schema',
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['results'],
+      properties: {
+        results: {
+          type: 'array',
+          description: 'One entry per email in the input, by its index.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: accounting ? [...SWEEP_RESULT_REQUIRED, 'accounting'] : SWEEP_RESULT_REQUIRED,
+            properties: accounting ? { ...SWEEP_RESULT_PROPERTIES, accounting: ACCOUNTING_PROPERTY } : SWEEP_RESULT_PROPERTIES,
           },
         },
       },
     },
-  },
-};
+  };
+}
+
+/** The lane-only schema (INBOX_SWEEP_ACCOUNTING off: unchanged from before the accounting feed). */
+export const SWEEP_OUTPUT_FORMAT = sweepOutputFormat(false);
+/** The same schema plus `accounting` per result. */
+export const SWEEP_OUTPUT_FORMAT_ACCOUNTING = sweepOutputFormat(true);
 
 /** Rules 1–8 of Robert's order OP-20261106-004, verbatim. */
 export const SWEEP_ORDER_RULES = `1. Promotions: marketing, newsletters, promos to "Promotions". One-click unsubscribe only if marketing and Rob has never opened or engaged. Never click links in cold or spammy outreach. Never use email-based unsubscribes.
@@ -116,6 +154,24 @@ For each email return one lane:
 - handoff: belongs to an owner in rule 7; set bot to that owner.
 - keep: needs Rob (rule 8), or you cannot route it.
 bot is none unless the lane is handoff or gov_bid. Set urgent_today for bank fraud, a deadline within 48 hours, or a legal notice. When in doubt, choose keep with a low confidence.`;
+
+/**
+ * Appended to the system prompt only with INBOX_SWEEP_ACCOUNTING=on. The
+ * accounting reading is separate from the lane: it never changes it.
+ */
+export const SWEEP_ACCOUNTING_INSTRUCTIONS = `
+Separately from the lane, set accounting for each email. It is null unless the email is one of these bookkeeping documents (from our side of the books: "we" are Dearborn Denim / McMillan Manufacturing):
+- vendor_invoice: a vendor is billing us (as an attachment, a link or in the body).
+- vendor_statement: a vendor's list of what we owe (open invoices, aging).
+- payment_sent: proof that WE paid someone (a bank confirmation, our own "payment sent").
+- payment_received_by_vendor: the vendor or its factor confirming our payment arrived.
+- customer_remittance: a customer telling us what THEY paid or will pay, with invoice numbers.
+- past_due_notice: a vendor saying we are late.
+- order_confirmation: an order we placed, often paid at checkout.
+- credit_memo: a credit issued to us.
+- bank_or_loan_notice: a bank or lender notice about our accounts or loans.
+- tax_notice: a tax authority notice.
+Fill only what the email states: counterparty (the other company), invoice_numbers as written, amounts (one per invoice when listed), total, payment_date (YYYY-MM-DD), and a one-sentence summary of at most 200 characters. Anything not stated is null or an empty list; never guess. Marketing, newsletters, spam and phishing get null. confidence is your confidence in the kind.`;
 
 function cleanForPrompt(text: string): string {
   return text.replace(/<\/?email\b/gi, '[email').trim();
@@ -169,6 +225,8 @@ export function parseSweepClassifications(text: string, count: number): SweepCla
       key_facts: typeof r.key_facts === 'string' ? r.key_facts.slice(0, 500) : '',
       urgent_today: r.urgent_today,
       confidence: Math.min(1, Math.max(0, r.confidence)),
+      // Lenient: a bad accounting value is null and never fails the lane decisions.
+      ...('accounting' in r ? { accounting: parseSweepAccounting(r.accounting) } : {}),
     });
   });
   return out;
@@ -187,14 +245,22 @@ export class SweepClassifierError extends Error {
   }
 }
 
-/** The live classifier: one Sonnet call per batch. */
-export function createSweepClassifier(client: Anthropic): (messages: SweepMessage[]) => Promise<SweepClassification[]> {
+/**
+ * The live classifier: one Sonnet call per batch. With `accounting` (INBOX_SWEEP_ACCOUNTING=on)
+ * the prompt and schema add the `accounting` field; off, the request is exactly as before.
+ */
+export function createSweepClassifier(
+  client: Anthropic,
+  opts: { accounting?: boolean } = {},
+): (messages: SweepMessage[]) => Promise<SweepClassification[]> {
+  const format = opts.accounting ? SWEEP_OUTPUT_FORMAT_ACCOUNTING : SWEEP_OUTPUT_FORMAT;
+  const system = opts.accounting ? SWEEP_SYSTEM_PROMPT + SWEEP_ACCOUNTING_INSTRUCTIONS : SWEEP_SYSTEM_PROMPT;
   return async (messages) => {
     const response = await client.messages.create({
       model: SWEEP_MODEL,
       max_tokens: 16000,
-      output_config: { effort: 'low', format: SWEEP_OUTPUT_FORMAT },
-      system: SWEEP_SYSTEM_PROMPT,
+      output_config: { effort: 'low', format },
+      system,
       messages: [{ role: 'user', content: buildSweepPrompt(messages) }],
     });
     if (response.stop_reason === 'refusal') throw new SweepClassifierError('refusal', 'Inbox sweep: classifier refused the batch');
@@ -241,6 +307,13 @@ export interface InboxSweepDeps {
    * counts, lane_counts and junk.
    */
   countsInDigest?: boolean;
+  /**
+   * INBOX_SWEEP_ACCOUNTING=on (default off): read each message's accounting
+   * document (classifier `accounting` field or the QuickBooks pre-rule); live
+   * posts one `accounting_document` event per message, shadow only logs it.
+   * Never changes a lane, move, handoff or unsubscribe.
+   */
+  accounting?: boolean;
 }
 
 export interface SweepHandoff {
@@ -282,6 +355,8 @@ export interface SweepRunSummary {
   /** Moves per lane (live), so Chief sees junk and phishing separately. */
   laneCounts: Record<string, number>;
   eventId: number | null;
+  /** `accounting_document` events posted this run (live, INBOX_SWEEP_ACCOUNTING=on). */
+  accountingEventIds: number[];
 }
 
 const defaultMmiCache = new Map<string, { at: number; senders: Set<string> }>();
@@ -307,7 +382,8 @@ async function fetchNewInboxMessages(deps: InboxSweepDeps, mailbox: string, sinc
   // `ge`, not `gt`: two messages can share a second; the log skips the one already handled.
   const filter = encodeURIComponent(`receivedDateTime ge ${sinceIso}`);
   const path = `/users/${graphSegment(mailbox)}/mailFolders/inbox/messages?$filter=${filter}`
-    + `&$orderby=receivedDateTime asc&$top=${SWEEP_BATCH_CAP}&$select=${SWEEP_MESSAGE_SELECT}`;
+    + `&$orderby=receivedDateTime asc&$top=${SWEEP_BATCH_CAP}`
+    + `&$select=${deps.accounting ? SWEEP_MESSAGE_SELECT_ACCOUNTING : SWEEP_MESSAGE_SELECT}`;
   const json = await graphGet(deps, path, { Prefer: 'outlook.body-content-type="text"' });
   if (!Array.isArray(json?.value)) throw new Error('Inbox messages response has no value array');
   return (json.value as unknown[]).map((raw) => fromGraphMessage(raw, mailbox));
@@ -445,6 +521,85 @@ async function secondPass(deps: InboxSweepDeps, m: SweepMessage): Promise<SweepC
   }
 }
 
+/** The `accounting_document` payload (contract, spec 2026-11-19), in the contract's field order. */
+export function accountingEventPayload(m: SweepMessage, a: SweepAccounting): Record<string, unknown> {
+  return {
+    mailbox: m.mailbox,
+    message_id: m.id,
+    internet_message_id: m.internetMessageId,
+    conversation_id: m.conversationId || null,
+    received_at: m.receivedAt,
+    from: m.sender,
+    from_name: m.senderName || null,
+    subject: m.subject.slice(0, 300),
+    has_attachments: m.hasAttachments,
+    kind: a.kind,
+    counterparty: a.counterparty,
+    invoice_numbers: a.invoice_numbers,
+    amounts: a.amounts,
+    total: a.total,
+    payment_date: a.payment_date,
+    summary: a.summary,
+    confidence: a.confidence,
+  };
+}
+
+/**
+ * Post one `accounting_document` event unless one already exists for this
+ * mailbox + message id (check and insert in one transaction). Returns the new
+ * event id, or null for a duplicate.
+ */
+export function postAccountingEvent(db: Database.Database, payload: Record<string, unknown>, nowIso: string): number | null {
+  return db.transaction(() => {
+    const dup = db.prepare(`
+      SELECT 1 FROM spine_events
+      WHERE event_type = 'accounting_document'
+        AND json_extract(payload, '$.mailbox') = ? AND json_extract(payload, '$.message_id') = ?
+      LIMIT 1
+    `).get(payload.mailbox, payload.message_id);
+    if (dup !== undefined) return null;
+    return insertEvent(db, {
+      source_hand: 'inbox-sweep',
+      brand_id: 'dearborn-denim',
+      event_type: 'accounting_document',
+      urgent: false,
+      payload,
+    }, nowIso);
+  })();
+}
+
+/**
+ * The accounting side of one decided message (INBOX_SWEEP_ACCOUNTING=on).
+ * Returns the payload JSON for the sweep log (shadow and live), or null. Live
+ * also posts the event; a failed post is a note and an error, never a throw.
+ */
+function handleAccounting(
+  deps: InboxSweepDeps,
+  m: SweepMessage,
+  decidedLane: string,
+  c: SweepClassification | undefined,
+  ctx: { mode: 'shadow' | 'live'; nowIso: string; notes: string[]; summary: SweepMailboxSummary; out: SweepRunSummary },
+): string | null {
+  if (!deps.accounting) return null;
+  const a = accountingFor(m, decidedLane, c);
+  if (!a) return null;
+  const payload = accountingEventPayload(m, a);
+  if (ctx.mode === 'live') {
+    try {
+      const id = postAccountingEvent(deps.db, payload, ctx.nowIso);
+      if (id !== null) ctx.out.accountingEventIds.push(id);
+      ctx.notes.push(id !== null ? `accounting_document ${a.kind} posted` : 'accounting_document already posted');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.notes.push(`accounting_document post failed: ${msg}`);
+      ctx.summary.errors.push(`${m.id}: accounting_document: ${msg}`);
+    }
+  } else {
+    ctx.notes.push(`would post accounting_document ${a.kind}`);
+  }
+  return JSON.stringify(payload);
+}
+
 async function sweepMailbox(
   deps: InboxSweepDeps,
   mailbox: string,
@@ -474,9 +629,13 @@ async function sweepMailbox(
     const failure = failed.get(m.id);
     if (failure !== undefined) {
       // Unclassifiable on its own: kept in the inbox, logged, and the watermark moves past it.
+      // The QuickBooks accounting pre-rule needs no model answer, so it still applies.
+      const errNotes = [`classifier: ${failure}`];
+      const errAccounting = handleAccounting(deps, m, 'error', undefined, { mode, nowIso, notes: errNotes, summary, out });
       insertSweepLog(deps.db, {
         message_id: m.id, mailbox, received_at: m.receivedAt, sender: m.sender, subject: m.subject.slice(0, 300),
-        lane: 'error', folder: null, bot: null, unsubscribed: false, mode, note: `classifier: ${failure}`.slice(0, 500), at: nowIso,
+        lane: 'error', folder: null, bot: null, unsubscribed: false, mode, note: errNotes.join('; ').slice(0, 500), at: nowIso,
+        accounting: errAccounting,
       });
       summary.decided++;
       summary.errors.push(`${m.id}: classifier: ${failure}`);
@@ -546,6 +705,9 @@ async function sweepMailbox(
     }
     if (unsubscribed) summary.unsubscribed++;
 
+    // After the move and unsubscribe are settled: it only reads the decided lane.
+    const accounting = handleAccounting(deps, m, d.lane, c, { mode, nowIso, notes, summary, out });
+
     insertSweepLog(deps.db, {
       message_id: m.id,
       mailbox,
@@ -560,6 +722,7 @@ async function sweepMailbox(
       note: notes.length > 0 ? notes.join('; ') : null,
       at: nowIso,
       key_facts: d.keyFacts || null,
+      accounting,
     });
     summary.decided++;
 
@@ -584,6 +747,7 @@ async function sweepMailbox(
 export async function runInboxSweep(deps: InboxSweepDeps): Promise<SweepRunSummary> {
   const out: SweepRunSummary = {
     mode: deps.mode, mailboxes: [], handoffs: [], tell_robert: [], counts: {}, laneCounts: {}, eventId: null,
+    accountingEventIds: [],
   };
   if (deps.mode === 'off') return out;
 

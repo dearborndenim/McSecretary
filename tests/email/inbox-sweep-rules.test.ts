@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+  accountingFor,
   applyDeterministicRules,
   COMPANY_DOMAINS,
   decideAction,
@@ -8,8 +9,11 @@ import {
   isAutomatedSender,
   isProtectedSender,
   keepSenderReason,
+  parseAccountingFlag,
   parseSweepMode,
+  quickbooksPaymentReceived,
   unsubscribeEligible,
+  type SweepAccounting,
   type RuleContext,
   type SweepClassification,
   type SweepMessage,
@@ -179,7 +183,7 @@ describe('staff and vendor/customer senders stay in the inbox (shadow review 202
   function mail(sender: string, over: Partial<SweepMessage> = {}): SweepMessage {
     return {
       id: 'm1', mailbox: ROB, receivedAt: '2026-11-09T15:00:00Z', sender, senderName: '', subject: '11/09 Fabric Received',
-      to: [ROB], cc: [], bodyPreview: '', bodyText: '', conversationId: 'c1', isRead: false, hasAttachments: false,
+      to: [ROB], cc: [], bodyPreview: '', bodyText: '', conversationId: 'c1', internetMessageId: null, isRead: false, hasAttachments: false,
       headers: [{ name: 'Received', value: 'from mail.example.net' }], ...over,
     };
   }
@@ -304,5 +308,78 @@ describe('parseSweepMode', () => {
     expect(parseSweepMode('on')).toBe('off');
     expect(parseSweepMode(' Shadow ')).toBe('shadow');
     expect(parseSweepMode('live')).toBe('live');
+  });
+});
+
+describe('accounting documents (spec 2026-11-19 Piece S)', () => {
+  const qb = fixture('qb-payment-received');
+  const vendorAccounting: SweepAccounting = {
+    kind: 'payment_received_by_vendor', counterparty: 'American Fabrics International', invoice_numbers: ['80363'],
+    amounts: [], total: null, payment_date: null, summary: 'White Oak confirms payment for AFI 80363.', confidence: 0.82,
+  };
+
+  it('reads the real QuickBooks "Payment received" notices without the model', () => {
+    expect(quickbooksPaymentReceived(qb)).toEqual({
+      kind: 'customer_remittance',
+      counterparty: 'USA Brands',
+      invoice_numbers: ['1700'],
+      amounts: [11440.5],
+      total: 11440.5,
+      payment_date: null, // the preview stops at "Paid da..."
+      summary: 'QuickBooks: payment received from USA Brands for invoice 1700',
+      confidence: 1,
+    });
+    expect(quickbooksPaymentReceived(fixture('qb-payment-received-1708'))).toMatchObject({
+      counterparty: 'USA Brands', invoice_numbers: ['1708'], amounts: [4163.26], total: 4163.26,
+    });
+  });
+
+  it('accepts a subdomain of intuit.com and nothing that only looks like it', () => {
+    expect(qb.sender).toBe('quickbooks@notification.intuit.com');
+    expect(quickbooksPaymentReceived({ ...qb, sender: 'quickbooks@intuit.com' })).not.toBeNull();
+    expect(quickbooksPaymentReceived({ ...qb, sender: 'billing@intuit-payments.example' })).toBeNull();
+    expect(quickbooksPaymentReceived({ ...qb, sender: 'quickbooks@notification.intuit.com.evil.example' })).toBeNull();
+  });
+
+  it('takes no stray dollar figure, refuses a body invoice that differs from the subject, and ignores another subject', () => {
+    const body = (text: string) => ({ ...qb, bodyText: text, bodyPreview: text });
+    expect(quickbooksPaymentReceived(body('Your balance is $500.00. Invoice no. 1700'))).toMatchObject({ amounts: [], total: null });
+    expect(quickbooksPaymentReceived(body('Payment amount: $1,234.56 Invoice no. 1700'))).toMatchObject({ amounts: [1234.56] });
+    expect(quickbooksPaymentReceived(body('View sale $11,440.50 Payment has been received'))).toMatchObject({ amounts: [11440.5] });
+    expect(quickbooksPaymentReceived(body('View sale $11440.50 Payment has been received Invoice no. 1701'))).toBeNull();
+    expect(quickbooksPaymentReceived({ ...qb, subject: 'Invoice 1700 from Dearborn Denim' })).toBeNull();
+  });
+
+  it('reads "Paid date" only when it is unambiguous', () => {
+    const paid = (tail: string) => quickbooksPaymentReceived({ ...qb, bodyText: `${qb.bodyPreview.replace(/ Paid da\.\.\.$/, '')} Paid date ${tail}` })?.payment_date;
+    expect(paid('10/21/2026')).toBe('2026-10-21');
+    expect(paid('October 21, 2026')).toBe('2026-10-21');
+    expect(paid('Nov 13, 2026')).toBe('2026-11-13');
+    expect(paid('21/10/2026')).toBeNull();
+    expect(paid('2026-10-21')).toBeNull();
+    expect(paid('Octember 21, 2026')).toBeNull();
+  });
+
+  it('the QuickBooks rule wins over the classifier; junk, phishing and promotions never carry one; < 0.6 is dropped', () => {
+    const c = cls({ lane: 'fyi', accounting: null });
+    expect(accountingFor(qb, 'keep', c)?.kind).toBe('customer_remittance');
+    expect(accountingFor(qb, 'keep', undefined)?.kind).toBe('customer_remittance');
+    const wl = fixture('white-oak-received');
+    expect(accountingFor(wl, 'keep', cls({ accounting: vendorAccounting }))).toEqual(vendorAccounting);
+    expect(accountingFor(wl, 'gina_thread', cls({ lane: 'handoff', accounting: vendorAccounting }))).toEqual(vendorAccounting);
+    for (const lane of ['junk', 'phishing', 'promotions'] as const) {
+      expect(accountingFor(wl, lane, cls({ lane, accounting: vendorAccounting }))).toBeNull();
+      // A low-confidence classifier lane kept in the inbox is still excluded by the classifier's own lane.
+      expect(accountingFor(wl, 'keep', cls({ lane, confidence: 0.5, accounting: vendorAccounting }))).toBeNull();
+    }
+    expect(accountingFor(qb, 'phishing', cls({ lane: 'phishing' }))).toBeNull();
+    expect(accountingFor(wl, 'keep', cls({ accounting: { ...vendorAccounting, confidence: 0.59 } }))).toBeNull();
+    expect(accountingFor(wl, 'keep', cls({ accounting: { ...vendorAccounting, confidence: 0.6 } }))).not.toBeNull();
+  });
+
+  it('INBOX_SWEEP_ACCOUNTING is on only when it says on', () => {
+    expect(parseAccountingFlag(undefined)).toBe(false);
+    expect(parseAccountingFlag('live')).toBe(false);
+    expect(parseAccountingFlag(' ON ')).toBe(true);
   });
 });

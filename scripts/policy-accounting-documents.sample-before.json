@@ -1,0 +1,1 @@
+{"quickbooks-sync":{"propose":{"hands":["quickbooks-sync"],"action_types":["ap_pay_run","ap_payment_match","ap_bill_post","ap_exception_report"]},"events":{"post_types":["cash_floor_breach","ap_*"],"drain_types":["pickup_payment_go_ahead","ap_update"],"source_hand":"self"},"rate":{"events_per_hour":200,"proposals_per_hour":60}}}

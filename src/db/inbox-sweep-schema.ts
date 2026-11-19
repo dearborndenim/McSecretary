@@ -36,6 +36,9 @@ export function initializeInboxSweepSchema(db: Database.Database): void {
   // "left in the inbox" list. Additive; older rows keep null.
   const cols = (db.prepare('PRAGMA table_info(inbox_sweep_log)').all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes('key_facts')) db.exec('ALTER TABLE inbox_sweep_log ADD COLUMN key_facts TEXT');
+  // Accounting feed (spec 2026-11-19): the accounting_document payload JSON the message carried
+  // (INBOX_SWEEP_ACCOUNTING=on; shadow logs it here only). Additive; older rows keep null.
+  if (!cols.includes('accounting')) db.exec('ALTER TABLE inbox_sweep_log ADD COLUMN accounting TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS idx_inbox_sweep_log_at ON inbox_sweep_log(at)');
 }
 
@@ -72,16 +75,18 @@ export interface SweepLogInput {
   at: string;
   /** The classifier's key facts (untrusted, summarised from the email); absent = null. */
   key_facts?: string | null;
+  /** The accounting_document payload as JSON; absent = null. */
+  accounting?: string | null;
 }
 
 export function insertSweepLog(db: Database.Database, r: SweepLogInput): void {
   db.prepare(`
     INSERT OR IGNORE INTO inbox_sweep_log
-      (message_id, mailbox, received_at, sender, subject, lane, folder, bot, unsubscribed, mode, note, at, key_facts)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (message_id, mailbox, received_at, sender, subject, lane, folder, bot, unsubscribed, mode, note, at, key_facts, accounting)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     r.message_id, r.mailbox, r.received_at, r.sender, r.subject, r.lane, r.folder, r.bot,
-    r.unsubscribed ? 1 : 0, r.mode, r.note, r.at, r.key_facts ? r.key_facts.slice(0, 500) : null,
+    r.unsubscribed ? 1 : 0, r.mode, r.note, r.at, r.key_facts ? r.key_facts.slice(0, 500) : null, r.accounting ?? null,
   );
 }
 

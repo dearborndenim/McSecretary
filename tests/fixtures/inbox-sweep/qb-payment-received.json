@@ -1,0 +1,31 @@
+{
+  "_comment": "Sender, subject and bodyPreview are verbatim from rob@'s mailbox (QuickBooks notices of 2026-10-21 / 2026-11-13). The preview is cut off by Graph; body.content repeats it because the full body was not captured. id, receivedDateTime, conversationId and internetMessageId are placeholders.",
+  "id": "AAMkAD-qbpay-1",
+  "receivedDateTime": "2026-11-09T14:11:30Z",
+  "hasAttachments": false,
+  "subject": "Payment received: Invoice #1700-(USA Brands)",
+  "bodyPreview": "View sale $11440.50 Payment has been received Payment details Paid to FOUR STAR DENIM AND APPAREL LLC Customer name USA Brands Customer email billing@usabrands.com Invoice no. 1700 Paid da...",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-qbpay-1",
+  "internetMessageId": "<placeholder.AAMkAD-qbpay-1@notification.intuit.com>",
+  "body": {
+    "contentType": "text",
+    "content": "View sale $11440.50 Payment has been received Payment details Paid to FOUR STAR DENIM AND APPAREL LLC Customer name USA Brands Customer email billing@usabrands.com Invoice no. 1700 Paid da..."
+  },
+  "from": {
+    "emailAddress": {
+      "name": "QuickBooks",
+      "address": "quickbooks@notification.intuit.com"
+    }
+  },
+  "toRecipients": [
+    {
+      "emailAddress": {
+        "name": "rob",
+        "address": "rob@dearborndenim.com"
+      }
+    }
+  ],
+  "ccRecipients": [],
+  "internetMessageHeaders": []
+}
