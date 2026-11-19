@@ -1,0 +1,21 @@
+{
+  "id": "AAMkAD-qbpay-1",
+  "receivedDateTime": "2026-11-09T14:11:30Z",
+  "hasAttachments": false,
+  "subject": "Payment received: Invoice #1700-(USA Brands)",
+  "bodyPreview": "You received a payment. Customer: USA Brands Invoice: 1700 Amount: $22,074.20",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-qbpay-1",
+  "internetMessageId": "<qbo.payment.1700@notification.intuit.com>",
+  "body": {
+    "contentType": "text",
+    "content": "You received a payment.\n\nCustomer: USA Brands\nInvoice: 1700\nPayment amount: $22,074.20\n\nThis payment was recorded in QuickBooks."
+  },
+  "from": { "emailAddress": { "name": "QuickBooks", "address": "quickbooks@notification.intuit.com" } },
+  "toRecipients": [{ "emailAddress": { "name": "rob", "address": "rob@dearborndenim.com" } }],
+  "ccRecipients": [],
+  "internetMessageHeaders": [
+    { "name": "Message-ID", "value": "<qbo.payment.1700@notification.intuit.com>" },
+    { "name": "Auto-Submitted", "value": "auto-generated" }
+  ]
+}

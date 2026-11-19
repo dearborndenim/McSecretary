@@ -63,7 +63,7 @@ import { parseAgentPolicy } from './spine/agent-policy.js';
 import { getGraphToken } from './auth/graph.js';
 import { setRfqIntakeHandler, processRfqReply, getRfqIntakeHandler, intakeRfqRepliesFrom, matchRfqReply, resolveOwnDomains, type RfqScanSummary } from './email/rfq-intake.js';
 import { runInboxSweep, createSweepClassifier } from './email/inbox-sweep.js';
-import { COMPANY_DOMAINS, GINA_ADDRESSES, domainOf, parseSweepMode } from './email/inbox-sweep-rules.js';
+import { COMPANY_DOMAINS, GINA_ADDRESSES, domainOf, parseAccountingFlag, parseSweepMode } from './email/inbox-sweep-rules.js';
 import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
@@ -427,6 +427,8 @@ async function handleInboxSweep(): Promise<void> {
     const companyDomains = [...new Set([...COMPANY_DOMAINS, ...accounts.map(domainOf).filter(Boolean)])];
     const ownDomains = resolveOwnDomains(process.env);
     const mailboxes = [process.env.OUTLOOK_USER_EMAIL_1 ?? '', process.env.OUTLOOK_USER_EMAIL_2 ?? ''].filter(Boolean);
+    // Accounting document feed (spec 2026-11-19 Piece S): off unless INBOX_SWEEP_ACCOUNTING=on.
+    const accounting = parseAccountingFlag(process.env.INBOX_SWEEP_ACCOUNTING);
     const summary = await runInboxSweep({
       db,
       mode,
@@ -435,7 +437,8 @@ async function handleInboxSweep(): Promise<void> {
       graphFetch: fetch,
       token: getGraphToken,
       unsubscribeFetch: fetch,
-      classify: createSweepClassifier(anthropic),
+      classify: createSweepClassifier(anthropic, { accounting }),
+      accounting,
       isRfqReply: (m) => matchRfqReply(db, {
         id: m.id, account: m.mailbox, sender: m.sender, senderName: m.senderName, subject: m.subject,
         bodyPreview: m.bodyPreview, body: m.bodyText, receivedAt: m.receivedAt, threadId: m.conversationId, isRead: m.isRead,
@@ -452,6 +455,9 @@ async function handleInboxSweep(): Promise<void> {
         console.log(`Inbox sweep (${mode}) ${b.mailbox}: ${b.fetched} fetched, ${b.decided} decided, ${b.moved} moved, ${b.unsubscribed} unsubscribed`);
       }
       if (b.errors.length > 0) console.error(`Inbox sweep ${b.mailbox} errors: ${b.errors.join('; ')}`);
+    }
+    if (summary.accountingEventIds.length > 0) {
+      console.log(`Inbox sweep: ${summary.accountingEventIds.length} accounting_document event(s) posted`);
     }
     if (summary.eventId !== null) {
       try { spineWake?.('grok_task_chief', summary.eventId); } catch (err) { console.error('Inbox sweep wake failed:', err); }

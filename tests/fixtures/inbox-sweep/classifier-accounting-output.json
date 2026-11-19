@@ -1,0 +1,30 @@
+{
+  "results": [
+    { "index": 1, "lane": "handoff", "bot": "Purchasing Bot", "key_facts": "Cone Denim invoice 553201 for 1,200 yd Starling, $9,480.00 due Dec 19.", "urgent_today": false, "confidence": 0.93,
+      "accounting": { "kind": "vendor_invoice", "counterparty": "Cone Denim", "invoice_numbers": ["553201"], "amounts": [9480.0], "total": 9480.0, "payment_date": null, "summary": "Cone Denim bills $9,480.00 on invoice 553201 for Starling yardage.", "confidence": 0.95 } },
+    { "index": 2, "lane": "keep", "bot": "none", "key_facts": "American Fabrics statement: 80395 and 80399 open, $21,734.75.", "urgent_today": false, "confidence": 0.88,
+      "accounting": { "kind": "vendor_statement", "counterparty": "American Fabrics International", "invoice_numbers": ["80395", "80399"], "amounts": [15342.65, 6392.1], "total": 21734.75, "payment_date": null, "summary": "AFI lists invoices 80395 and 80399 open, $21,734.75 in total.", "confidence": 0.9 } },
+    { "index": 3, "lane": "fyi", "bot": "none", "key_facts": "Wintrust wire confirmation $9,875.40 to White Oak.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "payment_sent", "counterparty": "White Oak Commercial Finance", "invoice_numbers": [], "amounts": [9875.4], "total": 9875.4, "payment_date": "2026-10-15", "summary": "Wintrust confirms our $9,875.40 wire to White Oak on 2026-10-15.", "confidence": 0.86 } },
+    { "index": 4, "lane": "keep", "bot": "none", "key_facts": "White Oak: Received.", "urgent_today": false, "confidence": 0.85,
+      "accounting": { "kind": "payment_received_by_vendor", "counterparty": "American Fabrics International", "invoice_numbers": ["80363"], "amounts": [], "total": null, "payment_date": null, "summary": "White Oak (AFI's factor) confirms our payment for AFI 80363 arrived.", "confidence": 0.82 } },
+    { "index": 5, "lane": "keep", "bot": "none", "key_facts": "USA Brands remittance for 1700, 1701, 1702.", "urgent_today": false, "confidence": 0.92,
+      "accounting": { "kind": "customer_remittance", "counterparty": "USA Brands", "invoice_numbers": ["1700", "1701", "1702"], "amounts": [22074.2, 6530.1, 8800.04], "total": 37404.34, "payment_date": "2026-11-03", "summary": "USA Brands says it paid invoices 1700, 1701 and 1702 by ACH on 2026-11-03.", "confidence": 0.94 } },
+    { "index": 6, "lane": "keep", "bot": "none", "key_facts": "Zipper Stop: invoice 4410 is 30 days past due.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "past_due_notice", "counterparty": "Zipper Stop", "invoice_numbers": ["4410"], "amounts": [612.5], "total": 612.5, "payment_date": null, "summary": "Zipper Stop says invoice 4410 for $612.50 is 30 days past due.", "confidence": 0.91 } },
+    { "index": 7, "lane": "fyi", "bot": "none", "key_facts": "Uline order 7781234 confirmed, paid by card.", "urgent_today": false, "confidence": 0.95,
+      "accounting": { "kind": "order_confirmation", "counterparty": "Uline", "invoice_numbers": [], "amounts": [], "total": 418.22, "payment_date": "2026-11-09", "summary": "Uline confirms order 7781234 for $418.22, charged at checkout.", "confidence": 0.88 } },
+    { "index": 8, "lane": "keep", "bot": "none", "key_facts": "Carr Textile credit memo CM-221 for $340.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "credit_memo", "counterparty": "Carr Textile", "invoice_numbers": ["CM-221"], "amounts": [340.0], "total": 340.0, "payment_date": null, "summary": "Carr Textile issues credit memo CM-221 for $340.00.", "confidence": 0.87 } },
+    { "index": 9, "lane": "keep", "bot": "none", "key_facts": "Wintrust: November interest on the revolver.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "bank_or_loan_notice", "counterparty": "Wintrust", "invoice_numbers": [], "amounts": [], "total": null, "payment_date": null, "summary": "Wintrust notice of November interest due on the revolving line.", "confidence": 0.8 } },
+    { "index": 10, "lane": "keep", "bot": "none", "key_facts": "Illinois Department of Revenue notice.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "tax_notice", "counterparty": "Illinois Department of Revenue", "invoice_numbers": [], "amounts": [], "total": null, "payment_date": null, "summary": "IDOR notice about the Q3 sales tax return.", "confidence": 0.84 } },
+    { "index": 11, "lane": "promotions", "bot": "none", "key_facts": "Fall sale.", "urgent_today": false, "confidence": 0.97,
+      "accounting": null },
+    { "index": 12, "lane": "keep", "bot": "none", "key_facts": "Odd answer.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "refund", "counterparty": "Someone", "invoice_numbers": [], "amounts": [], "total": null, "payment_date": null, "summary": "x", "confidence": 0.9 } },
+    { "index": 13, "lane": "keep", "bot": "none", "key_facts": "Messy fields.", "urgent_today": false, "confidence": 0.9,
+      "accounting": { "kind": "vendor_invoice", "counterparty": "  ", "invoice_numbers": ["A-1", "", "A-1", 7], "amounts": [10.5, "12", null], "total": "10.50", "payment_date": "Nov 3", "summary": "Invoice A-1.", "confidence": 1.7 } }
+  ]
+}

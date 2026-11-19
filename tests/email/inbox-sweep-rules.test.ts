@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+  accountingFor,
   applyDeterministicRules,
   COMPANY_DOMAINS,
   decideAction,
@@ -8,8 +9,11 @@ import {
   isAutomatedSender,
   isProtectedSender,
   keepSenderReason,
+  parseAccountingFlag,
   parseSweepMode,
+  quickbooksPaymentReceived,
   unsubscribeEligible,
+  type SweepAccounting,
   type RuleContext,
   type SweepClassification,
   type SweepMessage,
@@ -179,7 +183,7 @@ describe('staff and vendor/customer senders stay in the inbox (shadow review 202
   function mail(sender: string, over: Partial<SweepMessage> = {}): SweepMessage {
     return {
       id: 'm1', mailbox: ROB, receivedAt: '2026-11-09T15:00:00Z', sender, senderName: '', subject: '11/09 Fabric Received',
-      to: [ROB], cc: [], bodyPreview: '', bodyText: '', conversationId: 'c1', isRead: false, hasAttachments: false,
+      to: [ROB], cc: [], bodyPreview: '', bodyText: '', conversationId: 'c1', internetMessageId: null, isRead: false, hasAttachments: false,
       headers: [{ name: 'Received', value: 'from mail.example.net' }], ...over,
     };
   }
@@ -304,5 +308,56 @@ describe('parseSweepMode', () => {
     expect(parseSweepMode('on')).toBe('off');
     expect(parseSweepMode(' Shadow ')).toBe('shadow');
     expect(parseSweepMode('live')).toBe('live');
+  });
+});
+
+describe('accounting documents (spec 2026-11-19 Piece S)', () => {
+  const qb = fixture('qb-payment-received');
+  const vendorAccounting: SweepAccounting = {
+    kind: 'payment_received_by_vendor', counterparty: 'American Fabrics International', invoice_numbers: ['80363'],
+    amounts: [], total: null, payment_date: null, summary: 'White Oak confirms payment for AFI 80363.', confidence: 0.82,
+  };
+
+  it('reads a QuickBooks "Payment received" notification as a customer remittance without the model', () => {
+    expect(quickbooksPaymentReceived(qb)).toEqual({
+      kind: 'customer_remittance',
+      counterparty: 'USA Brands',
+      invoice_numbers: ['1700'],
+      amounts: [22074.2],
+      total: 22074.2,
+      payment_date: null,
+      summary: 'QuickBooks: payment received from USA Brands for invoice 1700',
+      confidence: 1,
+    });
+  });
+
+  it('takes no amount it cannot read from a labelled line, and ignores the subject from a non-QuickBooks sender', () => {
+    const noAmount = { ...qb, bodyText: 'You received a payment.', bodyPreview: 'You received a payment.' };
+    expect(quickbooksPaymentReceived(noAmount)).toMatchObject({ invoice_numbers: ['1700'], amounts: [], total: null });
+    expect(quickbooksPaymentReceived({ ...qb, sender: 'billing@intuit-payments.example' })).toBeNull();
+    expect(quickbooksPaymentReceived({ ...qb, subject: 'Invoice 1700 from Dearborn Denim' })).toBeNull();
+  });
+
+  it('the QuickBooks rule wins over the classifier; junk, phishing and promotions never carry one; < 0.6 is dropped', () => {
+    const c = cls({ lane: 'fyi', accounting: null });
+    expect(accountingFor(qb, 'keep', c)?.kind).toBe('customer_remittance');
+    expect(accountingFor(qb, 'keep', undefined)?.kind).toBe('customer_remittance');
+    const wl = fixture('white-oak-received');
+    expect(accountingFor(wl, 'keep', cls({ accounting: vendorAccounting }))).toEqual(vendorAccounting);
+    expect(accountingFor(wl, 'gina_thread', cls({ lane: 'handoff', accounting: vendorAccounting }))).toEqual(vendorAccounting);
+    for (const lane of ['junk', 'phishing', 'promotions'] as const) {
+      expect(accountingFor(wl, lane, cls({ lane, accounting: vendorAccounting }))).toBeNull();
+      // A low-confidence classifier lane kept in the inbox is still excluded by the classifier's own lane.
+      expect(accountingFor(wl, 'keep', cls({ lane, confidence: 0.5, accounting: vendorAccounting }))).toBeNull();
+    }
+    expect(accountingFor(qb, 'phishing', cls({ lane: 'phishing' }))).toBeNull();
+    expect(accountingFor(wl, 'keep', cls({ accounting: { ...vendorAccounting, confidence: 0.59 } }))).toBeNull();
+    expect(accountingFor(wl, 'keep', cls({ accounting: { ...vendorAccounting, confidence: 0.6 } }))).not.toBeNull();
+  });
+
+  it('INBOX_SWEEP_ACCOUNTING is on only when it says on', () => {
+    expect(parseAccountingFlag(undefined)).toBe(false);
+    expect(parseAccountingFlag('live')).toBe(false);
+    expect(parseAccountingFlag(' ON ')).toBe(true);
   });
 });

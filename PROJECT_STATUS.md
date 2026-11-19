@@ -3,6 +3,12 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
+## 2026-11-19 — Inbox Sweep accounting document feed, Piece S (branch `feat/sweep-accounting-events`)
+- **Why:** Robert, 2026-11-19: the sweep should feed invoices and proof of payment to the books (spec `docs/superpowers/specs/2026-11-19-accounting-document-feed-design.md` in the claude_code repo; Piece Q in quickbooks-sync drains it).
+- The sweep classifier optionally returns `accounting` per message; QuickBooks "Payment received" notifications are a deterministic `customer_remittance`; live posts one `accounting_document` event per message (shadow logs it in `inbox_sweep_log.accounting`). Ships dark: `INBOX_SWEEP_ACCOUNTING` unset = off, request and behaviour unchanged.
+- `scripts/policy-accounting-documents.sh`: the quickbooks-sync drain grant, validated with `parseAgentPolicy`, not applied (prints the `railway variables --set` command).
+- **Go-live (Foreman):** merge quickbooks-sync Piece Q first; run the policy script from the linked checkout and apply the printed command if it changed anything; then set `INBOX_SWEEP_ACCOUNTING=on`.
+
 ## 2026-10-31 — Legal agent policy (branch `feat/legal-policy`)
 - `scripts/policy-legal.sh` (+ reconstructed `scripts/policy-legal.sample-before.json`): the `legal` AGENT_KEYS key and notes-only AGENT_POLICY entry for claude_code's Legal Phase 1 (plan `docs/superpowers/plans/2026-10-31-legal-phase-1.md` Task 5). Validated by dry run; not applied. Go-live (plan Task 7): `cd ~/Documents/Claude/claude_code/McSecretary && scripts/policy-legal.sh --set`, then `GET /spine/policy/self` with the legal key answers `restricted: true`.
 

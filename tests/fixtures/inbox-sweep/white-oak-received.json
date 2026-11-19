@@ -1,0 +1,20 @@
+{
+  "id": "AAMkAD-whiteoak-1",
+  "receivedDateTime": "2026-11-09T14:10:12Z",
+  "hasAttachments": false,
+  "subject": "RE: American Fabrics open invoices",
+  "bodyPreview": "Received. Thank you. W. Lee White Oak Commercial Finance",
+  "isRead": false,
+  "conversationId": "conv-AAMkAD-whiteoak-1",
+  "internetMessageId": "<BY5PR.whiteoak.80363@whiteoaksf.com>",
+  "body": {
+    "contentType": "text",
+    "content": "Received. Thank you.\n\nW. Lee\nWhite Oak Commercial Finance\n\n-----Original Message-----\nFrom: Rob McMillan\nSubject: American Fabrics open invoices\nWired $9,875.40 today for AFI invoice 80363."
+  },
+  "from": { "emailAddress": { "name": "W. Lee", "address": "wlee@whiteoaksf.com" } },
+  "toRecipients": [{ "emailAddress": { "name": "rob", "address": "rob@dearborndenim.com" } }],
+  "ccRecipients": [],
+  "internetMessageHeaders": [
+    { "name": "Message-ID", "value": "<BY5PR.whiteoak.80363@whiteoaksf.com>" }
+  ]
+}
