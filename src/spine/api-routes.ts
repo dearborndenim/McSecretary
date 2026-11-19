@@ -7,6 +7,7 @@ import { resolveHandUrl } from './executor.js';
 import { validateEmailPayload } from './email-hand.js';
 import { checkCsAlertProposal } from './cs-agent-alerts.js';
 import { CHIEF_APPROVALS_AGENT, DECISION_EVENT } from './chief-digest.js';
+import { acceptVendorRequest, parseVendorRequest, TODO_QUEUE, VENDOR_REQUEST_EVENT } from './vendor-requests.js';
 import {
   FEEDBACK_ACTION_TYPE, FEEDBACK_HAND, FEEDBACK_TO_AGENTS, feedbackRelPath, readFeedbackRows, validateFeedbackPayload,
 } from './feedback-hand.js';
@@ -479,6 +480,15 @@ export function createSpineRouter(deps: SpineRouterDeps) {
           const r = deps.grokAction(agent, parsed.body as unknown as SpineEventInput);
           json(res, r.status, r.body);
           r.done?.catch((err: unknown) => console.error(`grok_action run failed: ${err instanceof Error ? err.message : String(err)}`));
+          return true;
+        }
+        if (eventType === VENDOR_REQUEST_EVENT) {
+          const event = parsed.body as unknown as SpineEventInput;
+          const req = parseVendorRequest(event.payload);
+          if (!req.ok) { json(res, 400, { error: `${VENDOR_REQUEST_EVENT}: ${req.error}` }); return true; }
+          const r = acceptVendorRequest(deps.db, event, req, deps.now(), agent);
+          json(res, 200, { id: r.eventId, task_event_id: r.taskEventId });
+          if (r.taskEventId !== null) deps.wake?.(TODO_QUEUE, r.taskEventId);
           return true;
         }
         const id = insertEvent(deps.db, parsed.body as unknown as SpineEventInput, deps.now(), agent);
