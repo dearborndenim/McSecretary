@@ -10,7 +10,7 @@ import { initializeSchema } from '../../src/db/schema.js';
 import { createSpineRouter, type SpineRouterDeps } from '../../src/spine/api-routes.js';
 import { getFinalOutcomes } from '../../src/db/outcome-queries.js';
 import { getRun } from '../../src/db/run-index-queries.js';
-import { insertEvent } from '../../src/db/event-queries.js';
+import { insertEvent, listStaleEvents } from '../../src/db/event-queries.js';
 import { getTrustRow } from '../../src/db/trust-queries.js';
 import { insertProposal } from '../../src/db/proposal-queries.js';
 import type { ProposalInput } from '../../src/spine/types.js';
@@ -1227,5 +1227,101 @@ describe('file drop (/spine/files)', () => {
     await upload(KEY, '/spine/files?name=new.pdf', PNG, 'application/pdf');
     expect(fs.existsSync(path.join(dir, oldId))).toBe(false);
     expect(db.prepare('SELECT id FROM spine_files').all()).toHaveLength(1);
+  });
+});
+
+describe('ap_new_vendor_request → Chief robert_todo (vendor approval spec, Piece M)', () => {
+  const QBS = 'q'.repeat(24);
+  // The quickbooks-sync entry as the payables plan records it (scripts/policy-accounting-documents.sample-before.json).
+  const POLICY_JSON = JSON.stringify({ 'quickbooks-sync': {
+    propose: { hands: ['quickbooks-sync'], action_types: ['ap_pay_run'] },
+    events: { post_types: ['cash_floor_breach', 'ap_*'], drain_types: ['ap_update'], source_hand: 'self' },
+    rate: { events_per_hour: 200, proposals_per_hour: 60 },
+  } });
+  const PAYLOAD = {
+    request_id: 'nv-0123456789ab', vendor_name: 'Mayo Products, Inc.', in_kanban: true,
+    kanban: { id: 55, code: 'MAYO', name: 'Mayo Products' },
+    would_create: { DisplayName: 'Mayo Products' },
+    bills: [{ bill_id: 'cap_1', invoice_no: '13885', invoice_date: '2026-10-08', total: 13251.76 }],
+    bills_total: 13251.76, approver: 'robert',
+    approve_route: 'POST /api/integration/ap/vendor-requests/nv-0123456789ab/approve',
+    decline_route: 'POST /api/integration/ap/vendor-requests/nv-0123456789ab/decline',
+  };
+  let db: Database.Database;
+  let now: string;
+  let woken: [string, number][];
+  let handle: ReturnType<typeof createSpineRouter>;
+  beforeEach(() => {
+    db = new Database(':memory:'); initializeSchema(db); now = NOW; woken = [];
+    const agentKeys = new Map([[QBS, 'quickbooks-sync']]);
+    handle = createSpineRouter({
+      db, now: () => now, agentKeys, agentPolicy: parseAgentPolicy(POLICY_JSON, agentKeys.values()),
+      brandsDir: path.join(process.cwd(), 'config', 'brands'),
+      file: async () => ({ id: 1, routed: 'card' }), handFetch: async () => new Response('{}'), env: {},
+      wake: (t, id) => { woken.push([t, id]); },
+    });
+  });
+  afterEach(() => db.close());
+
+  const post = async (payload: Record<string, unknown>) => {
+    const { res, out } = fakeRes();
+    await handle(fakeReq('POST', '/spine/events', {
+      source_hand: 'quickbooks-sync', brand_id: 'dearborn-denim', event_type: 'ap_new_vendor_request', urgent: false, payload,
+    }, `Bearer ${QBS}`), res);
+    return { status: out.status, body: JSON.parse(out.body) as Record<string, unknown> };
+  };
+  const tasks = () => (db.prepare("SELECT * FROM spine_events WHERE event_type = 'grok_task_chief' ORDER BY id").all() as { id: number; payload: string; drained_at: string | null }[])
+    .map((r) => ({ ...r, payload: JSON.parse(r.payload) as Record<string, unknown> }));
+
+  it('one event: exactly one grok_task_chief robert_todo with the mapped args; the source is consumed', async () => {
+    const r = await post(PAYLOAD);
+    expect(r.status).toBe(200);
+    const t = tasks();
+    expect(t).toHaveLength(1);
+    expect(t[0]!.drained_at).toBeNull();
+    expect(t[0]!.payload).toEqual({
+      task_id: 'robert-todo-nv-0123456789ab', kind: 'robert_todo', notify: true, due: null, filed_by: 'mcsecretary', reply_type: null,
+      args: {
+        title: 'Approve new QuickBooks vendor: Mayo Products, Inc.', for: 'robert', from: 'payables',
+        request_id: 'nv-0123456789ab', vendor_name: 'Mayo Products, Inc.', in_kanban: true, kanban: PAYLOAD.kanban,
+        bills: PAYLOAD.bills, bills_total: 13251.76, reminder: false,
+        how_to_answer: 'Robert says create, or decline with a reason. Send his answer to Claude as a needs_claude item naming the request_id; Claude calls the approve or decline route.',
+        untrusted: expect.any(String),
+      },
+    });
+    expect(r.body).toEqual({ id: expect.any(Number), task_event_id: t[0]!.id });
+    const src = db.prepare('SELECT drained_by, drained_at, posted_by FROM spine_events WHERE id = ?').get(r.body.id);
+    expect(src).toEqual({ drained_by: 'mcsecretary', drained_at: NOW, posted_by: 'quickbooks-sync' });
+    expect(woken).toEqual([['grok_task_chief', t[0]!.id]]);
+    now = '2026-09-20T12:00:00.000Z'; // 13 days later: the health check lists nothing undrained
+    expect(listStaleEvents(db, 7, now).filter((e) => e.event_type === 'ap_new_vendor_request')).toEqual([]);
+  });
+
+  it('a second identical event (same request_id, not a reminder) files nothing and is still consumed', async () => {
+    await post(PAYLOAD);
+    now = '2026-09-08T12:00:00.000Z';
+    const r = await post(PAYLOAD);
+    expect(r.status).toBe(200);
+    expect(r.body.task_event_id).toBeNull();
+    expect(tasks()).toHaveLength(1);
+    expect(woken).toHaveLength(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM spine_events WHERE event_type = 'ap_new_vendor_request' AND drained_at IS NULL").get()).toEqual({ n: 0 });
+  });
+
+  it('a reminder files again (once per retry window) with approver and a distinct task id', async () => {
+    await post(PAYLOAD);
+    now = '2026-09-15T12:00:00.000Z';
+    const r = await post({ ...PAYLOAD, reminder: true, approver: 'olivier' });
+    await post({ ...PAYLOAD, reminder: true }); // a retried post of the same reminder
+    const t = tasks();
+    expect(t).toHaveLength(2);
+    expect(t[1]!.payload.task_id).toBe(`robert-todo-nv-0123456789ab-reminder-${r.body.id}`);
+    expect(t[1]!.payload.args).toMatchObject({ reminder: true, for: 'olivier', request_id: 'nv-0123456789ab' });
+  });
+
+  it('a payload without a valid request_id or vendor_name is refused with 400 and stores nothing', async () => {
+    expect((await post({ ...PAYLOAD, request_id: 'x' })).status).toBe(400);
+    expect((await post({ ...PAYLOAD, vendor_name: ' ' })).status).toBe(400);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM spine_events').get()).toEqual({ n: 0 });
   });
 });
