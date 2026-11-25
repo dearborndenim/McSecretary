@@ -14,9 +14,10 @@ const LIST_CAP = 10;
  * expired proposals, undrained events > 7d, and failed runs in the last 24h.
  * Returns null when there is nothing to report (no message is sent).
  * `onExpired` gets the rows this sweep expired (staff requester notices).
+ * `feedLines` is the feed watch's section (`formatFeedSection`), appended as is.
  */
 export function runExpirySweep(
-  db: Database.Database, nowIso: string, onExpired?: (rows: ProposalRow[]) => void,
+  db: Database.Database, nowIso: string, onExpired?: (rows: ProposalRow[]) => void, feedLines: string[] = [],
 ): string | null {
   const expired = expireAndNotify(db, nowIso);
   if (onExpired && expired.length > 0) {
@@ -25,7 +26,7 @@ export function runExpirySweep(
   const stale = listStaleEvents(db, 7, nowIso);
   const since = new Date(new Date(nowIso).getTime() - 86_400_000).toISOString();
   const failed = listFailedRunsSince(db, since);
-  if (expired.length === 0 && stale.length === 0 && failed.length === 0) return null;
+  if (expired.length === 0 && stale.length === 0 && failed.length === 0 && feedLines.length === 0) return null;
 
   const lines: string[] = ['Spine health'];
   if (expired.length) {
@@ -39,6 +40,7 @@ export function runExpirySweep(
     for (const r of failed.slice(0, LIST_CAP)) lines.push(`  ${r.agent} ${r.run_id} ${r.outcome}${r.notes ? ` — ${r.notes}` : ''}`);
     if (failed.length > LIST_CAP) lines.push(`  …and ${failed.length - LIST_CAP} more`);
   }
+  lines.push(...feedLines);
   return lines.join('\n');
 }
 
