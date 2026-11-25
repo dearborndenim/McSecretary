@@ -68,6 +68,7 @@ import { createRfqFilesRouter, rfqFilesDir } from './email/rfq-files.js';
 import { extractRfqOptions, saveRfqAttachments, postVendorQuote, sendRfqAcknowledgement } from './email/rfq-runtime.js';
 import { insertEvent } from './db/event-queries.js';
 import { runExpirySweep, runMissedDeliveryCheck, buildTrustMonthlySummary, buildAgentReview, trailingDaysSince, AGENT_REVIEW_DEFAULT_DAYS, AGENT_REVIEW_MAX_DAYS } from './spine/jobs.js';
+import { feedWatchConfigFromEnv, feedWatchEnabled, formatFeedSection, listFeedRows, loadFeedWatchConfig, runFeedWatch } from './spine/feed-watch.js';
 import { getCatalogue, checkCatalogueAgainstBrand } from './staff/catalogue.js';
 import { setStaffDeps, createWriteLimiter, executeStaffTool } from './staff/execute.js';
 import { createStaffRouter } from './staff/ui/router.js';
@@ -116,6 +117,8 @@ let anthropic: Anthropic;
 let notifyRequester: ((id: number) => Promise<void>) | null = null;
 /** Set at boot from buildSpine: fires SPINE_WAKE_HOOKS for an in-process event. */
 let spineWake: ((eventType: string, eventId: number) => void) | null = null;
+/** The spine's hand fetch (with the hand timeout), for the feed watch. */
+let spineHandFetch: ((url: string, init: RequestInit) => Promise<Response>) | null = null;
 // Per-user: users whose hourly check-in is waiting for a reply (logged as time).
 const awaitingCheckInResponse = new Set<string>();
 // Per-user flag: expecting Rob/member's reply to the EOD reflection prompt.
@@ -352,10 +355,16 @@ async function handleBriefingSectionsAuditDigest(): Promise<void> {
 }
 
 async function handleSpineSweep(): Promise<void> {
-  const report = runExpirySweep(db, new Date().toISOString(), (rows) => {
+  const nowIso = new Date().toISOString();
+  let feedLines: string[] = [];
+  if (feedWatchEnabled(process.env)) {
+    try { feedLines = formatFeedSection(listFeedRows(db), nowIso); }
+    catch (err) { console.error('Spine sweep: feed section failed:', err); }
+  }
+  const report = runExpirySweep(db, nowIso, (rows) => {
     const notify = notifyRequester;
     if (notify) for (const p of rows) void notify(p.id);
-  });
+  }, feedLines);
   if (!report) return;
   try { await sendMessageToUser(config.spine.monthlySummaryUserId, report, false); }
   catch (err) { console.error('Spine sweep report failed:', err); }
@@ -367,6 +376,28 @@ async function handleMissedDeliveryCheck(): Promise<void> {
   if (id === null) return;
   console.log(`Missed delivery check: alerted Chief (event #${id})`);
   try { spineWake?.('grok_task_chief', id); } catch (err) { console.error('Missed delivery wake failed:', err); }
+}
+
+let feedWatchRunning = false;
+
+/** Hourly at :40: each hand's /api/integration/feeds; a feed turning bad is one task for Chief (no card, no Telegram). */
+async function handleFeedWatch(): Promise<void> {
+  if (!feedWatchEnabled(process.env) || feedWatchRunning || !spineHandFetch) return;
+  feedWatchRunning = true;
+  try {
+    const result = await runFeedWatch({
+      db, nowIso: new Date().toISOString(), env: process.env, brandsDir: config.spine.brandsDir,
+      config: loadFeedWatchConfig(feedWatchConfigFromEnv(process.env)), handFetch: spineHandFetch,
+    });
+    if (result.turnedBad || result.recovered) console.log(`Feed watch: ${result.turnedBad} turned bad, ${result.recovered} recovered`);
+    if (result.eventId !== null) {
+      try { spineWake?.('grok_task_chief', result.eventId); } catch (err) { console.error('Feed watch wake failed:', err); }
+    }
+  } catch (err) {
+    console.error('Feed watch failed:', err instanceof Error ? err.message : err);
+  } finally {
+    feedWatchRunning = false;
+  }
 }
 
 let inboxSweepRunning = false;
@@ -1855,6 +1886,7 @@ async function main() {
   setSpineHttpHandler(spine.handleHttp);
   notifyRequester = spine.notifyRequester;
   spineWake = spine.wake;
+  spineHandFetch = spine.handFetch;
 
   // Staff actions (spec §5, §7.6): a malformed catalogue, a group naming a hand
   // the legacy brand lacks, or an action id equal to a chat tool stops the
@@ -2042,6 +2074,7 @@ async function main() {
     { name: 'Briefing Audit Digest', schedule: '0 7 * * *', handler: handleBriefingSectionsAuditDigest, description: 'Daily 7 AM CT — summarize last 24h of /briefing-sections preference changes' },
     { name: 'Spine Sweep', schedule: '0 5 * * *', handler: handleSpineSweep, description: 'Daily 5 AM CT — expire stale proposals, report undrained events and failed runs' },
     { name: 'Missed Delivery Check', schedule: '20 * * * *', handler: handleMissedDeliveryCheck, description: 'Hourly — design sheets an agent has not taken in 24h, sent to Chief on grok_task_chief' },
+    { name: 'Feed Watch', schedule: '40 * * * *', handler: handleFeedWatch, description: 'Hourly :40 — each hand\'s /api/integration/feeds; a feed turning bad goes to Chief on grok_task_chief (FEED_WATCH off|on)' },
     { name: 'Trust Monthly Summary', schedule: '0 7 1 * *', handler: handleTrustMonthlySummary, description: '1st of month 7 AM CT — per-agent trust ledger summary for promotion decisions' },
     { name: 'Lions Schedule Check', schedule: '0 6,12,18 * * *', handler: handleLionsCheck, description: '6 AM / noon / 6 PM CT — diff the CPS SCORE! sheet for South Loop Lions changes' },
     { name: 'Lions Schedule Check (Fri PM)', schedule: '0 20 * * 5', handler: handleLionsCheck, description: 'Friday 8 PM CT — last look before Saturday games' },

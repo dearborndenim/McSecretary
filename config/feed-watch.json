@@ -1,0 +1,25 @@
+{
+  "_comment": "Feed watch (spec docs/superpowers/specs/2026-11-25-plan-driven-company-design.md B6, claude_code repo). Each hand's GET /api/integration/feeds is read hourly through the brand file's hand registry. The keys listed are expected: one absent from the answer is 'missing'. A feed the hand reports that is not listed here is still judged on its own expected_every_hours. Expected hours are the hand's, not this file's; the numbers in _hours are the spec's, for the reader.",
+  "brand": "dearborn-denim",
+  "hands": {
+    "ad-manager": {
+      "expected": ["meta_insights", "google_insights", "google_campaigns", "google_merchant", "google_search_console", "shopify_weekly", "returns"]
+    },
+    "quickbooks-sync": {
+      "expected": ["quickbooks_sync", "scanner_production_feed", "po_receiver_cost_feed", "plan_13w", "ap_mail_intake", "inventory_valuation", "plan_review_weekly", "policy_sync"],
+      "_hours": { "quickbooks_sync": 24, "scanner_production_feed": 24, "po_receiver_cost_feed": 24, "plan_13w": 168, "ap_mail_intake": 2, "inventory_valuation": 168, "plan_review_weekly": 168, "policy_sync": 168 }
+    },
+    "purchase-order-receiver": {
+      "expected": ["brand_shopify_sync", "po_folder_import", "excel_sync", "cut_recommendations", "velocity"],
+      "_hours": { "brand_shopify_sync": 6, "po_folder_import": 24, "excel_sync": 24, "cut_recommendations": 24, "velocity": null }
+    },
+    "piece-work-scanner": {
+      "expected": ["adp_hours", "fabric_consumption_push", "telegram_poll", "scheduler"],
+      "_hours": { "adp_hours": 168 }
+    },
+    "kanban-purchaser": {
+      "expected": ["order_batcher", "bot_jobs", "spine_outbox"],
+      "_hours": { "order_batcher": 2, "bot_jobs": null, "spine_outbox": null }
+    }
+  }
+}

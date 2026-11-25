@@ -3,6 +3,11 @@
 ## Vision
 Full AI secretary for Robert. Autonomous email management across 2 Outlook accounts, daily briefings, calendar management, task tracking, time management, journaling/reflection, and eventually: agent empire coordination (route feedback to projects, compile overnight build reports, be the human-AI communication layer).
 
+## 2026-11-25 — Feed watch, B6 (branch `feat/feed-watch`)
+- **Why:** ad-manager's Google pull failed nightly 2026-11-02 to 11-25 with only a log line (spec `docs/superpowers/specs/2026-11-25-plan-driven-company-design.md` B6 in the claude_code repo). The watch reads every hand's `/api/integration/feeds` hourly, tells Chief once when a feed turns bad, lists bad feeds in the 05:00 Spine Sweep and serves `GET /spine/feeds` for quickbooks-sync's Systems findings.
+- Ships on (`FEED_WATCH` unset = on). Until a hand deploys its C1 route it reads `unreachable` "feeds route not deployed": one Chief task per hand after the second hourly miss, then only the sweep line.
+- Tests: `tests/spine/feed-watch.test.ts` (state function, two-strike, once per spell, sweep text, C1 parsing). Full suite: the 5 known `briefing-ux-polish-4` failures only.
+
 ## 2026-11-19 — Inbox Sweep accounting document feed, Piece S (branch `feat/sweep-accounting-events`)
 - **Why:** Robert, 2026-11-19: the sweep should feed invoices and proof of payment to the books (spec `docs/superpowers/specs/2026-11-19-accounting-document-feed-design.md` in the claude_code repo; Piece Q in quickbooks-sync drains it).
 - The sweep classifier optionally returns `accounting` per message; QuickBooks "Payment received" notifications are a deterministic `customer_remittance`; live posts one `accounting_document` event per message (shadow logs it in `inbox_sweep_log.accounting`). Ships dark: `INBOX_SWEEP_ACCOUNTING` unset = off, request and behaviour unchanged.

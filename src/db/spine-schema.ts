@@ -79,6 +79,26 @@ export function initializeSpineSchema(db: Database.Database): void {
       PRIMARY KEY (event_id, agent)
     );
 
+    -- Feed watch (src/spine/feed-watch.ts): one row per (hand, feed key), plus a
+    -- hand row with key '*' for the call itself (two-strike unreachable).
+    CREATE TABLE IF NOT EXISTS feed_watch_state (
+      hand TEXT NOT NULL,
+      key TEXT NOT NULL,
+      label TEXT,
+      state TEXT NOT NULL CHECK (state IN ('ok', 'stale', 'error', 'missing', 'unreachable')),
+      since TEXT NOT NULL,
+      last_alerted_at TEXT,
+      detail TEXT,
+      last_success_at TEXT,
+      last_error TEXT,
+      data_through TEXT,
+      first_seen_at TEXT NOT NULL,
+      fail_count INTEGER NOT NULL DEFAULT 0,
+      recovered_at TEXT,
+      checked_at TEXT NOT NULL,
+      PRIMARY KEY (hand, key)
+    );
+
     CREATE TABLE IF NOT EXISTS spine_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

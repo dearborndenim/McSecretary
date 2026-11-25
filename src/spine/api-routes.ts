@@ -23,6 +23,7 @@ import { insertOutcome } from '../db/outcome-queries.js';
 import { countProposalsSince } from '../db/proposal-queries.js';
 import { upsertRun } from '../db/run-index-queries.js';
 import { listSweepLog } from '../db/inbox-sweep-schema.js';
+import { buildFeedsView, feedWatchEnabled, feedWatchLastRun, listFeedRows } from './feed-watch.js';
 import {
   ADMIN_READ_DEFAULT_LIMIT, ADMIN_READ_MAX_LIMIT, listAdminAudit, listAdminConversations, listAdminProposals,
 } from './admin-read.js';
@@ -606,6 +607,14 @@ export function createSpineRouter(deps: SpineRouterDeps) {
 
       if (req.method === 'GET' && pathname === '/spine/trust') {
         json(res, 200, { rows: listTrustRowsForAgent(deps.db, agent) });
+        return true;
+      }
+
+      // Feed watch state (contract C2): any agent key, restricted or not, like
+      // /spine/trust; AGENT_POLICY has no field for it, so no key is locked out.
+      if (req.method === 'GET' && pathname === '/spine/feeds') {
+        if (!feedWatchEnabled(deps.env)) { json(res, 503, { error: 'feed watch is off (FEED_WATCH=off)' }); return true; }
+        json(res, 200, buildFeedsView(listFeedRows(deps.db), feedWatchLastRun(deps.db)));
         return true;
       }
 
